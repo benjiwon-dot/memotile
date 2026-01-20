@@ -8,11 +8,17 @@ export default function TilesCarousel({ items, onSelect }) {
                 <div key={idx} style={styles.snapItem}>
                     <div style={styles.card} onClick={() => onSelect(idx)}>
                         <img
-                            src={item.previewUrl}
-                            alt={`Tile ${idx + 1}`}
-                            style={styles.img}
-                            draggable={false}
+                            src={item.previewUrl || item.sourceUrl || item.src}
+                            alt=""
+                            style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",   // ✅ 흰여백 제거 핵심
+                                display: "block",     // ✅ 아래 틈 제거
+                                backgroundColor: "#fff",
+                            }}
                         />
+
                     </div>
                 </div>
             ))}

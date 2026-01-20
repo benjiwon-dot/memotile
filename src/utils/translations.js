@@ -162,6 +162,7 @@ export const STRINGS = {
         nextPhoto: "Next Photo",
         saveCheckout: "Save & Checkout",
         next: "Next",
+        printArea: "Print area (20×20)",
     },
     TH: {
         // Navigation
@@ -326,5 +327,6 @@ export const STRINGS = {
         nextPhoto: "รูปถัดไป",
         saveCheckout: "บันทึกและชำระเงิน",
         next: "ถัดไป",
+        printArea: "พื้นที่พิมพ์ (20×20)",
     }
 };

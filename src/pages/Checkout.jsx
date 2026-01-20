@@ -232,7 +232,7 @@ const styles = {
     },
     content: {
         flex: 1,
-        paddingBottom: '60px', // Space at end
+        paddingBottom: '120px', // Space at end
     },
     // Order Summary Card
     summaryCard: {
@@ -375,9 +375,12 @@ const styles = {
         cursor: 'pointer',
     },
     fullImage: {
-        maxWidth: '100%',
-        maxHeight: '80vh',
+        width: 'min(92vw, 520px)',
+        height: 'min(80vh, 520px)',
+        objectFit: 'contain', // ✅ 원본 확인용이면 contain이 맞음
         display: 'block',
+        backgroundColor: '#000', // 혹시 JPG 주변톤 대비
         boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
     },
+
 };

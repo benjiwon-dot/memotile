@@ -1,129 +1,97 @@
-import { FILTERS } from '../components/editor/filters';
+import { FILTERS } from "../components/editor/filters";
 
 /**
  * Applies a filter to a canvas context
- * @param {CanvasRenderingContext2D} ctx 
- * @param {string} filterName 
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} filterName
  */
 export function applyFilterToContext(ctx, filterName) {
-    const filterDef = FILTERS.find(f => f.name === filterName);
-    // ctx.filter accepts the standard CSS filter string
-    ctx.filter = filterDef?.style?.filter || 'none';
+    const filterDef = FILTERS.find((f) => f.name === filterName);
+    ctx.filter = filterDef?.style?.filter || "none";
 }
 
+/**
+ * Clamp helper
+ */
+function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+}
 
 /**
- * Generates a cropped image blob/url
+ * Generates a cropped image (preview + print)
+ * IMPORTANT:
+ * - Must match Editor CropFrame math exactly.
+ * - Crop UI:
+ *   - preview area = 400x400 (PREVIEW_SIZE)
+ *   - crop window  = 300x300 (CROP_SIZE)
+ *   - baseScale is "cover" relative to PREVIEW_SIZE (NOT 300)
+ *   - crop.x / crop.y are px offsets in the rendered (preview) space
  */
 export async function generateCrops(imageSrc, crop, filterName) {
+    const CROP_SIZE = 300;       // crop window size
+    const PREVIEW_SIZE = 400;    // previewWrap size in UI (400x400)
+    const PREVIEW_OUT = 900;     // preview export
+    const PRINT_OUT = 3200;      // print export (>=3000)
+
     return new Promise((resolve, reject) => {
         const img = new Image();
-        img.crossOrigin = "Anonymous";
+        img.crossOrigin = "anonymous";
+
         img.onload = () => {
-            // 1. Calculate source coordinates to crop from
-            // The crop object {x, y, scale} refers to the UI translation relative to 300x300 box
-            // We need to map this back to natural image dimensions.
+            const imgW = img.naturalWidth;
+            const imgH = img.naturalHeight;
 
-            // UI Constants
-            const BOX_SIZE = 300;
+            const x = crop?.x || 0;
+            const y = crop?.y || 0;
+            const zoom = crop?.scale || 1;
 
-            // Calculate the "displayed" size of the image in the UI before cropping
-            // In the UI, we scale the image by `crop.scale`. 
-            // We also rely on the fact that we forced the image to "cover" the box initially.
-            // Let's derive the base scale (fitting scale).
+            // ✅ MUST match UI: cover scale based on PREVIEW_SIZE (400)
+            const baseScale = Math.max(PREVIEW_SIZE / imgW, PREVIEW_SIZE / imgH);
 
-            let baseScale = Math.max(BOX_SIZE / img.naturalWidth, BOX_SIZE / img.naturalHeight);
+            // rendered pixels -> source pixels conversion factor
+            const denom = baseScale * zoom;
 
-            // Current actual rendered scale = baseScale * crop.scale (if we implemented it that way)
-            // BUT in my previous Editor code, I treated scale=1 as "whatever 100% width is".
-            // Wait, looking at previous CropFrame: 
-            // style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
-            // This is tricky because `object-fit: cover` does its own centering and scaling.
-            // To get pixel-perfect export, we must replicate the "cover" logic math explicitly.
+            // ✅ Source rect calculation (center origin, matches your transform)
+            // UI view: image centered, then translate(x,y), scale(zoom)
+            // Crop frame is centered at (0,0) in that rendered coordinate system.
+            // Convert crop window corners from rendered space to source space.
+            const srcLeft = imgW / 2 + (-CROP_SIZE / 2 - x) / denom;
+            const srcTop = imgH / 2 + (-CROP_SIZE / 2 - y) / denom;
+            const srcSize = CROP_SIZE / denom; // square
 
-            // RE-IMPLEMENTATION STRATEGY: 
-            // To ensure consistency, calculate `baseScale` exactly like `object-fit: cover` does.
-            const aspectImg = img.naturalWidth / img.naturalHeight;
-            const aspectBox = 1; // 300/300
+            // ✅ HARD CLAMP to avoid out-of-bounds (this is what removes white borders)
+            const sSize = clamp(srcSize, 1, Math.min(imgW, imgH));
+            const sx = clamp(srcLeft, 0, imgW - sSize);
+            const sy = clamp(srcTop, 0, imgH - sSize);
 
-            // Cover logic:
-            let renderW, renderH;
-            if (aspectImg > aspectBox) {
-                // Image is wider, so Height dominates
-                renderH = BOX_SIZE;
-                renderW = renderH * aspectImg;
-            } else {
-                // Image is taller, Width dominates
-                renderW = BOX_SIZE;
-                renderH = renderW / aspectImg;
-            }
+            const createOutput = (outPx, quality) => {
+                const canvas = document.createElement("canvas");
+                canvas.width = outPx;
+                canvas.height = outPx;
 
-            // This is the size at scale=1. 
-            // Then we apply user's `crop.scale`.
-            // 2. Updated Math for Center-Origin Crop
-            // UI Render Logic:
-            // The image is scaled to `finalRenderW = img.naturalWidth * baseScale * crop.scale`
-            // The image is centered in the box, then translated by (crop.x, crop.y).
-            // This means the Pixel at (crop.x, crop.y) from the Image Center is now at the Box Center.
-            // NO, wait. `translate(crop.x, crop.y)` moves the image.
-            // If crop.x is POSITIVE, image moves RIGHT.
-            // So the Box (which is stationary) effectively moves LEFT over the image.
-            // Box Center relative to Image Center = (-crop.x, -crop.y).
+                const ctx = canvas.getContext("2d", { alpha: false });
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
 
-            // Image Center (in rendered coords) = (finalRenderW / 2, finalRenderH / 2)
-            // Box Center (in rendered coords relative to Image TopLeft) = (finalRenderW / 2) - crop.x
-
-            // Box TopLeft (in rendered coords) = BoxCenter - (BOX_SIZE / 2)
-            // = (finalRenderW / 2) - crop.x - (BOX_SIZE / 2)
-
-            const finalRenderW = img.naturalWidth * baseScale * crop.scale;
-            // const finalRenderH = img.naturalHeight * baseScale * crop.scale;
-
-            const boxCenterX_in_Rendered = (finalRenderW / 2) - crop.x;
-            const boxCenterY_in_Rendered = (finalRenderW / 2) * (img.naturalHeight / img.naturalWidth) - crop.y;
-            // Note: finalRenderH might differ, so calculate Y separately or use ratio.
-
-            // Actually simpler:
-            const ratio = img.naturalWidth / finalRenderW; // Source Pixels per Rendered Pixel
-
-            // Box TopLeft relative to Image TopLeft (Rendered Domain)
-            const boxLeft_R = (finalRenderW / 2) - crop.x - (BOX_SIZE / 2);
-            const boxTop_R = ((img.naturalHeight * baseScale * crop.scale) / 2) - crop.y - (BOX_SIZE / 2);
-
-            // Map to Source Domain
-            const sx = boxLeft_R * ratio;
-            const sy = boxTop_R * ratio;
-            const sw = BOX_SIZE * ratio;
-            const sh = BOX_SIZE * ratio;
-
-            // Validated generation function
-            const createOutput = (width, quality) => {
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = width; // Square
-                const ctx = canvas.getContext('2d');
-
-                // Background white
-                ctx.fillStyle = '#FFFFFF';
-                ctx.fillRect(0, 0, width, width);
-
-                // Filter
+                // ✅ Apply filter (from FILTERS)
                 applyFilterToContext(ctx, filterName);
 
-                // Draw
-                // We must ensure we don't draw out of bounds if floating point math is slightly off, 
-                // but drawImage handles it loosely.
-                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, width, width);
+                // ✅ Draw EXACTLY to fill the output square (no padding/contain)
+                ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, outPx, outPx);
 
-                return canvas.toDataURL('image/jpeg', quality);
+                // reset filter
+                ctx.filter = "none";
+
+                return canvas.toDataURL("image/jpeg", quality);
             };
 
             resolve({
-                preview: createOutput(900, 0.8),
-                print: createOutput(3000, 0.95), // High res
-                meta: { sx, sy, sw, sh }
+                preview: createOutput(PREVIEW_OUT, 0.9),
+                print: createOutput(PRINT_OUT, 0.95), // ✅ >= 3000px
+                meta: { sx, sy, sw: sSize, sh: sSize, baseScale, denom },
             });
         };
+
         img.onerror = reject;
         img.src = imageSrc;
     });
