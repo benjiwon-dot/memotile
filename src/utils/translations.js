@@ -12,6 +12,18 @@ export const STRINGS = {
         // Home
         heroHeadlineLine1: "Moments you love",
         heroHeadlineLine2: "now on your wall",
+
+        // --- Photo Selection ---
+        permissionDeniedTitle: "Permission Required",
+        permissionDeniedBody: "We need access to your photos to create Memotiles. Please enable it in settings.",
+        openSettings: "Open Settings",
+        cancel: "Cancel",
+        tapToPreview: "Tap to preview",
+        resumeTitle: "Continue Editing",
+        resumeSubtitle: "Resume your previous selection",
+        resumeCta: "Continue",
+        noPhotosSelected: "No photos selected. Please select photos again.",
+
         heroSupporting: "Your photos, beautifully crafted.",
         cta: "Create My Tile",
         ctaStart: "Start with your photo",
@@ -206,10 +218,29 @@ export const STRINGS = {
         continue: "ถัดไป",
         selectPhotos: "เลือกรูปภาพ",
         photosSelected: "รูปที่เลือก",
+        tapToPreview: "แตะเพื่อดูภาพขยาย",
+        continue: "ดำเนินการต่อ",
+        permissionDeniedTitle: "ต้องการสิทธิ์การเข้าถึง",
+        permissionDeniedBody: "เราต้องการสิทธิ์เข้าถึงรูปภาพเพื่อสร้าง Memotiles โปรดเปิดสิทธิ์ในการตั้งค่า",
+        openSettings: "เปิดการตั้งค่า",
+        cancel: "ยกเลิก",
 
         // Home
         heroHeadlineLine1: "ช่วงเวลาที่คุณรัก",
         heroHeadlineLine2: "บนผนังของคุณ",
+
+        // --- Photo Selection ---
+        permissionDeniedTitle: "ต้องการสิทธิ์การเข้าถึง",
+        permissionDeniedBody: "เราต้องการสิทธิ์เข้าถึงรูปภาพเพื่อสร้าง Memotiles โปรดเปิดสิทธิ์ในการตั้งค่า",
+        openSettings: "เปิดการตั้งค่า",
+        cancel: "ยกเลิก",
+        tapToPreview: "แตะเพื่อดูภาพขยาย",
+        resumeTitle: "แก้ไขต่อ",
+        resumeSubtitle: "ดำเนินการต่อจากที่ทำค้างไว้",
+        resumeCta: "ทำต่อ",
+        noPhotosSelected: "ไม่ได้เลือกรูปภาพ กรุณาเลือกใหม่",
+
+        // Home
         heroSupporting: "ภาพถ่ายของคุณ ถ่ายทอดอย่างประณีต",
         cta: "เริ่มสร้างกรอบรูปของคุณ",
         ctaStart: "เริ่มด้วยรูปของคุณ",

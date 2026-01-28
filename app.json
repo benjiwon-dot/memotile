@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "memotile_app_anti",
+    "slug": "memotile-app-anti",
+    "version": "1.0.0",
+    "scheme": "memotile",
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./public/favicon.ico"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "android": {
+      "package": "com.anonymous.memotileappanti"
+    },
+    "ios": {
+      "bundleIdentifier": "com.anonymous.memotileappanti"
+    }
+  }
+}
