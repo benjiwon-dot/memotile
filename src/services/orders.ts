@@ -12,10 +12,11 @@ import {
     serverTimestamp,
     DocumentReference,
 } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
 import { buildOrderStorageBasePath, buildItemPreviewPath, buildItemPrintPath } from "../utils/storagePaths";
 import { uploadFileUriToStorage } from "./storageUpload";
+import { stripUndefined } from "../utils/firestore";
 
 /**
  * Generates a random 7-character alphanumeric string.
@@ -58,10 +59,14 @@ export async function createDevOrder(params: {
     const orderCode = generateOrderCode();
 
     // 2. Storage base path
-    const storageBasePath = buildOrderStorageBasePath(orderCode, new Date());
+    const user = auth.currentUser;
+    if (!user) throw new Error("Not signed in");
+    const uidAuth = user.uid;
+    const storageBasePath = `orders/${uidAuth}/${orderId}`;
+    console.log("[OrderService] storageBasePath:", storageBasePath);
 
     // 3. Create Header document (No file:// URIs)
-    const orderData: Omit<OrderDoc, "id" | "items"> = {
+    const rawOrderData: Omit<OrderDoc, "id" | "items"> = {
         uid,
         orderCode,
         itemsCount: photos.length,
@@ -92,11 +97,19 @@ export async function createDevOrder(params: {
     };
 
     if (promoCode) {
-        (orderData as any).promo = promoCode;
+        (rawOrderData as any).promo = promoCode;
     }
 
-    await setDoc(orderRef, orderData);
-    console.log(`[OrderService] Header ${orderId} created.`);
+    const orderData = stripUndefined(rawOrderData);
+    if (__DEV__) console.log("order payload sanitized", orderData);
+
+    try {
+        await setDoc(orderRef, orderData);
+        console.log(`[OrderService] Header ${orderId} created.`);
+    } catch (e: any) {
+        console.log("[OrderService] Firestore write failed", { step: "header create", code: e?.code, message: e?.message });
+        throw e;
+    }
 
     // 4. Upload Assets & Create Subcollection Items
     for (let i = 0; i < photos.length; i++) {
@@ -104,8 +117,8 @@ export async function createDevOrder(params: {
         const previewUri = p.output?.previewUri || p.uri;
         const printUri = p.output?.printUri || p.uri;
 
-        const previewPath = buildItemPreviewPath(storageBasePath, i);
-        const printPath = buildItemPrintPath(storageBasePath, i);
+        const previewPath = `${storageBasePath}/items/${i}_preview.jpg`;
+        const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
         console.log(`[OrderService] Uploading item ${i}...`);
 
@@ -115,7 +128,7 @@ export async function createDevOrder(params: {
         ]);
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
-        const itemData: any = {
+        const rawItemData: any = {
             index: i,
             quantity: p.quantity || 1,
             filterId: p.edits?.filterId || "original",
@@ -135,10 +148,17 @@ export async function createDevOrder(params: {
             printUrl: printRes.downloadUrl,
         };
 
-        await setDoc(itemRef, {
-            ...itemData,
+        const itemData = stripUndefined({
+            ...rawItemData,
             createdAt: serverTimestamp()
         });
+
+        try {
+            await setDoc(itemRef, itemData);
+        } catch (e: any) {
+            console.log("[OrderService] Firestore write failed", { step: "item create", code: e?.code, message: e?.message });
+            throw e;
+        }
     }
 
     console.log(`[OrderService] All items for ${orderId} uploaded and saved.`);

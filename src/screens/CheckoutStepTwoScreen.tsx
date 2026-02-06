@@ -288,11 +288,13 @@ export default function CheckoutStepTwoScreen() {
                                 <Text style={styles.loggedInText}>
                                     {t['loggedInAs'] || "Logged in as"} {currentUser.email}
                                 </Text>
+                                {/* Logout removed as per request (Bug D)
                                 <TouchableOpacity onPress={() => signOut(auth)}>
                                     <Text style={styles.signOutLink}>
                                         {t['signOut'] || "Sign Out"}
                                     </Text>
-                                </TouchableOpacity>
+                                </TouchableOpacity> 
+                                */}
                             </View>
                         ) : (
                             <View style={styles.loggedOutBox}>

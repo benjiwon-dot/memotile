@@ -4,6 +4,7 @@ import { doc, updateDoc } from "firebase/firestore";
 import { storage, db, auth } from "../lib/firebase";
 import { OrderItem } from "../types/order";
 import { Buffer } from "buffer";
+import { stripUndefined } from "../utils/firestore";
 
 type UploadKind = "preview" | "print";
 
@@ -172,10 +173,10 @@ export async function uploadOrderImages(params: { orderId: string; uid: string; 
 
     if (hasChanges) {
         const dateKey = yyyymmdd();
-        await updateDoc(orderRef, {
+        await updateDoc(orderRef, stripUndefined({
             items: updatedItems,
             storageBasePath: `orders/${dateKey}/${orderId}`
-        });
+        }));
         console.log(`[StorageUpload] Firestore doc ${orderId} updated with downloadUrls and storagePaths`);
     }
 }

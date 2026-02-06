@@ -8,9 +8,13 @@ export type Transform = { scale: number; translateX: number; translateY: number 
  * Normalization: Base scale is already "cover".
  * So minScale is strictly 1.
  */
-export const getMinScale = () => {
+export const getMinScale = (baseW: number, baseH: number, cropSize: number) => {
     "worklet";
-    return 1;
+    if (baseW === 0 || baseH === 0) return 1;
+    const s = Math.max(cropSize / baseW, cropSize / baseH);
+    // Explicitly log as requested, but "worklet" might limit console usage.
+    // We will log in the caller (React component).
+    return Math.max(s, 1);
 };
 
 /**
@@ -49,7 +53,7 @@ export const clampTransform = (
 
     if (baseW <= 0 || baseH <= 0) return { tx, ty, scale: 1 };
 
-    const minScale = 1;
+    const minScale = getMinScale(baseW, baseH, cropSize);
     const nextScale = clamp(scale, minScale, maxScale);
 
     const { maxX, maxY } = getMaxTranslate(baseW, baseH, cropSize, nextScale);

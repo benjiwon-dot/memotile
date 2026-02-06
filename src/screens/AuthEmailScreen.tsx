@@ -34,6 +34,7 @@ export default function AuthEmailScreen() {
     const { t } = useLanguage();
 
     const [isSignUp, setIsSignUp] = useState(false);
+    const [cooldown, setCooldown] = useState(0);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -47,6 +48,14 @@ export default function AuthEmailScreen() {
             Alert.alert("Login Error", authError);
         }
     }, [authError]);
+
+    // Cooldown Timer
+    useEffect(() => {
+        if (cooldown > 0) {
+            const timer = setTimeout(() => setCooldown(c => c - 1), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [cooldown]);
 
     const handleAuth = async () => {
         const emailTrim = (email ?? "").trim();
@@ -77,11 +86,34 @@ export default function AuthEmailScreen() {
                 const { user } = await signInWithEmailAndPassword(auth, emailTrim, passwordTrim);
 
                 if (!user.emailVerified) {
-                    await sendEmailVerification(user);
-                    Alert.alert(
-                        t['auth.verificationRequiredTitle'] || "Email verification required",
-                        t['auth.verificationRequiredBody'] || "Please verify your email first."
-                    );
+                    // Check Cooldown
+                    if (cooldown > 0) {
+                        Alert.alert(
+                            t['auth.verifyCheckInboxTitle'] || "Verify your email",
+                            (t['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                        );
+                        return;
+                    }
+
+                    try {
+                        await sendEmailVerification(user);
+                        setCooldown(30); // 30s cooldown
+                        Alert.alert(
+                            t['auth.verificationRequiredTitle'] || "Email verification required",
+                            (t['auth.verificationRequiredBody'] || "Please verify.") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                        );
+                    } catch (verifyErr: any) {
+                        if (verifyErr.code === 'auth/too-many-requests') {
+                            // Suppress error, just show guidance
+                            Alert.alert(
+                                t['auth.verifyCheckInboxTitle'] || "Verify your email",
+                                (t['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                            );
+                            setCooldown(30); // Enforce cooldown on error too
+                        } else {
+                            throw verifyErr;
+                        }
+                    }
                     return;
                 }
 
@@ -93,17 +125,18 @@ export default function AuthEmailScreen() {
             let msg = error?.message ?? "Authentication failed.";
 
             if (code === "auth/invalid-credential") {
-                msg = "이메일 또는 비밀번호가 올바르지 않습니다. 비밀번호를 잊으셨다면 재설정을 진행하세요.";
+                msg = "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
             } else if (code === "auth/email-already-in-use") {
-                msg = "이미 가입된 이메일입니다. 로그인 탭에서 로그인해주세요.";
+                msg = "อีเมลนี้ถูกใช้งานแล้ว โปรดเข้าสู่ระบบ";
             } else if (code === "auth/weak-password") {
-                msg = "비밀번호가 너무 약합니다. 6자 이상으로 설정해주세요.";
+                msg = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร";
             } else if (code === "auth/invalid-email") {
-                msg = "이메일 형식이 올바르지 않습니다.";
+                msg = "รูปแบบอีเมลไม่ถูกต้อง";
             } else if (code === "auth/network-request-failed") {
-                msg = "네트워크 오류입니다. 인터넷 연결을 확인해주세요.";
-            } else if (msg.includes("api-key-not-valid")) {
-                msg = "Firebase 설정(apiKey)을 확인하세요. EXPO_PUBLIC_FIREBASE_API_KEY가 로드되지 않았습니다.";
+                msg = "เครือข่ายขัดข้อง โปรดตรวจสอบอินเทอร์เน็ต";
+            } else if (code === "auth/too-many-requests") {
+                // Handle top-level too many requests (rare for login, but possible)
+                msg = "กรุณารอสักครู่ก่อนทำรายการใหม่";
             }
 
             Alert.alert(t['failedTitle'] || "Failed", msg);

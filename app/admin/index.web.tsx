@@ -5,22 +5,19 @@ import { useRouter } from 'expo-router';
 import {
     signInWithEmailAndPassword,
     signOut,
-    updatePassword,
-    reauthenticateWithCredential,
-    EmailAuthProvider,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import AdminOrderList from "@/components/admin/AdminOrderList";
+import AdminOrderList from "@/components/admin/AdminOrderList.web";
+import SecurityDrawer from "@/components/admin/SecurityDrawer.web";
 import { useRequireAdmin } from "@/lib/admin/useRequireAdmin";
 import {
     Shield,
     LogOut,
-    Key,
     Eye,
     EyeOff,
-    CheckCircle2,
     AlertCircle,
-    Loader2
+    Loader2,
+    Lock
 } from 'lucide-react-native';
 
 export default function AdminDashboardPage() {
@@ -32,14 +29,10 @@ export default function AdminDashboardPage() {
     const [loginPassword, setLoginPassword] = useState('');
     const [loginLoading, setLoginLoading] = useState(false);
     const [loginError, setLoginError] = useState<string | null>(null);
-
-    // Password Change State
-    const [currentPassword, setCurrentPassword] = useState('');
-    const [newPassword, setNewPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [passLoading, setPassLoading] = useState(false);
-    const [passStatus, setPassStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
     const [showPass, setShowPass] = useState(false);
+
+    // Security Drawer State
+    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -60,46 +53,6 @@ export default function AdminDashboardPage() {
             await signOut(auth);
         } catch (err) {
             console.error("Signout error", err);
-        }
-    };
-
-    const handleUpdatePassword = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (newPassword !== confirmPassword) {
-            setPassStatus({ type: 'error', msg: 'Passwords do not match.' });
-            return;
-        }
-        if (newPassword.length < 6) {
-            setPassStatus({ type: 'error', msg: 'Password must be at least 6 characters.' });
-            return;
-        }
-
-        setPassLoading(true);
-        setPassStatus(null);
-
-        try {
-            const user = auth.currentUser;
-            if (!user || !user.email) throw new Error("No authenticated user.");
-
-            // 1. Reauthenticate
-            const credential = EmailAuthProvider.credential(user.email, currentPassword);
-            await reauthenticateWithCredential(user, credential);
-
-            // 2. Update
-            await updatePassword(user, newPassword);
-
-            setPassStatus({ type: 'success', msg: 'Password updated successfully.' });
-            setCurrentPassword('');
-            setNewPassword('');
-            setConfirmPassword('');
-        } catch (err: any) {
-            console.error("Password change error", err);
-            let msg = 'Failed to update password.';
-            if (err.code === 'auth/wrong-password') msg = 'Current password is incorrect.';
-            if (err.code === 'auth/requires-recent-login') msg = 'Session expired. Please relogin and try again.';
-            setPassStatus({ type: 'error', msg });
-        } finally {
-            setPassLoading(false);
         }
     };
 
@@ -252,7 +205,14 @@ export default function AdminDashboardPage() {
 
     // --- CASE 3: ALLOWED (Dashboard + Security) ---
     return (
-        <div className="max-w-7xl mx-auto space-y-12">
+        <div className="max-w-7xl mx-auto space-y-12 pb-20">
+            {/* Security Drawer */}
+            <SecurityDrawer
+                isOpen={isDrawerOpen}
+                onClose={() => setIsDrawerOpen(false)}
+                email={gate.email || undefined}
+            />
+
             {/* Header Area */}
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-zinc-100">
                 <div className="space-y-1">
@@ -260,105 +220,29 @@ export default function AdminDashboardPage() {
                     <p className="text-zinc-500 font-medium">Monitoring and managing active Memotile orders.</p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <div className="bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-lg border border-emerald-100 text-xs font-black flex items-center gap-2">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                        SECURE SESSION ACTIVE
-                    </div>
+                    <button
+                        onClick={() => setIsDrawerOpen(true)}
+                        className="bg-white hover:bg-zinc-50 border border-zinc-200 text-zinc-600 px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition-colors shadow-sm"
+                    >
+                        <Lock size={14} /> SECURITY
+                    </button>
                     <button
                         onClick={handleSignOut}
-                        className="bg-zinc-100 hover:bg-zinc-200 text-zinc-600 px-4 py-1.5 rounded-lg text-xs font-black flex items-center gap-2 transition-colors"
+                        className="bg-zinc-100 hover:bg-zinc-200 text-zinc-600 px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition-colors"
                     >
                         <LogOut size={14} /> SIGN OUT
                     </button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-12">
+            <div className="grid grid-cols-1">
                 {/* Main Content: Orders */}
-                <div className="xl:col-span-3 space-y-8">
+                <div className="space-y-8">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-1.5 h-8 bg-accent rounded-full" />
                         <h2 className="text-2xl font-black text-zinc-900">Customer Orders</h2>
                     </div>
                     <AdminOrderList />
-                </div>
-
-                {/* Sidebar: Security & Account */}
-                <div className="space-y-8 lg:col-span-1">
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="w-1.5 h-8 bg-zinc-300 rounded-full" />
-                        <h2 className="text-2xl font-black text-zinc-900 text-zinc-400">Security</h2>
-                    </div>
-
-                    <div className="admin-card p-6 space-y-6">
-                        <div className="flex items-center gap-3 text-zinc-900">
-                            <Key size={20} color="#007AFF" />
-                            <h3 className="font-black text-sm uppercase tracking-widest">Change Password</h3>
-                        </div>
-
-                        {passStatus && (
-                            <div className={`${passStatus.type === 'success' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-rose-50 text-rose-600 border-rose-100'} p-4 rounded-xl border text-sm flex items-start gap-3`}>
-                                {passStatus.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                                <p className="font-bold leading-tight">{passStatus.msg}</p>
-                            </div>
-                        )}
-
-                        <form onSubmit={handleUpdatePassword} className="space-y-4">
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Current Password</label>
-                                <input
-                                    type="password"
-                                    className="admin-input-small text-sm w-full py-2"
-                                    placeholder="Required for sensitive changes"
-                                    value={currentPassword}
-                                    onChange={(e) => setCurrentPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">New Password</label>
-                                <input
-                                    type="password"
-                                    className="admin-input-small text-sm w-full py-2"
-                                    value={newPassword}
-                                    onChange={(e) => setNewPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Confirm New Password</label>
-                                <input
-                                    type="password"
-                                    className="admin-input-small text-sm w-full py-2"
-                                    value={confirmPassword}
-                                    onChange={(e) => setConfirmPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={passLoading}
-                                className="w-full bg-zinc-900 text-white font-black py-3 rounded-xl hover:bg-zinc-800 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
-                            >
-                                {passLoading ? (
-                                    <div className="animate-spin">
-                                        <Loader2 size={16} color="white" />
-                                    </div>
-                                ) : null}
-                                Update Password
-                            </button>
-                        </form>
-                    </div>
-
-                    {/* Meta Info */}
-                    <div className="p-6 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-4">
-                        <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Session Context</h4>
-                        <div className="space-y-2">
-                            <p className="text-xs text-zinc-600 font-bold truncate">{gate.email}</p>
-                            <p className="text-[10px] text-zinc-400 font-mono">Last Auth Refresh: {new Date().toLocaleTimeString()}</p>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>

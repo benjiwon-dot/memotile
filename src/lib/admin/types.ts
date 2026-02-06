@@ -47,6 +47,11 @@ export interface OrderHeader {
     itemsCount: number;
     storageBasePath?: string;
     locale: string;
+    // Part 2 Ops Fields
+    adminNote?: string;
+    trackingNumber?: string;
+    refundedAt?: string;
+    canceledAt?: string;
 }
 
 export interface OrderItemAdmin {
@@ -75,6 +80,10 @@ export interface ListOrdersParams {
     country?: string;
     limit?: number;
     cursor?: any;
+    from?: string; // YYYY-MM-DD
+    to?: string;   // YYYY-MM-DD
+    sort?: "asc" | "desc";
+    mode?: "queue" | "default";
 }
 
 export interface ListOrdersResponse {

@@ -375,6 +375,10 @@ export const STRINGS = {
         payTrueMoney: "TrueMoney Wallet",
         promptpayGuide: "PromptPay is a QR payment method. (Current UI Only)\nPayment will be displayed after Paymentwall integration.",
         truemoneyGuide: "TrueMoney payment flow involves authentication. (Current UI Only)\nPayment will be enabled after Paymentwall integration.",
+        "auth.verifyCheckInboxTitle": "Verify your email",
+        "auth.verifyCheckInboxBody": "We sent a verification link to your email. Please open it and confirm your address before continuing.",
+        "auth.verifySpamTip": "If you don’t see it, check your Spam/Junk folder.",
+        "auth.cooldownWait": "Try again in %s s",
         close: "Close",
     },
     TH: {
@@ -760,6 +764,10 @@ export const STRINGS = {
         payTrueMoney: "ทรูมันนี่ วอลเล็ท",
         promptpayGuide: "พร้อมเพย์เป็นวิธีการชำระเงินด้วย QR Code (ขณะนี้เป็นเพียงส่วนติดต่อผู้ใช้)\nจะแสดง QR จริงหลังจากเชื่อมต่อกับ Paymentwall",
         truemoneyGuide: "ทรูมันนี่ต้องมีการยืนยันตัวตนก่อนชำระเงิน (ขณะนี้เป็นเพียงส่วนติดต่อผู้ใช้)\nจะใช้งานได้จริงหลังจากเชื่อมต่อกับ Paymentwall",
+        "auth.verifyCheckInboxTitle": "ยืนยันอีเมลของคุณ",
+        "auth.verifyCheckInboxBody": "เราได้ส่งลิงก์ยืนยันไปยังอีเมลของคุณแล้ว โปรดเปิดอีเมลและกดยืนยันก่อนดำเนินการต่อ",
+        "auth.verifySpamTip": "หากไม่พบอีเมล โปรดตรวจสอบโฟลเดอร์สแปมหรือจดหมายขยะ",
+        "auth.cooldownWait": "ลองใหม่อีกครั้งใน %s วินาที",
         close: "ปิด",
     }
 };

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useLocalSearchParams, useRouter } from "expo-router";
-import AdminOrderDetail from "@/components/admin/AdminOrderDetail";
+import AdminOrderDetail from "@/components/admin/AdminOrderDetail.web";
 import { useRequireAdmin } from "@/lib/admin/useRequireAdmin";
 
 export default function OrderDetailPage() {

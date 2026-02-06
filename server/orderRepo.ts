@@ -32,21 +32,38 @@ function normalizeCustomer(data: any): any {
 }
 
 export async function listOrders(params: ListOrdersParams): Promise<{ rows: OrderHeader[]; nextCursor?: string }> {
-    const { q, status, country, limit = 20 } = params;
+    const { q, status, country, limit = 20, from, to, sort = "desc", mode } = params;
 
-    let query = adminDb.collection("orders").orderBy("createdAt", "desc");
+    let query: FirebaseFirestore.Query = adminDb.collection("orders");
 
-    if (status && status !== "ALL") {
+    // Queue mode: if mode=queue and no specific status, show PROCESSING + PRINTED
+    if (mode === "queue" && (!status || status === "ALL")) {
+        query = query.where("status", "in", ["processing", "printed"]);
+    } else if (status && status !== "ALL") {
         query = query.where("status", "==", status);
     }
 
-    // Exact match for orderCode if 'q' is provided and looks like code (short alphanumeric)
+    // Exact match for orderCode
     if (q && q.trim().length > 0) {
-        // If it looks like a 7-char code, we first try exact match
-        // Note: Firestore doesn't support easy OR / partial text search without external index
-        // We strictly filter by orderCode here as per Phase 1 requirement.
         query = query.where("orderCode", "==", q.trim().toUpperCase());
     }
+
+    // Date Filtering (createdAt)
+    if (from || to) {
+        if (from) {
+            const fromDate = new Date(from);
+            fromDate.setHours(0, 0, 0, 0);
+            query = query.where("createdAt", ">=", fromDate);
+        }
+        if (to) {
+            const toDate = new Date(to);
+            toDate.setHours(23, 59, 59, 999);
+            query = query.where("createdAt", "<=", toDate);
+        }
+    }
+
+    // Sort
+    query = query.orderBy("createdAt", sort);
 
     const snap = await query.limit(limit).get();
 
@@ -77,6 +94,10 @@ export async function listOrders(params: ListOrdersParams): Promise<{ rows: Orde
             itemsCount: data.itemsCount || data.items?.length || 0,
             storageBasePath: data.storageBasePath,
             locale: data.locale || "EN",
+            adminNote: data.adminNote,
+            trackingNumber: data.trackingNumber,
+            refundedAt: toISO(data.refundedAt),
+            canceledAt: toISO(data.canceledAt),
         };
     });
 
@@ -120,6 +141,10 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
         itemsCount: data.itemsCount || data.items?.length || 0,
         storageBasePath: data.storageBasePath,
         locale: data.locale || "EN",
+        adminNote: data.adminNote,
+        trackingNumber: data.trackingNumber,
+        refundedAt: toISO(data.refundedAt),
+        canceledAt: toISO(data.canceledAt),
     };
 
     // Try subcollection first
