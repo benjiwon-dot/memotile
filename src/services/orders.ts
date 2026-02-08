@@ -11,21 +11,43 @@ import {
     onSnapshot,
     serverTimestamp,
     DocumentReference,
+    updateDoc,
 } from "firebase/firestore";
 import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
-import { buildOrderStorageBasePath, buildItemPreviewPath, buildItemPrintPath } from "../utils/storagePaths";
 import { uploadFileUriToStorage } from "./storageUpload";
 import { stripUndefined } from "../utils/firestore";
 
+function yyyymmdd(d = new Date()): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+}
+
+function slugifyCustomer(input?: string): string {
+    // ⚠️ 실명 그대로 경로에 넣는 건 비추천
+    // 하지만 요청대로 "가능하게" 만들되, 안전하게 슬러그 + 길이 제한
+    const s = (input || "").trim().toLowerCase();
+    if (!s) return "customer";
+
+    // 영문/숫자/하이픈만 유지 (한글/태국어는 제거될 수 있음)
+    const cleaned = s
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9\-]/g, "")
+        .replace(/\-+/g, "-")
+        .slice(0, 24);
+
+    return cleaned || "customer";
+}
+
 /**
- * Generates a random 7-character alphanumeric string.
+ * Order code: YYYYMMDD-#### (예: 20260208-0421)
  */
 function generateOrderCode(): string {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let result = "";
-    for (let i = 0; i < 7; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-    return result;
+    const dateKey = yyyymmdd();
+    const rand = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    return `${dateKey}-${rand}`;
 }
 
 /**
@@ -58,15 +80,21 @@ export async function createDevOrder(params: {
     const orderId = orderRef.id;
     const orderCode = generateOrderCode();
 
-    // 2. Storage base path
+    // 2. Auth + base path (NEW)
     const user = auth.currentUser;
     if (!user) throw new Error("Not signed in");
     const uidAuth = user.uid;
-    const storageBasePath = `orders/${uidAuth}/${orderId}`;
+
+    const dateKey = yyyymmdd();
+    const customerSlug = slugifyCustomer(shipping?.fullName); // 원하면 나중에 nickname/phoneLast4로 교체 추천
+    const storageBasePath = `orders/${dateKey}/${orderCode}/${uidAuth}/${customerSlug}/${orderId}`;
     console.log("[OrderService] storageBasePath:", storageBasePath);
 
-    // 3. Create Header document (No file:// URIs)
-    const rawOrderData: Omit<OrderDoc, "id" | "items"> = {
+    // ✅ For list preview (we'll store print urls here)
+    const previewImages: string[] = [];
+
+    // 3. Create Header document
+    const rawOrderData: any = {
         uid,
         orderCode,
         itemsCount: photos.length,
@@ -94,10 +122,11 @@ export async function createDevOrder(params: {
         paymentMethod: "FREE",
         locale,
         promoCode: promoCode?.code,
+        // previewImages will be updated after uploads
     };
 
     if (promoCode) {
-        (rawOrderData as any).promo = promoCode;
+        rawOrderData.promo = promoCode;
     }
 
     const orderData = stripUndefined(rawOrderData);
@@ -111,21 +140,22 @@ export async function createDevOrder(params: {
         throw e;
     }
 
-    // 4. Upload Assets & Create Subcollection Items
+    // 4. Upload PRINT assets only & Create Subcollection Items
     for (let i = 0; i < photos.length; i++) {
         const p = photos[i];
-        const previewUri = p.output?.previewUri || p.uri;
-        const printUri = p.output?.printUri || p.uri;
 
-        const previewPath = `${storageBasePath}/items/${i}_preview.jpg`;
+        // ✅ PRINT only
+        const printUri = p.output?.printUri || p.uri;
         const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-        console.log(`[OrderService] Uploading item ${i}...`);
+        console.log(`[OrderService] Uploading PRINT item ${i}...`);
 
-        const [previewRes, printRes] = await Promise.all([
-            uploadFileUriToStorage(previewPath, previewUri),
-            uploadFileUriToStorage(printPath, printUri)
-        ]);
+        const printRes = await uploadFileUriToStorage(printPath, printUri);
+
+        // ✅ Use print URL as preview for UI compatibility
+        if (printRes?.downloadUrl && previewImages.length < 5) {
+            previewImages.push(printRes.downloadUrl);
+        }
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
         const rawItemData: any = {
@@ -138,14 +168,12 @@ export async function createDevOrder(params: {
             lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
             size: "20x20",
             assets: {
-                previewPath: previewRes.path,
-                previewUrl: previewRes.downloadUrl,
                 printPath: printRes.path,
-                printUrl: printRes.downloadUrl
+                printUrl: printRes.downloadUrl,
             },
-            // Metadata for easy access (no local file:// URIs)
-            previewUrl: previewRes.downloadUrl,
             printUrl: printRes.downloadUrl,
+            // ✅ keep existing UI working
+            previewUrl: printRes.downloadUrl,
         };
 
         const itemData = stripUndefined({
@@ -159,6 +187,19 @@ export async function createDevOrder(params: {
             console.log("[OrderService] Firestore write failed", { step: "item create", code: e?.code, message: e?.message });
             throw e;
         }
+    }
+
+    // 5. Update header with previewImages (from print urls)
+    try {
+        if (previewImages.length > 0) {
+            await updateDoc(orderRef, stripUndefined({
+                previewImages,
+                updatedAt: serverTimestamp(),
+            }) as any);
+            console.log(`[OrderService] Header ${orderId} updated with previewImages (${previewImages.length}).`);
+        }
+    } catch (e: any) {
+        console.log("[OrderService] Header previewImages update failed", { orderId, code: e?.code, message: e?.message });
     }
 
     console.log(`[OrderService] All items for ${orderId} uploaded and saved.`);
@@ -189,7 +230,6 @@ export async function getOrder(orderId: string): Promise<OrderDoc | null> {
 /**
  * Lists all orders for a specific user.
  * Note: Subcollection items are not loaded here for performance.
- * They should be fetched via getOrder on clinical detail view.
  */
 export async function listOrders(uid: string): Promise<OrderDoc[]> {
     const q = query(
@@ -211,7 +251,6 @@ export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | nul
             onUpdate(null);
         } else {
             const order = { id: snap.id, ...snap.data() } as OrderDoc;
-            // Async fetch items for subscription
             const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
             if (!itemsSnap.empty) {
                 order.items = itemsSnap.docs

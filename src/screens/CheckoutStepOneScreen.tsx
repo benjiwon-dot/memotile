@@ -7,6 +7,9 @@ import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 
+// ✅ ADD: pause export queue while checkout is visible (prevents Skia bake crash after leaving editor)
+import { exportQueue } from "../utils/exportQueue";
+
 // Firebase / Auth / Promo
 import { auth } from "../lib/firebase";
 import { User } from "firebase/auth";
@@ -24,6 +27,15 @@ export default function CheckoutStepOneScreen() {
     const router = useRouter();
     const { photos } = usePhoto();
     const { t, locale } = useLanguage();
+
+    // ✅ NEW: stop background export tasks while on checkout screens
+    useEffect(() => {
+        exportQueue.pause();
+        exportQueue.clear(); // drop any queued heavy tasks immediately
+        return () => {
+            exportQueue.resume();
+        };
+    }, []);
 
     // Auth State
     const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -158,7 +170,6 @@ export default function CheckoutStepOneScreen() {
                     {/* Horizontal Image Preview */}
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll} contentContainerStyle={{ gap: 12 }}>
                         {photos.map((item, idx) => {
-                            // Resolution Priority: 1) previewUri (if exists on item), 2) uri
                             const sourceUri = (item as any).output?.previewUri || item.uri;
                             return (
                                 <TouchableOpacity key={item.assetId || idx} onPress={() => setPreviewUri(sourceUri)}>
@@ -269,7 +280,7 @@ export default function CheckoutStepOneScreen() {
                         )}
                     </View>
 
-                    {/* Next Button - Visible always but disabled style if not logged in */}
+                    {/* Next Button */}
                     <TouchableOpacity
                         style={[styles.nextBtn, !currentUser && styles.disabledBtn]}
                         onPress={handleNext}
@@ -311,7 +322,7 @@ const styles = StyleSheet.create({
     content: { padding: 20 },
     stepContainer: { maxWidth: 500, alignSelf: 'center', width: '100%' },
     imageScroll: { marginBottom: 16, flexDirection: 'row' },
-    previewImage: { width: 100, height: 100, backgroundColor: '#eee', resizeMode: 'cover' }, // No borderRadius
+    previewImage: { width: 100, height: 100, backgroundColor: '#eee', resizeMode: 'cover' },
 
     summaryBlock: { backgroundColor: '#fff', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#f0f0f0', marginBottom: 24, shadowColor: "#000", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8, elevation: 2 },
     summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
@@ -343,7 +354,6 @@ const styles = StyleSheet.create({
     disabledBtn: { backgroundColor: '#ccc' },
     nextBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 
-    // Modal Styles
     modalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
     modalBackground: { ...StyleSheet.absoluteFillObject },
     modalCloseBtn: { position: "absolute", top: 60, right: 30, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 },

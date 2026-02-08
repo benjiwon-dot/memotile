@@ -16,6 +16,21 @@ export default function OrderCardRN({ order, onPress }: Props) {
     const { t } = useLanguage();
     const dateStr = formatDate(order.createdAt);
 
+    // ✅ Prefer order-level previewImages (fast, no subcollection required)
+    const previewImages: string[] =
+        (order as any)?.previewImages?.filter(Boolean) ??
+        [];
+
+    // ✅ Fallback to item-level previews if items are loaded (detail/subscription)
+    const itemPreviewUris: string[] =
+        order.items?.map((it: any) => it.previewUrl || it.previewUri || it.src).filter(Boolean) ?? [];
+
+    // ✅ Final uris for strip
+    const previewUris = (previewImages.length > 0 ? previewImages : itemPreviewUris).slice(0, 5);
+
+    const totalCount = order.items?.length ?? order.itemsCount ?? (previewImages.length > 0 ? previewImages.length : itemPreviewUris.length) ?? 0;
+    const extraCount = Math.max(0, totalCount - 5);
+
     return (
         <Pressable
             style={({ pressed }) => [
@@ -32,34 +47,47 @@ export default function OrderCardRN({ order, onPress }: Props) {
 
                 {/* Image strip */}
                 <View style={styles.imageStrip}>
-                    {order.items && order.items.slice(0, 5).map((item, idx) => (
-                        <View key={idx} style={styles.stripItem}>
-                            {(item.previewUrl || item.previewUri || item.src) ? (
+                    {previewUris.length > 0 ? (
+                        previewUris.map((uri, idx) => (
+                            <View key={idx} style={styles.stripItem}>
                                 <Image
-                                    source={{ uri: item.previewUrl || item.previewUri || item.src || '' }}
+                                    source={{ uri }}
                                     style={styles.stripImg}
                                 />
-                            ) : (
-                                <View style={[styles.stripImg, { backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }]}>
-                                    <Ionicons name="image-outline" size={16} color="#ccc" />
-                                </View>
-                            )}
-                        </View>
-                    ))}
-                    {order.items && order.items.length > 5 && (
-                        <View style={styles.moreCount}>
-                            <Text style={styles.moreCountText}>+{order.items.length - 5}</Text>
-                        </View>
+                            </View>
+                        ))
+                    ) : (
+                        // No preview URIs available (show placeholder only if we know there are items)
+                        (order.itemsCount ?? 0) > 0 ? (
+                            <View
+                                style={[
+                                    styles.stripImg,
+                                    {
+                                        backgroundColor: '#f0f0f0',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: 6,
+                                        width: 44,
+                                        height: 44
+                                    }
+                                ]}
+                            >
+                                <Ionicons name="images-outline" size={20} color="#ccc" />
+                            </View>
+                        ) : null
                     )}
-                    {!order.items && order.itemsCount > 0 && (
-                        <View style={[styles.stripImg, { backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center', borderRadius: 6, width: 44, height: 44 }]}>
-                            <Ionicons name="images-outline" size={20} color="#ccc" />
+
+                    {extraCount > 0 && (
+                        <View style={styles.moreCount}>
+                            <Text style={styles.moreCountText}>+{extraCount}</Text>
                         </View>
                     )}
                 </View>
 
                 <View style={styles.bottomRow}>
-                    <Text style={styles.itemCount}>{order.itemsCount || order.items?.length || 0} {t.items}</Text>
+                    <Text style={styles.itemCount}>
+                        {(order.itemsCount || order.items?.length || 0)} {t.items}
+                    </Text>
                     <Text style={styles.totalPrice}>฿{order.total.toFixed(2)}</Text>
                 </View>
             </View>
@@ -103,6 +131,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 6,
         marginBottom: 16,
+        alignItems: 'center',
     },
     stripItem: {
         width: 44,

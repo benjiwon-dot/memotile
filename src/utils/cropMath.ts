@@ -1,3 +1,4 @@
+// src/utils/cropMath.ts
 import { clamp } from "./clamp";
 
 export type Size = { width: number; height: number };
@@ -12,21 +13,10 @@ export const getMinScale = (baseW: number, baseH: number, cropSize: number) => {
     "worklet";
     if (baseW === 0 || baseH === 0) return 1;
     const s = Math.max(cropSize / baseW, cropSize / baseH);
-    // Explicitly log as requested, but "worklet" might limit console usage.
-    // We will log in the caller (React component).
     return Math.max(s, 1);
 };
 
-/**
- * Get max allowed translation based on normalized base dimensions.
- * baseW/baseH here are the dimensions of the image when scale=1 (fully covering CROP_SIZE).
- */
-export const getMaxTranslate = (
-    baseW: number,
-    baseH: number,
-    cropSize: number,
-    scale: number
-) => {
+export const getMaxTranslate = (baseW: number, baseH: number, cropSize: number, scale: number) => {
     "worklet";
     const renderedW = baseW * scale;
     const renderedH = baseH * scale;
@@ -37,9 +27,6 @@ export const getMaxTranslate = (
     return { maxX, maxY };
 };
 
-/**
- * Unified clamp using baseW/baseH (already at cover scale).
- */
 export const clampTransform = (
     tx: number,
     ty: number,
@@ -65,68 +52,115 @@ export const clampTransform = (
 };
 
 /**
+ * UI base cover size (scale=1) matching CropFrameRN:
+ * coverScale = max(cropSquare / originalW, cropSquare / originalH)
+ * baseW = originalW * coverScale, baseH = originalH * coverScale
+ */
+export const computeBaseCoverSize = (originalW: number, originalH: number, cropSquare: number) => {
+    if (originalW <= 0 || originalH <= 0 || cropSquare <= 0) {
+        return { baseW: cropSquare || 1, baseH: cropSquare || 1 };
+    }
+    const cover = Math.max(cropSquare / originalW, cropSquare / originalH);
+    return { baseW: originalW * cover, baseH: originalH * cover };
+};
+
+/**
  * Maps UI transform back to original image pixels for export.
- * NOTE: This must account for the "cover" base scale.
+ * - Uses actual frameRect.x/y/width/height (no centered assumption)
+ * - Uses UI-consistent cover model
+ * - Hard clamps to ALWAYS return a valid crop inside image bounds
  */
 export const mapToOriginalCropRect = (params: {
     originalW: number;
     originalH: number;
     containerW: number;
     containerH: number;
-    cropSize: number;
+    frameRect: Rect;
     transform: { scale: number; translateX: number; translateY: number };
 }) => {
-    const { originalW, originalH, containerW, containerH, cropSize, transform } = params;
-    const { scale, translateX: tx, translateY: ty } = transform;
+    const { originalW, originalH, containerW, containerH, frameRect, transform } = params;
 
-    // The UI now uses a "cover" base scale relative to CROP_SIZE
-    const coverScale = Math.max(cropSize / originalW, cropSize / originalH);
-    const rw = originalW * coverScale;
-    const rh = originalH * coverScale;
+    if (originalW <= 1 || originalH <= 1 || containerW <= 1 || containerH <= 1) {
+        return { x: 0, y: 0, width: 1, height: 1 };
+    }
 
-    // Centered alignment offset
+    const fw = Math.max(1, Math.round(frameRect.width));
+    const fh = Math.max(1, Math.round(frameRect.height));
+    const fx = Number.isFinite(frameRect.x) ? frameRect.x : 0;
+    const fy = Number.isFinite(frameRect.y) ? frameRect.y : 0;
+
+    // square crop
+    const cropSize = Math.max(1, Math.round(Math.min(fw, fh)));
+
+    const { baseW, baseH } = computeBaseCoverSize(originalW, originalH, cropSize);
+
+    const sc = Number.isFinite(transform.scale) && transform.scale > 0 ? transform.scale : 1;
+    const tx = Number.isFinite(transform.translateX) ? transform.translateX : 0;
+    const ty = Number.isFinite(transform.translateY) ? transform.translateY : 0;
+
+    // Image center in container coords
     const imgCenterX = containerW / 2 + tx;
     const imgCenterY = containerH / 2 + ty;
 
-    const fx = (containerW - cropSize) / 2;
-    const fy = (containerH - cropSize) / 2;
-
+    // Inverse mapping: local = (screen - center - t) / s
     const untransform = (screenX: number, screenY: number) => {
         const dx = screenX - imgCenterX;
         const dy = screenY - imgCenterY;
-        const ux = dx / scale;
-        const uy = dy / scale;
-        const localX = ux + rw / 2;
-        const localY = uy + rh / 2;
+
+        const ux = dx / sc;
+        const uy = dy / sc;
+
+        const localX = ux + baseW / 2;
+        const localY = uy + baseH / 2;
+
         return {
-            nx: localX / rw,
-            ny: localY / rh
+            nx: localX / baseW,
+            ny: localY / baseH,
         };
     };
 
     const tl = untransform(fx, fy);
     const br = untransform(fx + cropSize, fy + cropSize);
 
-    let sx = Math.floor(tl.nx * originalW);
-    let sy = Math.floor(tl.ny * originalH);
-    let ex = Math.ceil(br.nx * originalW);
-    let ey = Math.ceil(br.ny * originalH);
+    // normalized -> original px (can go outside, clamp later)
+    let sx = Math.floor(Math.min(tl.nx, br.nx) * originalW);
+    let sy = Math.floor(Math.min(tl.ny, br.ny) * originalH);
+    let ex = Math.ceil(Math.max(tl.nx, br.nx) * originalW);
+    let ey = Math.ceil(Math.max(tl.ny, br.ny) * originalH);
 
+    // hard clamp endpoints
     sx = Math.max(0, Math.min(sx, originalW - 1));
     sy = Math.max(0, Math.min(sy, originalH - 1));
-    let sw = ex - sx;
-    let sh = ey - sy;
-    const finalSize = Math.max(sw, sh);
+    ex = Math.max(1, Math.min(ex, originalW));
+    ey = Math.max(1, Math.min(ey, originalH));
 
-    if (sx + finalSize > originalW) sx = originalW - finalSize;
-    if (sy + finalSize > originalH) sy = originalH - finalSize;
+    let sw = Math.max(1, ex - sx);
+    let sh = Math.max(1, ey - sy);
 
-    return {
-        x: Math.max(0, sx),
-        y: Math.max(0, sy),
-        width: Math.min(finalSize, originalW),
-        height: Math.min(finalSize, originalH)
-    };
+    // enforce square by taking max and re-centering
+    let size = Math.max(sw, sh);
+    size = Math.min(size, originalW, originalH);
+
+    const cx = sx + sw / 2;
+    const cy = sy + sh / 2;
+
+    let nx = Math.round(cx - size / 2);
+    let ny = Math.round(cy - size / 2);
+
+    // final clamp so always inside
+    nx = Math.max(0, Math.min(nx, originalW - size));
+    ny = Math.max(0, Math.min(ny, originalH - size));
+
+    // FINAL SAFETY: shrink-by-1 if edge-case rounding still trips manipulator
+    // (manipulator is extremely strict)
+    if (nx + size > originalW) size = Math.max(1, originalW - nx);
+    if (ny + size > originalH) size = Math.max(1, originalH - ny);
+
+    // still square – ensure within min dimension
+    size = Math.min(size, originalW - nx, originalH - ny);
+    size = Math.max(1, Math.floor(size));
+
+    return { x: nx, y: ny, width: size, height: size };
 };
 
 export const calculatePrecisionCrop = (params: {
@@ -135,20 +169,29 @@ export const calculatePrecisionCrop = (params: {
     frameRect: Rect;
     transform: Transform;
 }) => {
-    return {
-        ...mapToOriginalCropRect({
-            originalW: params.sourceSize.width,
-            originalH: params.sourceSize.height,
-            containerW: params.containerSize.width,
-            containerH: params.containerSize.height,
-            cropSize: params.frameRect.width,
-            transform: params.transform
-        }),
-        isValid: true
-    };
+    const rect = mapToOriginalCropRect({
+        originalW: params.sourceSize.width,
+        originalH: params.sourceSize.height,
+        containerW: params.containerSize.width,
+        containerH: params.containerSize.height,
+        frameRect: params.frameRect,
+        transform: params.transform,
+    });
+
+    const isValid =
+        Number.isFinite(rect.x) &&
+        Number.isFinite(rect.y) &&
+        Number.isFinite(rect.width) &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.x >= 0 &&
+        rect.y >= 0 &&
+        rect.x + rect.width <= params.sourceSize.width &&
+        rect.y + rect.height <= params.sourceSize.height;
+
+    return { ...rect, isValid };
 };
 
-// Legacy/helper for EditorScreen initial state
 export const defaultCenterCrop = () => {
     return { x: 0, y: 0, scale: 1 };
 };

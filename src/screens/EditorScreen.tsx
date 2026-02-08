@@ -19,6 +19,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   runOnJS,
+  cancelAnimation,
 } from "react-native-reanimated";
 
 import { usePhoto } from "../context/PhotoContext";
@@ -32,7 +33,12 @@ import FilteredImageSkia, { FilteredImageSkiaRef } from "../components/editorRN/
 import { FILTERS } from "../components/editorRN/filters";
 import { IDENTITY, type ColorMatrix } from "../utils/colorMatrix";
 
-import { calculatePrecisionCrop, defaultCenterCrop, clampTransform } from "../utils/cropMath";
+import {
+  calculatePrecisionCrop,
+  defaultCenterCrop,
+  clampTransform,
+  type Rect as CropRect,
+} from "../utils/cropMath";
 import {
   generatePreviewExport,
   generatePrintExport,
@@ -66,6 +72,7 @@ const wait2Raf = async () => {
   await waitRaf();
   await waitRaf();
 };
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 type BakeJob = {
   uri: string;
@@ -82,6 +89,30 @@ type OutgoingFrame = {
   matrix: ColorMatrix;
 };
 
+// ✅ manipulator crash 방지: 어떤 경우에도 이미지 밖으로 crop이 나가지 않게 강제 보정
+const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
+  const w = Math.max(1, Math.floor(Number.isFinite(r?.width) ? r.width : 1));
+  const h = Math.max(1, Math.floor(Number.isFinite(r?.height) ? r.height : 1));
+  let x = Math.floor(Number.isFinite(r?.x) ? r.x : 0);
+  let y = Math.floor(Number.isFinite(r?.y) ? r.y : 0);
+
+  // clamp origin first
+  x = Math.max(0, Math.min(x, Math.max(0, srcW - 1)));
+  y = Math.max(0, Math.min(y, Math.max(0, srcH - 1)));
+
+  // clamp size to fit
+  const maxSizeW = Math.max(1, srcW - x);
+  const maxSizeH = Math.max(1, srcH - y);
+  const size = Math.max(1, Math.min(Math.max(w, h), maxSizeW, maxSizeH)); // enforce square style
+
+  // ensure inside (again)
+  if (x + size > srcW) x = Math.max(0, srcW - size);
+  if (y + size > srcH) y = Math.max(0, srcH - size);
+
+  const out = { x, y, width: size, height: size, isValid: true };
+  return out;
+};
+
 export default function EditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -91,28 +122,48 @@ export default function EditorScreen() {
   const resolvedCache = useRef<Record<string, ResolvedInfo>>({});
   const currentPhoto = photos?.[currentIndex] as any;
 
-  // ✅ crossfade용: 현재 프레임(active) / 다음 프레임(incoming) 분리
+  const isAliveRef = useRef(true);
+
+  const bgPausedRef = useRef(false);
+  const bgTokenRef = useRef(0);
+
+  const [bakeJob, setBakeJob] = useState<BakeJob | null>(null);
+  const bakeBusyRef = useRef(false);
+  const pendingBakeResolveRef = useRef<((out: string | null) => void) | null>(null);
+  const filteredCanvasRef = useRef<FilteredImageSkiaRef>(null);
+
+  useEffect(() => {
+    isAliveRef.current = true;
+    bgPausedRef.current = false;
+
+    return () => {
+      isAliveRef.current = false;
+      bgPausedRef.current = true;
+      bgTokenRef.current += 1;
+
+      try {
+        pendingBakeResolveRef.current?.(null);
+      } catch { }
+      pendingBakeResolveRef.current = null;
+      setBakeJob(null);
+    };
+  }, []);
+
   const [activeResolved, setActiveResolved] = useState<ResolvedInfo | null>(null);
   const [incomingResolved, setIncomingResolved] = useState<ResolvedInfo | null>(null);
 
   const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
   const [viewportDim, setViewportDim] = useState<{ width: number; height: number } | null>(null);
 
-  // ✅ Promise 기반 Skia bake job (preview/print 둘 다 이걸로)
-  const [bakeJob, setBakeJob] = useState<BakeJob | null>(null);
-  const bakeBusyRef = useRef(false);
-
-  // UI transitions (prevent flicker)
   const [isSwitchingPhoto, setIsSwitchingPhoto] = useState(false);
 
   const isExporting = useRef(false);
-  const cropRef = useRef<any>(null);
-  const filteredCanvasRef = useRef<FilteredImageSkiaRef>(null);
 
-  // ✅ outgoing 프레임을 ref로 유지 (unmount 방지)
+  // ✅ IMPORTANT: incoming만 ref 보유 (outgoing이 ref 덮어쓰면 crop/frameRect 꼬임)
+  const cropRef = useRef<any>(null);
+
   const outgoingRef = useRef<OutgoingFrame | null>(null);
 
-  // ✅ opacity 애니메이션
   const outgoingOpacity = useSharedValue(0);
   const incomingOpacity = useSharedValue(1);
 
@@ -120,14 +171,20 @@ export default function EditorScreen() {
   const incomingStyle = useAnimatedStyle(() => ({ opacity: incomingOpacity.value }));
 
   const commitCrossfade = useCallback(() => {
-    // incoming을 active로 승격
+    if (!isAliveRef.current) return;
+
+    bgPausedRef.current = false; // 🔥 다시 허용
+
     if (incomingResolved) setActiveResolved(incomingResolved);
     setIncomingResolved(null);
     outgoingRef.current = null;
-    setIsSwitchingPhoto(false);
-  }, [incomingResolved]);
 
-  // Always define initialInfo from currentPhoto
+    outgoingOpacity.value = 0;
+    incomingOpacity.value = 1;
+
+    setIsSwitchingPhoto(false);
+  }, [incomingResolved, outgoingOpacity, incomingOpacity]);
+
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
     return {
@@ -135,13 +192,23 @@ export default function EditorScreen() {
       width: currentPhoto.width,
       height: currentPhoto.height,
     };
-  }, [currentPhoto?.uri, (currentPhoto as any)?.cachedPreviewUri, currentPhoto?.width, currentPhoto?.height]);
+  }, [
+    currentPhoto?.uri,
+    (currentPhoto as any)?.cachedPreviewUri,
+    currentPhoto?.width,
+    currentPhoto?.height,
+  ]);
 
-  /**
-   * ✅ Resolve + restore UI state
-   * - switching 중이면: incomingResolved에만 채움 (active는 유지)
-   * - switching 아니면: activeResolved 갱신
-   */
+  useEffect(() => {
+    if (!isSwitchingPhoto && initialInfo?.uri) {
+      setActiveResolved((prev) => {
+        if (!prev) return initialInfo;
+        if (prev.uri !== initialInfo.uri) return initialInfo;
+        return prev;
+      });
+    }
+  }, [initialInfo?.uri, isSwitchingPhoto]);
+
   useEffect(() => {
     let alive = true;
     const uri = currentPhoto?.uri;
@@ -167,7 +234,6 @@ export default function EditorScreen() {
         });
       }
 
-      // ✅ switching 중이면 incoming만 채우고, active는 그대로 유지
       if (isSwitchingPhoto) {
         setIncomingResolved(info);
       } else {
@@ -178,17 +244,38 @@ export default function EditorScreen() {
 
     const resolve = async () => {
       try {
-        // cache
         if (resolvedCache.current[uri]) {
           if (!alive) return;
           applyUiForIndex(resolvedCache.current[uri]);
           return;
         }
 
+        const cachedPreview = (currentPhoto as any)?.cachedPreviewUri;
+        if (cachedPreview && typeof cachedPreview === "string") {
+          let w = currentPhoto?.width;
+          let h = currentPhoto?.height;
+          if (!w || !h) {
+            try {
+              const s = await getImageSizeAsync(cachedPreview);
+              w = s.width;
+              h = s.height;
+            } catch {
+              w = 1000;
+              h = 1000;
+            }
+          }
+          const info: ResolvedInfo = { uri: cachedPreview, width: w || 1000, height: h || 1000 };
+          if (!alive) return;
+          resolvedCache.current[uri] = info;
+          applyUiForIndex(info);
+          return;
+        }
+
         let inputUri = uri;
 
         if (uri.startsWith("content://")) {
-          const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
+          const baseDir =
+            (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
           const dest = `${baseDir}editor_import_${Date.now()}.jpg`;
           await FileSystem.copyAsync({ from: uri, to: dest });
           inputUri = dest;
@@ -200,7 +287,6 @@ export default function EditorScreen() {
           { compress: 0.9, format: SaveFormat.JPEG }
         );
 
-        // ✅ width/height 방어 (좌표 틀어짐 방지)
         let w = result.width;
         let h = result.height;
         if (!w || !h) {
@@ -240,7 +326,6 @@ export default function EditorScreen() {
     };
   }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto]);
 
-  // ✅ 화면에 보여줄 URI는 "active" 기준 (전환 중에도 A 유지)
   const displayResolved = activeResolved || initialInfo;
   const displayUri = displayResolved?.uri || currentPhoto?.uri;
 
@@ -249,20 +334,54 @@ export default function EditorScreen() {
     () => FILTERS.find((f) => f.id === activeFilterId) || FILTERS[0],
     [activeFilterId]
   );
-  const activeMatrix = useMemo(() => (activeFilterObj.matrix ?? IDENTITY) as ColorMatrix, [activeFilterObj]);
+  const activeMatrix = useMemo(
+    () => (activeFilterObj.matrix ?? IDENTITY) as ColorMatrix,
+    [activeFilterObj]
+  );
 
-  // Debounced draft save
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ 추가: 마지막 저장 시그니처(중복 저장 방지)
+  const lastSavedSigRef = useRef<string>("");
+
+  // ✅ 추가: 저장 중 플래그(경합 방지)
+  const savingRef = useRef(false);
+
+  const buildDraftSig = (ui: EditState, idx: number) => {
+    const c = ui.crop;
+    const cropSig = `${Math.round(c.x)}|${Math.round(c.y)}|${Math.round(c.scale * 1000)}`;
+    return `${idx}|${ui.filterId}|${cropSig}`;
+  };
+
   useEffect(() => {
+    // ✅ 전환중/내보내기중이면 저장하지 않음
+    if (isSwitchingPhoto || isExporting.current) return;
+
+    const sig = buildDraftSig(currentUi, currentIndex);
+
+    // ✅ 똑같은 상태면 저장 안 함
+    if (sig === lastSavedSigRef.current) return;
+
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveDraft("editor").catch(() => { });
-    }, 500);
+
+    saveTimerRef.current = setTimeout(async () => {
+      if (savingRef.current) return;
+
+      savingRef.current = true;
+      try {
+        await saveDraft("editor");
+        lastSavedSigRef.current = sig;
+      } catch {
+        // ignore
+      } finally {
+        savingRef.current = false;
+      }
+    }, 700);
 
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [currentUi, currentIndex, saveDraft]);
+  }, [currentUi, currentIndex, saveDraft, isSwitchingPhoto]);
 
   const handleBack = () => {
     if (isSwitchingPhoto) return;
@@ -270,38 +389,47 @@ export default function EditorScreen() {
     else router.replace("/create/select");
   };
 
-  /**
-   * ✅ Promise 기반 Skia bake 호출
-   * - preview/print 둘 다 동일 로직
-   * - 동시에 여러 bake 요청이 오면 직렬화 (크래시/레퍼런스 꼬임 방지)
-   */
   const requestSkiaBake = useCallback(
     async (uri: string, w: number, h: number, matrix: ColorMatrix): Promise<string | null> => {
+      if (!isAliveRef.current) return null;
+
       while (bakeBusyRef.current) await waitRaf();
       bakeBusyRef.current = true;
 
       try {
+        if (!isAliveRef.current) return null;
+
         return await new Promise<string | null>((resolve) => {
+          pendingBakeResolveRef.current = resolve;
           setBakeJob({ uri, w, h, matrix, resolve });
         });
       } finally {
+        pendingBakeResolveRef.current = null;
         bakeBusyRef.current = false;
       }
     },
     []
   );
 
-  /**
-   * ✅ bakeJob 수행 (컴포넌트 마운트 → 2 raf → snapshot → 파일)
-   */
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       if (!bakeJob) return;
 
+      const finish = (out: string | null) => {
+        if (cancelled) return;
+        try {
+          bakeJob.resolve(out);
+        } catch { }
+        setBakeJob(null);
+      };
+
+      if (!isAliveRef.current) return finish(null);
+
       await wait2Raf();
       if (cancelled) return;
+      if (!isAliveRef.current) return finish(null);
 
       const tryOnce = async () => {
         const snapshot = filteredCanvasRef.current?.snapshot();
@@ -312,29 +440,30 @@ export default function EditorScreen() {
 
       try {
         const first = await tryOnce();
-        if (first && !cancelled) {
-          bakeJob.resolve(first);
-          setBakeJob(null);
-          return;
-        }
+        if (first) return finish(first);
       } catch { }
 
       await waitRaf();
+      if (!isAliveRef.current) return finish(null);
+
       try {
         const second = await tryOnce();
-        if (second && !cancelled) {
-          bakeJob.resolve(second);
-          setBakeJob(null);
-          return;
-        }
+        if (second) return finish(second);
       } catch (e) {
         console.warn("[Filter] Snapshot retry failed:", e);
       }
 
-      if (!cancelled) {
-        bakeJob.resolve(null);
-        setBakeJob(null);
+      await sleep(50);
+      if (!isAliveRef.current) return finish(null);
+
+      try {
+        const third = await tryOnce();
+        if (third) return finish(third);
+      } catch (e) {
+        console.warn("[Filter] Snapshot final retry failed:", e);
       }
+
+      return finish(null);
     };
 
     run();
@@ -343,17 +472,18 @@ export default function EditorScreen() {
     };
   }, [bakeJob]);
 
-  // ✅ incomingResolved가 준비되면 crossfade 시작
   useEffect(() => {
     if (!isSwitchingPhoto) return;
     if (!incomingResolved) return;
     if (!outgoingRef.current) return;
+    if (!isAliveRef.current) return;
 
-    // 시작 상태: outgoing 1, incoming 0
+    cancelAnimation(outgoingOpacity);
+    cancelAnimation(incomingOpacity);
+
     outgoingOpacity.value = 1;
     incomingOpacity.value = 0;
 
-    // crossfade
     incomingOpacity.value = withTiming(1, { duration: 180 });
     outgoingOpacity.value = withTiming(0, { duration: 180 }, (finished) => {
       if (finished) runOnJS(commitCrossfade)();
@@ -364,6 +494,10 @@ export default function EditorScreen() {
     if (!photos || photos.length === 0 || isExporting.current) return;
     if (isSwitchingPhoto) return;
 
+    // 🔥 여기 추가
+    bgPausedRef.current = true;
+    bgTokenRef.current += 1;
+
     const idx = currentIndex;
     const photo = { ...photos[idx] } as any;
     const vp = viewportDim;
@@ -371,7 +505,7 @@ export default function EditorScreen() {
     const frameRect = cropRef.current?.getFrameRect();
     const filterUi = { ...currentUi };
     const matrix = activeMatrix;
-    const resolvedInfo = displayResolved; // ✅ 현재 보이는(active) 기준
+    const resolvedInfo = displayResolved;
     const activeFilter = activeFilterObj;
 
     if (!vp || !cropState || !frameRect || !resolvedInfo) {
@@ -383,21 +517,77 @@ export default function EditorScreen() {
       isExporting.current = true;
 
       const uiUri = resolvedInfo.uri || photo.uri;
-      const uiW = resolvedInfo.width ?? photo.width;
-      const uiH = resolvedInfo.height ?? photo.height;
 
-      const cropRes = calculatePrecisionCrop({
+      // ✅ uiUri "실제 파일" 사이즈를 기준으로 export crop 계산/보정
+      let uiW = resolvedInfo.width ?? photo.width;
+      let uiH = resolvedInfo.height ?? photo.height;
+
+      try {
+        const real = await getImageSizeAsync(uiUri);
+        if (real?.width && real?.height) {
+          uiW = real.width;
+          uiH = real.height;
+        }
+      } catch {
+        // fallback: 기존 값 사용
+      }
+
+      // 🔥 UI crop을 export 전에 한 번 더 안전하게 clamp
+      const safeUi = clampTransform(
+        cropState.x,
+        cropState.y,
+        cropState.scale,
+        uiW,
+        uiH,
+        frameRect.width,
+        5.0
+      );
+
+      // 🔹 UI → source 좌표 계산
+      // 🔹 UI → source 좌표 계산
+      const rawCrop = calculatePrecisionCrop({
         sourceSize: { width: uiW, height: uiH },
         containerSize: { width: vp.width, height: vp.height },
         frameRect,
-        transform: { scale: cropState.scale, translateX: cropState.x, translateY: cropState.y },
+        transform: {
+          scale: cropState.scale,
+          translateX: cropState.x,
+          translateY: cropState.y,
+        },
       });
 
-      if (!cropRes.isValid) throw new Error("[Editor] Invalid crop result");
+      // 🔹 1차 보정 (기존 유틸)
+      const safe1 = sanitizeCropRect(rawCrop, uiW, uiH);
 
-      const previewRes = await generatePreviewExport(uiUri, cropRes);
+      // 🔹 2차 보정: expo-image-manipulator(renderAsync) 전용 "완전 엄격" 보정
+      // - originX/originY/width/height 모두 정수
+      // - x,y는 0..W-1 / 0..H-1
+      // - width/height는 반드시 (W-x), (H-y) 안쪽
+      const x = Math.max(0, Math.min(Math.floor(safe1.x), uiW - 1));
+      const y = Math.max(0, Math.min(Math.floor(safe1.y), uiH - 1));
+
+      const maxW = uiW - x;
+      const maxH = uiH - y;
+
+      // square 강제 + 내부 보장
+      const size = Math.max(
+        1,
+        Math.min(Math.floor(safe1.width), maxW, maxH)
+      );
+
+      const finalCrop = {
+        x,
+        y,
+        width: size,
+        height: size,
+      };
+
+      // ✅ Preview export
+      const previewRes = await generatePreviewExport(uiUri, finalCrop);
       let finalPreviewUri = previewRes.uri;
       let finalPrintUri = "";
+
+
 
       if (filterUi.filterId !== "original") {
         const bakedPreview = await requestSkiaBake(
@@ -407,11 +597,8 @@ export default function EditorScreen() {
           matrix
         );
 
-        if (bakedPreview) {
-          finalPreviewUri = bakedPreview;
-        } else {
-          console.warn("[Filter] Preview bake unavailable (keeping unbaked preview)");
-        }
+        if (bakedPreview) finalPreviewUri = bakedPreview;
+        else console.warn("[Filter] Preview bake unavailable (keeping unbaked preview)");
       }
 
       const filterParams = {
@@ -422,11 +609,11 @@ export default function EditorScreen() {
 
       await updatePhoto(idx, {
         edits: {
-          crop: cropRes,
+          crop: finalCrop,
           filterId: filterUi.filterId,
           filterParams,
           ui: { ...filterUi, crop: cropState },
-          committed: { cropPx: cropRes as any, filterId: filterUi.filterId, filterParams },
+          committed: { cropPx: finalCrop as any, filterId: filterUi.filterId, filterParams },
         } as any,
         output: {
           ...(photo.output || {}),
@@ -438,7 +625,13 @@ export default function EditorScreen() {
         viewport: vp,
       });
 
+      const myToken = bgTokenRef.current;
+
       exportQueue.enqueue(async () => {
+        if (!isAliveRef.current) return;
+        if (bgPausedRef.current) return;
+        if (myToken !== bgTokenRef.current) return;
+
         try {
           let origW = photo.width;
           let origH = photo.height;
@@ -448,6 +641,8 @@ export default function EditorScreen() {
             origW = s.width;
             origH = s.height;
           }
+
+          if (!isAliveRef.current || bgPausedRef.current) return;
 
           const CROP_SIZE_PX = frameRect.width;
 
@@ -472,12 +667,16 @@ export default function EditorScreen() {
             5.0
           );
 
-          const finalCrop = calculatePrecisionCrop({
+          const rawFinal = calculatePrecisionCrop({
             sourceSize: { width: origW, height: origH },
             containerSize: { width: vp.width, height: vp.height },
             frameRect: { ...frameRect },
             transform: { scale: clampedUi.scale, translateX: clampedUi.tx, translateY: clampedUi.ty },
           });
+
+          const finalCrop = sanitizeCropRect(rawCrop, uiW, uiH);
+
+          if (!isAliveRef.current || bgPausedRef.current) return;
 
           const printRes = await generatePrintExport(photo.uri, finalCrop, {
             srcW: origW,
@@ -486,6 +685,8 @@ export default function EditorScreen() {
             viewH: vp.height,
             viewCrop: finalCrop,
           });
+
+          if (!isAliveRef.current || bgPausedRef.current) return;
 
           let finalPrint = printRes.uri;
 
@@ -496,12 +697,14 @@ export default function EditorScreen() {
               printRes.height,
               matrix
             );
-            if (bakedPrint) {
-              finalPrint = bakedPrint;
-            } else {
-              console.warn("[Filter] Print bake unavailable (keeping unbaked 5000 print)");
-            }
+
+            if (!isAliveRef.current || bgPausedRef.current) return;
+
+            if (bakedPrint) finalPrint = bakedPrint;
+            else console.warn("[Filter] Print bake unavailable (keeping unbaked 5000 print)");
           }
+
+          if (!isAliveRef.current || bgPausedRef.current) return;
 
           await updatePhoto(idx, {
             output: { ...(photos[idx] as any).output, printUri: finalPrint },
@@ -511,12 +714,10 @@ export default function EditorScreen() {
         }
       }, `Print-${idx}`);
 
-      // ✅ Navigate (crossfade)
       if (idx < photos.length - 1) {
         const nextIdx = idx + 1;
 
-        // outgoing 프레임 캡처 (이것이 A 유지의 핵심)
-        const outResolved = displayResolved;
+        const outResolved = displayResolved!;
         outgoingRef.current = {
           index: idx,
           resolved: outResolved,
@@ -524,28 +725,44 @@ export default function EditorScreen() {
           matrix,
         };
 
-        // 전환 시작: incoming을 로딩하기 위해 currentIndex만 넘김
+        cancelAnimation(outgoingOpacity);
+        cancelAnimation(incomingOpacity);
+        outgoingOpacity.value = 1;
+        incomingOpacity.value = 0;
+
         setIsSwitchingPhoto(true);
         setIncomingResolved(null);
 
-        // 다음 사진 resolve가 끝나면 incomingResolved가 채워지고,
-        // 그 순간 useEffect에서 crossfade가 자동 시작됨
         setCurrentIndex(nextIdx);
       } else {
+        bgPausedRef.current = true;
+        bgTokenRef.current += 1;
+
+        try {
+          pendingBakeResolveRef.current?.(null);
+        } catch { }
+        pendingBakeResolveRef.current = null;
+        setBakeJob(null);
+
         router.push("/create/checkout");
       }
     } catch (e) {
       console.error("[Next] HandleNext Error:", e);
       Alert.alert(t.failedTitle || "Error", t.failedBody || "Failed to process photo.");
+
       setIsSwitchingPhoto(false);
       setIncomingResolved(null);
       outgoingRef.current = null;
+
+      cancelAnimation(outgoingOpacity);
+      cancelAnimation(incomingOpacity);
+      outgoingOpacity.value = 0;
+      incomingOpacity.value = 1;
     } finally {
       isExporting.current = false;
     }
   };
 
-  // Restore UI on focus / index
   useFocusEffect(
     useCallback(() => {
       const p = photos?.[currentIndex] as any;
@@ -603,17 +820,13 @@ export default function EditorScreen() {
           if (width > 0 && height > 0) setViewportDim({ width, height });
         }}
       >
-        {/* ✅ 레이어 2개 구조 (빈 프레임 없음) */}
         <View style={{ flex: 1, width: "100%", height: "100%" }}>
           {/* OUTGOING (A) */}
           {isSwitchingPhoto && outgoing && viewportDim && (
-            <Animated.View
-              pointerEvents="none"
-              style={[StyleSheet.absoluteFill, outgoingStyle]}
-            >
+            <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingStyle]}>
               <CropFrameRN
                 key={`out-${outgoing.index}-${outgoing.resolved.uri}`}
-                ref={cropRef}
+                // ✅ ref 제거 (outgoing이 ref 덮어쓰지 않게)
                 imageSrc={outgoing.resolved.uri}
                 imageWidth={outgoing.resolved.width}
                 imageHeight={outgoing.resolved.height}
@@ -642,11 +855,21 @@ export default function EditorScreen() {
                 containerWidth={viewportDim.width}
                 containerHeight={viewportDim.height}
                 crop={currentUi.crop}
-                onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
+                onChange={(newCrop: any) =>
+                  setCurrentUi((prev) => {
+                    const p = prev.crop;
+                    const dx = Math.abs((newCrop?.x ?? 0) - p.x);
+                    const dy = Math.abs((newCrop?.y ?? 0) - p.y);
+                    const ds = Math.abs((newCrop?.scale ?? 1) - p.scale);
+
+                    if (dx < 0.25 && dy < 0.25 && ds < 0.0005) return prev;
+                    return { ...prev, crop: newCrop };
+                  })
+                }
                 matrix={activeMatrix}
                 photoIndex={currentIndex}
               />
-            ) : (
+            ) : isSwitchingPhoto ? null : (
               <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <ActivityIndicator size="large" color={colors.ink} />
               </View>
@@ -654,7 +877,6 @@ export default function EditorScreen() {
           </Animated.View>
         </View>
 
-        {/* ✅ Hidden Skia Canvas for baking (preview OR print) */}
         {bakeJob && (
           <View
             collapsable={false}

@@ -50,32 +50,31 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
     const MARGIN_X = (PREVIEW_W - CROP_SIZE) / 2;
     const MARGIN_Y = (PREVIEW_H - CROP_SIZE) / 2;
 
-    // cover base size (scale=1일 때 cropSize를 "커버"하도록)
+    // cover base size (scale=1일 때 cropSize를 커버)
     const base = useMemo(() => {
         if (!imageWidth || !imageHeight) return { w: 0, h: 0 };
         const cover = Math.max(CROP_SIZE / imageWidth, CROP_SIZE / imageHeight);
         return { w: imageWidth * cover, h: imageHeight * cover };
     }, [imageWidth, imageHeight, CROP_SIZE]);
 
-    /**
-     * ✅ 좌표계 통일:
-     * - tx/ty: "screen space(px)" 이동량 (줌에 상관없이 손가락 이동=화면 이동)
-     * - sc: scale
-     */
     const tx = useSharedValue(crop?.x ?? 0);
     const ty = useSharedValue(crop?.y ?? 0);
     const sc = useSharedValue(crop?.scale ?? 1);
 
+    // gesture 시작값(스냅샷)
     const savedTx = useSharedValue(0);
     const savedTy = useSharedValue(0);
     const savedSc = useSharedValue(1);
+
+    // 상태
+    const isPinching = useSharedValue(false);
 
     useImperativeHandle(ref, () => ({
         getLatestCrop: () => ({ x: tx.value, y: ty.value, scale: sc.value }),
         getFrameRect: () => ({ x: MARGIN_X, y: MARGIN_Y, width: CROP_SIZE, height: CROP_SIZE }),
     }));
 
-    // props sync (crop 변경 시 shared + saved 모두 동기화해서 "튕김" 방지)
+    // props sync
     useEffect(() => {
         tx.value = crop.x;
         ty.value = crop.y;
@@ -88,95 +87,101 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
 
     const clampNow = (nx: number, ny: number, ns: number) => {
         "worklet";
+        if (base.w <= 0 || base.h <= 0) return { tx: 0, ty: 0, scale: 1 };
         return clampTransform(nx, ny, ns, base.w, base.h, CROP_SIZE, 5.0);
     };
 
-    // ✅ base(w/h) 변동(이미지 로드/리사이즈) 시 현재 값을 clamp 해서 밖으로 새거나 점프하는 것 방지
+    // base 변경 시 clamp
     useEffect(() => {
         if (base.w <= 0 || base.h <= 0) return;
-        const t = clampTransform(tx.value, ty.value, sc.value, base.w, base.h, CROP_SIZE, 5.0);
-        tx.value = t.tx;
-        ty.value = t.ty;
-        sc.value = t.scale;
+        const t0 = clampTransform(tx.value, ty.value, sc.value, base.w, base.h, CROP_SIZE, 5.0);
+        tx.value = t0.tx;
+        ty.value = t0.ty;
+        sc.value = t0.scale;
     }, [base.w, base.h, CROP_SIZE]);
 
-    // ✅ Pan: screen space 1:1 (줌 상태에서도 동일 속도)
+    // ✅ Gesture sensitivity (tune here only)
+    const PAN_DAMP = 0.6;        // 평소 드래그 감도 (0.45~0.7)
+    const PINCH_DAMP = 0.6;     // 줌 감도 (0.18~0.35)
+    const PINCH_PAN_DAMP = 0.6;  // 줌 중 드래그 감도 (PAN_DAMP랑 동일 추천)
+
+    // ✅ Pan (드래그 속도만 완만)
     const panGesture = Gesture.Pan()
-        // 아주 작은 움직임은 탭으로 남기기 (필터/버튼 터치 체감 개선)
-        .activeOffsetX([-6, 6])
-        .activeOffsetY([-6, 6])
         .onBegin(() => {
+            if (isPinching.value) return;
+
             cancelAnimation(tx);
             cancelAnimation(ty);
-            cancelAnimation(sc);
+
             savedTx.value = tx.value;
             savedTy.value = ty.value;
-            savedSc.value = sc.value;
         })
         .onUpdate((e) => {
-            const nx = savedTx.value + e.translationX; // ✅ /scale 제거
-            const ny = savedTy.value + e.translationY; // ✅ /scale 제거
-            const t = clampNow(nx, ny, sc.value);
-            tx.value = t.tx;
-            ty.value = t.ty;
-            sc.value = t.scale;
+            if (isPinching.value) return;
+
+
+            const nx = savedTx.value + e.translationX * PAN_DAMP;
+            const ny = savedTy.value + e.translationY * PAN_DAMP;
+
+            const t0 = clampNow(nx, ny, sc.value);
+            tx.value = t0.tx;
+            ty.value = t0.ty;
+            sc.value = t0.scale;
         })
         .onEnd(() => {
-            const t = clampNow(tx.value, ty.value, sc.value);
-            tx.value = withTiming(t.tx);
-            ty.value = withTiming(t.ty);
-            sc.value = withTiming(t.scale);
-            runOnJS(onChange)({ x: t.tx, y: t.ty, scale: t.scale });
+            runOnJS(onChange)({ x: tx.value, y: ty.value, scale: sc.value });
         });
 
-    // ✅ Pinch: focal(손가락 중심) 유지 (screen space 버전)
+    // ✅ Pinch (줌 속도 완만 + focal 안정: savedSc 기반)
     const pinchGesture = Gesture.Pinch()
         .onBegin(() => {
+            isPinching.value = true;
+
             cancelAnimation(sc);
             cancelAnimation(tx);
             cancelAnimation(ty);
+
             savedSc.value = sc.value;
             savedTx.value = tx.value;
             savedTy.value = ty.value;
         })
         .onUpdate((e) => {
-            // damp(조금 부드럽게)
-            const nextScale = savedSc.value * (1 + (e.scale - 1) * 0.9);
+            // 🔥 줌 속도 완만
+            const delta = (e.scale - 1) * PINCH_DAMP;
+            const nextScale = Math.max(1, savedSc.value + delta);
 
-            // focal을 "컨테이너 센터" 기준으로 변환 (screen px)
             const fx = e.focalX - PREVIEW_W / 2;
             const fy = e.focalY - PREVIEW_H / 2;
 
-            // ✅ screen space focal 유지:
-            // nx = savedTx + fx - fx*(nextScale/savedSc)
-            const nx = savedTx.value + fx - fx * (nextScale / savedSc.value);
-            const ny = savedTy.value + fy - fy * (nextScale / savedSc.value);
+            // ✅ ratio는 반드시 "제스처 시작 스케일(savedSc)" 기준
+            const prevScale = savedSc.value > 0 ? savedSc.value : 1;
+            const ratio = nextScale / prevScale;
 
-            const t = clampNow(nx, ny, nextScale);
-            sc.value = t.scale;
-            tx.value = t.tx;
-            ty.value = t.ty;
+            const nx = savedTx.value * ratio + fx * (1 - ratio) * PINCH_PAN_DAMP;
+            const ny = savedTy.value * ratio + fy * (1 - ratio) * PINCH_PAN_DAMP;
+
+            const t0 = clampNow(nx, ny, nextScale);
+            sc.value = t0.scale;
+            tx.value = t0.tx;
+            ty.value = t0.ty;
         })
         .onEnd(() => {
-            const t = clampNow(tx.value, ty.value, sc.value);
-            sc.value = withTiming(t.scale);
-            tx.value = withTiming(t.tx);
-            ty.value = withTiming(t.ty);
-            runOnJS(onChange)({ x: t.tx, y: t.ty, scale: t.scale });
+            const t0 = clampNow(tx.value, ty.value, sc.value);
+
+            sc.value = withTiming(t0.scale);
+            tx.value = withTiming(t0.tx);
+            ty.value = withTiming(t0.ty);
+
+            runOnJS(onChange)({ x: t0.tx, y: t0.ty, scale: t0.scale });
+            isPinching.value = false;
         });
 
-    // Simultaneous로 자연스럽게
-    const gesture = Gesture.Simultaneous(panGesture, pinchGesture);
+    // ✅ Race 유지(지금 UX 기반) — 충돌 최소
+    const gesture = Gesture.Race(panGesture, pinchGesture);
 
-    /**
-     * ✅ 렌더 transform 핵심:
-     * - scale 이후 translate를 넣으면 translate가 scale 영향 받음
-     * - 그래서 translate를 tx/sc로 넣어서 "화면에서 tx만큼" 움직이도록 상쇄
-     */
     const animatedImageStyle = useAnimatedStyle(() => {
         const w = base.w;
         const h = base.h;
-
         const s = sc.value <= 0 ? 1 : sc.value;
 
         return {
@@ -185,10 +190,7 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
             transform: [
                 { translateX: -w / 2 },
                 { translateY: -h / 2 },
-
                 { scale: s },
-
-                // ✅ scale 영향 상쇄 → 드래그 속도/클램프/내보내기 좌표 일치
                 { translateX: tx.value / s },
                 { translateY: ty.value / s },
             ],
@@ -198,10 +200,9 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
     if (!imageSrc) return null;
 
     return (
-        <GestureDetector gesture={gesture}>
-            <View style={[styles.container, { width: PREVIEW_W, height: PREVIEW_H }]}>
+        <View style={[styles.container, { width: PREVIEW_W }]}>
+            <GestureDetector gesture={gesture}>
                 <View style={[styles.previewWrap, { width: PREVIEW_W, height: PREVIEW_H }]}>
-                    {/* ✅ 전체 사진 레이어 (중앙 정렬) */}
                     <Animated.View
                         style={[
                             styles.centerAnchor,
@@ -219,7 +220,6 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                         />
                     </Animated.View>
 
-                    {/* ✅ 오버레이(연회색 마스킹) */}
                     <View style={[styles.overlayTop, { height: MARGIN_Y }]} pointerEvents="none" />
                     <View style={[styles.overlayBottom, { height: MARGIN_Y }]} pointerEvents="none" />
                     <View
@@ -231,7 +231,6 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                         pointerEvents="none"
                     />
 
-                    {/* ✅ 크롭창 border만 */}
                     <View
                         style={[
                             styles.cropWindow,
@@ -240,12 +239,12 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                         pointerEvents="none"
                     />
                 </View>
+            </GestureDetector>
 
-                <View style={styles.labelContainer} pointerEvents="none">
-                    <Text style={styles.label}>{t["printArea"] || "Print area (20×20cm)"}</Text>
-                </View>
+            <View style={styles.labelContainer} pointerEvents="none">
+                <Text style={styles.label}>{t["printArea"] || "Print area (20×20cm)"}</Text>
             </View>
-        </GestureDetector>
+        </View>
     );
 });
 
