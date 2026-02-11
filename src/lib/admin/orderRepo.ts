@@ -1,3 +1,4 @@
+// src/lib/admin/orderRepo.ts
 import {
     collection,
     query,
@@ -6,7 +7,7 @@ import {
     limit,
     getDocs,
     doc,
-    getDoc
+    getDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -14,65 +15,95 @@ import {
     OrderDetail,
     OrderItemAdmin,
     OrderStatus,
-    ListOrdersParams
+    ListOrdersParams,
 } from "./types";
 
-/**
- * Normalizes Firestore timestamps to ISO strings.
- */
 function toISO(ts: any): string {
     if (!ts) return new Date().toISOString();
     if (typeof ts.toDate === "function") return ts.toDate().toISOString();
     if (ts instanceof Date) return ts.toISOString();
     if (typeof ts === "string") return ts;
     if (typeof ts === "number") return new Date(ts).toISOString();
-    // Firestore Timestamp check
     if (ts.seconds !== undefined) return new Date(ts.seconds * 1000).toISOString();
     return new Date().toISOString();
 }
 
-/**
- * Normalizes customer data from various legacy formats.
- */
 function normalizeCustomer(data: any): any {
     return {
         fullName: data.customer?.fullName || data.customer?.name || data.shipping?.fullName || "Guest",
-        email: data.customer?.email || data.uid || "no-email",
+        email: data.customer?.email || data.shipping?.email || data.uid || "no-email",
         phone: data.customer?.phone || data.shipping?.phone || "",
     };
 }
 
-export async function listOrders(params: ListOrdersParams): Promise<{ rows: OrderHeader[]; nextCursor?: string }> {
-    const { q, status, country, limit: limitCount = 20 } = params;
+function inRange(iso: string, from?: string, to?: string) {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return true;
 
-    let qry = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+    if (from) {
+        const s = new Date(from);
+        s.setHours(0, 0, 0, 0);
+        const st = s.getTime();
+        if (!Number.isNaN(st) && t < st) return false;
+    }
+
+    if (to) {
+        const e = new Date(to);
+        e.setHours(23, 59, 59, 999);
+        const et = e.getTime();
+        if (!Number.isNaN(et) && t > et) return false;
+    }
+
+    return true;
+}
+
+export async function listOrders(
+    params: ListOrdersParams = {}
+): Promise<{ rows: OrderHeader[]; nextCursor?: string }> {
+    const {
+        status,
+        country,
+        limit: limitCount = 200,
+        sort = "desc",
+        from,
+        to,
+    } = params;
+
+    // ✅ SAFE QUERY (avoid composite index explosions):
+    // orderBy(createdAt) + optional where(status==)
+    let qry = query(collection(db, "orders"), orderBy("createdAt", sort), limit(limitCount));
 
     if (status && status !== "ALL") {
-        qry = query(qry, where("status", "==", status));
+        qry = query(collection(db, "orders"), where("status", "==", status), orderBy("createdAt", sort), limit(limitCount));
     }
 
-    if (q && q.trim().length > 0) {
-        qry = query(qry, where("orderCode", "==", q.trim().toUpperCase()));
+    let snap;
+    try {
+        snap = await getDocs(qry);
+    } catch (e) {
+        console.error("[Admin listOrders] getDocs failed", e);
+        throw e;
     }
 
-    const snap = await getDocs(query(qry, limit(limitCount)));
-
-    let rows: OrderHeader[] = snap.docs.map(d => {
+    let rows: OrderHeader[] = snap.docs.map((d) => {
         const data = d.data();
+        const createdAtISO = toISO(data.createdAt);
+
         return {
             id: d.id,
             orderCode: data.orderCode || d.id.slice(-7).toUpperCase(),
             status: data.status as OrderStatus,
-            createdAt: toISO(data.createdAt),
+            createdAt: createdAtISO,
             updatedAt: toISO(data.updatedAt),
             uid: data.uid,
             currency: data.currency || "THB",
-            pricing: data.pricing || {
-                subtotal: data.subtotal || 0,
-                shippingFee: data.shippingFee || 0,
-                discount: data.discount || 0,
-                total: data.total || 0,
-            },
+            pricing:
+                data.pricing || {
+                    subtotal: data.subtotal || 0,
+                    shippingFee: data.shippingFee || 0,
+                    discount: data.discount || 0,
+                    total: data.total || 0,
+                },
             customer: normalizeCustomer(data),
             shipping: data.shipping || {},
             payment: {
@@ -84,12 +115,17 @@ export async function listOrders(params: ListOrdersParams): Promise<{ rows: Orde
             itemsCount: data.itemsCount || data.items?.length || 0,
             storageBasePath: data.storageBasePath,
             locale: data.locale || "EN",
+
+            // ✅ Best-effort warning (exact audit happens in detail)
+            hasPrintWarning: Array.isArray(data.items)
+                ? data.items.some((i: any) => i?.assets?.printMeta?.ok5000 === false)
+                : false,
         };
     });
 
-    if (country && country !== "ALL") {
-        rows = rows.filter(r => r.shipping?.country === country);
-    }
+    // ✅ in-memory filters
+    if (from || to) rows = rows.filter((r) => inRange(r.createdAt, from, to));
+    if (country && country !== "ALL") rows = rows.filter((r) => r.shipping?.country === country);
 
     return { rows };
 }
@@ -109,12 +145,13 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
         updatedAt: toISO(data.updatedAt),
         uid: data.uid,
         currency: data.currency || "THB",
-        pricing: data.pricing || {
-            subtotal: data.subtotal || 0,
-            shippingFee: data.shippingFee || 0,
-            discount: data.discount || 0,
-            total: data.total || 0,
-        },
+        pricing:
+            data.pricing || {
+                subtotal: data.subtotal || 0,
+                shippingFee: data.shippingFee || 0,
+                discount: data.discount || 0,
+                total: data.total || 0,
+            },
         customer: normalizeCustomer(data),
         shipping: data.shipping || {},
         payment: {
@@ -129,11 +166,14 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     };
 
     // Subcollection items
-    const itemsSnap = await getDocs(query(collection(db, "orders", orderId, "items"), orderBy("index", "asc")));
+    const itemsSnap = await getDocs(
+        query(collection(db, "orders", orderId, "items"), orderBy("index", "asc"))
+    );
+
     let items: OrderItemAdmin[] = [];
 
     if (!itemsSnap.empty) {
-        items = itemsSnap.docs.map(i => {
+        items = itemsSnap.docs.map((i) => {
             const idata = i.data();
             return {
                 index: idata.index,
@@ -165,9 +205,10 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
                 printUrl: idata.printUrl,
                 previewPath: idata.storagePath,
                 printPath: idata.printStoragePath,
-            },
+                printMeta: idata.assets?.printMeta,
+            } as any,
         }));
     }
 
-    return { ...header, items };
+    return { ...header, items } as any;
 }

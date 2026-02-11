@@ -36,12 +36,9 @@ import { IDENTITY, type ColorMatrix } from "../utils/colorMatrix";
 import {
   calculatePrecisionCrop,
   defaultCenterCrop,
-  clampTransform,
-  type Rect as CropRect,
 } from "../utils/cropMath";
 import {
   generatePreviewExport,
-  generatePrintExport,
   bakeFilterFromCanvasSnapshot,
 } from "../utils/editorLogic";
 import { exportQueue } from "../utils/exportQueue";
@@ -79,6 +76,9 @@ type BakeJob = {
   w: number;
   h: number;
   matrix: ColorMatrix;
+  // ✅ overlay도 bake에 포함 (FilteredImageSkia가 지원하면 그대로 적용됨)
+  overlayColor?: string;
+  overlayOpacity?: number;
   resolve: (out: string | null) => void;
 };
 
@@ -89,29 +89,50 @@ type OutgoingFrame = {
   matrix: ColorMatrix;
 };
 
-// ✅ manipulator crash 방지: 어떤 경우에도 이미지 밖으로 crop이 나가지 않게 강제 보정
+// ✅ manipulator crash 방지: crop이 이미지 밖으로 나가지 않게 강제 보정
 const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
   const w = Math.max(1, Math.floor(Number.isFinite(r?.width) ? r.width : 1));
   const h = Math.max(1, Math.floor(Number.isFinite(r?.height) ? r.height : 1));
   let x = Math.floor(Number.isFinite(r?.x) ? r.x : 0);
   let y = Math.floor(Number.isFinite(r?.y) ? r.y : 0);
 
-  // clamp origin first
   x = Math.max(0, Math.min(x, Math.max(0, srcW - 1)));
   y = Math.max(0, Math.min(y, Math.max(0, srcH - 1)));
 
-  // clamp size to fit
   const maxSizeW = Math.max(1, srcW - x);
   const maxSizeH = Math.max(1, srcH - y);
-  const size = Math.max(1, Math.min(Math.max(w, h), maxSizeW, maxSizeH)); // enforce square style
+  const size = Math.max(1, Math.min(Math.max(w, h), maxSizeW, maxSizeH));
 
-  // ensure inside (again)
   if (x + size > srcW) x = Math.max(0, srcW - size);
   if (y + size > srcH) y = Math.max(0, srcH - size);
 
-  const out = { x, y, width: size, height: size, isValid: true };
-  return out;
+  return { x, y, width: size, height: size, isValid: true };
 };
+
+// ✅ Editor 내에서만 가능한 Skia bake/queue가 끝났는지 기다리는 헬퍼
+async function waitForQueueIdle(timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!exportQueue.isBusy && exportQueue.pendingCount === 0) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
+// ✅ 모든 viewUri가 생길 때까지 기다림
+async function waitForAllViewUris(getPhotos: () => any[], timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const arr = getPhotos() || [];
+    const missing = arr
+      .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
+      .filter((x: any) => !x.viewUri);
+
+    if (missing.length === 0) return true;
+    await sleep(200);
+  }
+  return false;
+}
 
 export default function EditorScreen() {
   const router = useRouter();
@@ -119,11 +140,18 @@ export default function EditorScreen() {
   const { photos, currentIndex, setCurrentIndex, saveDraft, updatePhoto } = usePhoto();
   const { t } = useLanguage();
 
+  // ✅ 최신 photos ref (stale closure 방지)
+  const photosRef = useRef<any[]>(photos as any[]);
+  useEffect(() => {
+    photosRef.current = photos as any[];
+  }, [photos]);
+
   const resolvedCache = useRef<Record<string, ResolvedInfo>>({});
   const currentPhoto = photos?.[currentIndex] as any;
 
   const isAliveRef = useRef(true);
 
+  // ✅ pause 토글은 쓰지만, 현재 로직상 pause를 실제로 켜지는 않음
   const bgPausedRef = useRef(false);
   const bgTokenRef = useRef(0);
 
@@ -134,12 +162,12 @@ export default function EditorScreen() {
 
   useEffect(() => {
     isAliveRef.current = true;
-    bgPausedRef.current = false;
-
     return () => {
       isAliveRef.current = false;
-      bgPausedRef.current = true;
-      bgTokenRef.current += 1;
+
+      try {
+        exportQueue.clear();
+      } catch { }
 
       try {
         pendingBakeResolveRef.current?.(null);
@@ -156,12 +184,11 @@ export default function EditorScreen() {
   const [viewportDim, setViewportDim] = useState<{ width: number; height: number } | null>(null);
 
   const [isSwitchingPhoto, setIsSwitchingPhoto] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
 
   const isExporting = useRef(false);
 
-  // ✅ IMPORTANT: incoming만 ref 보유 (outgoing이 ref 덮어쓰면 crop/frameRect 꼬임)
   const cropRef = useRef<any>(null);
-
   const outgoingRef = useRef<OutgoingFrame | null>(null);
 
   const outgoingOpacity = useSharedValue(0);
@@ -173,7 +200,7 @@ export default function EditorScreen() {
   const commitCrossfade = useCallback(() => {
     if (!isAliveRef.current) return;
 
-    bgPausedRef.current = false; // 🔥 다시 허용
+    bgPausedRef.current = false;
 
     if (incomingResolved) setActiveResolved(incomingResolved);
     setIncomingResolved(null);
@@ -234,9 +261,8 @@ export default function EditorScreen() {
         });
       }
 
-      if (isSwitchingPhoto) {
-        setIncomingResolved(info);
-      } else {
+      if (isSwitchingPhoto) setIncomingResolved(info);
+      else {
         setActiveResolved(info);
         setIncomingResolved(null);
       }
@@ -272,19 +298,19 @@ export default function EditorScreen() {
         }
 
         let inputUri = uri;
-
         if (uri.startsWith("content://")) {
-          const baseDir =
-            (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
+          const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
           const dest = `${baseDir}editor_import_${Date.now()}.jpg`;
           await FileSystem.copyAsync({ from: uri, to: dest });
           inputUri = dest;
         }
 
+        const targetPreviewW = 2048;
+
         const result = await manipulateAsync(
           inputUri,
-          [{ resize: { width: 1000 } }],
-          { compress: 0.9, format: SaveFormat.JPEG }
+          [{ resize: { width: targetPreviewW } }],
+          { compress: 0.85, format: SaveFormat.JPEG }
         );
 
         let w = result.width;
@@ -301,8 +327,8 @@ export default function EditorScreen() {
         }
 
         const info: ResolvedInfo = { uri: result.uri, width: w, height: h };
-
         if (!alive) return;
+
         resolvedCache.current[uri] = info;
         applyUiForIndex(info);
       } catch (e) {
@@ -324,7 +350,7 @@ export default function EditorScreen() {
     return () => {
       alive = false;
     };
-  }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto]);
+  }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto, viewportDim?.width, viewportDim?.height]);
 
   const displayResolved = activeResolved || initialInfo;
   const displayUri = displayResolved?.uri || currentPhoto?.uri;
@@ -340,11 +366,7 @@ export default function EditorScreen() {
   );
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ✅ 추가: 마지막 저장 시그니처(중복 저장 방지)
   const lastSavedSigRef = useRef<string>("");
-
-  // ✅ 추가: 저장 중 플래그(경합 방지)
   const savingRef = useRef(false);
 
   const buildDraftSig = (ui: EditState, idx: number) => {
@@ -354,25 +376,20 @@ export default function EditorScreen() {
   };
 
   useEffect(() => {
-    // ✅ 전환중/내보내기중이면 저장하지 않음
     if (isSwitchingPhoto || isExporting.current) return;
 
     const sig = buildDraftSig(currentUi, currentIndex);
-
-    // ✅ 똑같은 상태면 저장 안 함
     if (sig === lastSavedSigRef.current) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
     saveTimerRef.current = setTimeout(async () => {
       if (savingRef.current) return;
-
       savingRef.current = true;
       try {
         await saveDraft("editor");
         lastSavedSigRef.current = sig;
       } catch {
-        // ignore
       } finally {
         savingRef.current = false;
       }
@@ -384,14 +401,55 @@ export default function EditorScreen() {
   }, [currentUi, currentIndex, saveDraft, isSwitchingPhoto]);
 
   const handleBack = () => {
-    if (isSwitchingPhoto) return;
+    if (isSwitchingPhoto || isFinalizing) return;
     if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
     else router.replace("/create/select");
   };
 
   const requestSkiaBake = useCallback(
-    async (uri: string, w: number, h: number, matrix: ColorMatrix): Promise<string | null> => {
+    async (
+      uri: string,
+      w: number,
+      h: number,
+      matrix: ColorMatrix,
+      opts?: { maxSide?: number; overlayColor?: string; overlayOpacity?: number }
+    ): Promise<string | null> => {
       if (!isAliveRef.current) return null;
+
+      const maxSide = Math.max(512, Math.floor(opts?.maxSide ?? 3072));
+
+      let bakeUri = uri;
+      let bakeW = Number(w) || 0;
+      let bakeH = Number(h) || 0;
+
+      if (!bakeW || !bakeH) {
+        try {
+          const real = await getImageSizeAsync(uri);
+          bakeW = real.width;
+          bakeH = real.height;
+        } catch { }
+      }
+
+      const bigger = Math.max(bakeW, bakeH);
+      if (bigger > maxSide) {
+        try {
+          const scale = maxSide / bigger;
+          const targetW = Math.max(1, Math.round(bakeW * scale));
+          const targetH = Math.max(1, Math.round(bakeH * scale));
+
+          const resized = await manipulateAsync(
+            uri,
+            [{ resize: { width: targetW, height: targetH } }],
+            { compress: 0.92, format: SaveFormat.JPEG }
+          );
+
+          bakeUri = resized.uri;
+          bakeW = resized.width || targetW;
+          bakeH = resized.height || targetH;
+        } catch (e) {
+          console.warn("[Filter] Pre-resize for bake failed, fallback to original", e);
+        }
+      }
 
       while (bakeBusyRef.current) await waitRaf();
       bakeBusyRef.current = true;
@@ -401,7 +459,15 @@ export default function EditorScreen() {
 
         return await new Promise<string | null>((resolve) => {
           pendingBakeResolveRef.current = resolve;
-          setBakeJob({ uri, w, h, matrix, resolve });
+          setBakeJob({
+            uri: bakeUri,
+            w: bakeW,
+            h: bakeH,
+            matrix,
+            overlayColor: opts?.overlayColor,
+            overlayOpacity: opts?.overlayOpacity,
+            resolve,
+          });
         });
       } finally {
         pendingBakeResolveRef.current = null;
@@ -492,11 +558,7 @@ export default function EditorScreen() {
 
   const handleNext = async () => {
     if (!photos || photos.length === 0 || isExporting.current) return;
-    if (isSwitchingPhoto) return;
-
-    // 🔥 여기 추가
-    bgPausedRef.current = true;
-    bgTokenRef.current += 1;
+    if (isSwitchingPhoto || isFinalizing) return;
 
     const idx = currentIndex;
     const photo = { ...photos[idx] } as any;
@@ -518,34 +580,21 @@ export default function EditorScreen() {
 
       const uiUri = resolvedInfo.uri || photo.uri;
 
-      // ✅ uiUri "실제 파일" 사이즈를 기준으로 export crop 계산/보정
+      // ✅ 원본(서버 5000용 cropPx 계산에 사용할 URI)
+      const srcUri = photo.originalUri || photo.uri;
+
+      // --- 1) UI 기준(프리뷰/뷰 export용) crop 계산 ---
       let uiW = resolvedInfo.width ?? photo.width;
       let uiH = resolvedInfo.height ?? photo.height;
-
       try {
         const real = await getImageSizeAsync(uiUri);
         if (real?.width && real?.height) {
           uiW = real.width;
           uiH = real.height;
         }
-      } catch {
-        // fallback: 기존 값 사용
-      }
+      } catch { }
 
-      // 🔥 UI crop을 export 전에 한 번 더 안전하게 clamp
-      const safeUi = clampTransform(
-        cropState.x,
-        cropState.y,
-        cropState.scale,
-        uiW,
-        uiH,
-        frameRect.width,
-        5.0
-      );
-
-      // 🔹 UI → source 좌표 계산
-      // 🔹 UI → source 좌표 계산
-      const rawCrop = calculatePrecisionCrop({
+      const rawCropUI = calculatePrecisionCrop({
         sourceSize: { width: uiW, height: uiH },
         containerSize: { width: vp.width, height: vp.height },
         frameRect,
@@ -556,49 +605,70 @@ export default function EditorScreen() {
         },
       });
 
-      // 🔹 1차 보정 (기존 유틸)
-      const safe1 = sanitizeCropRect(rawCrop, uiW, uiH);
+      const safeUI = sanitizeCropRect(rawCropUI, uiW, uiH);
 
-      // 🔹 2차 보정: expo-image-manipulator(renderAsync) 전용 "완전 엄격" 보정
-      // - originX/originY/width/height 모두 정수
-      // - x,y는 0..W-1 / 0..H-1
-      // - width/height는 반드시 (W-x), (H-y) 안쪽
-      const x = Math.max(0, Math.min(Math.floor(safe1.x), uiW - 1));
-      const y = Math.max(0, Math.min(Math.floor(safe1.y), uiH - 1));
+      const uiX = Math.max(0, Math.min(Math.floor(safeUI.x), uiW - 1));
+      const uiY = Math.max(0, Math.min(Math.floor(safeUI.y), uiH - 1));
+      const uiMaxW = uiW - uiX;
+      const uiMaxH = uiH - uiY;
+      const uiSize = Math.max(1, Math.min(Math.floor(safeUI.width), uiMaxW, uiMaxH));
 
-      const maxW = uiW - x;
-      const maxH = uiH - y;
+      const finalCropUI = { x: uiX, y: uiY, width: uiSize, height: uiSize };
 
-      // square 강제 + 내부 보장
-      const size = Math.max(
-        1,
-        Math.min(Math.floor(safe1.width), maxW, maxH)
-      );
+      // --- 2) 원본 기준(서버 5000 생성용) cropPx 계산 ---
+      let srcW = photo.width || 0;
+      let srcH = photo.height || 0;
 
-      const finalCrop = {
-        x,
-        y,
-        width: size,
-        height: size,
-      };
+      try {
+        const realSrc = await getImageSizeAsync(srcUri);
+        if (realSrc?.width && realSrc?.height) {
+          srcW = realSrc.width;
+          srcH = realSrc.height;
+        }
+      } catch {
+        // fallback: ui size라도 넣되, 서버 crop 정확도가 떨어질 수 있음
+        srcW = srcW || uiW || 1;
+        srcH = srcH || uiH || 1;
+      }
 
-      // ✅ Preview export
-      const previewRes = await generatePreviewExport(uiUri, finalCrop);
+      const rawCropSRC = calculatePrecisionCrop({
+        sourceSize: { width: srcW, height: srcH },
+        containerSize: { width: vp.width, height: vp.height },
+        frameRect,
+        transform: {
+          scale: cropState.scale,
+          translateX: cropState.x,
+          translateY: cropState.y,
+        },
+      });
+
+      const safeSRC = sanitizeCropRect(rawCropSRC, srcW, srcH);
+
+      const sx = Math.max(0, Math.min(Math.floor(safeSRC.x), srcW - 1));
+      const sy = Math.max(0, Math.min(Math.floor(safeSRC.y), srcH - 1));
+      const sMaxW = srcW - sx;
+      const sMaxH = srcH - sy;
+      const sSize = Math.max(1, Math.min(Math.floor(safeSRC.width), sMaxW, sMaxH));
+
+      const finalCropSRC = { x: sx, y: sy, width: sSize, height: sSize };
+
+      // ✅ previewUri는 UI기준 crop으로 생성 (가볍게)
+      const previewRes = await generatePreviewExport(uiUri, finalCropUI);
       let finalPreviewUri = previewRes.uri;
-      let finalPrintUri = "";
-
-
 
       if (filterUi.filterId !== "original") {
         const bakedPreview = await requestSkiaBake(
           finalPreviewUri,
           previewRes.width,
           previewRes.height,
-          matrix
+          matrix,
+          {
+            maxSide: 768,
+            overlayColor: activeFilter.overlayColor,
+            overlayOpacity: activeFilter.overlayOpacity,
+          }
         );
-
         if (bakedPreview) finalPreviewUri = bakedPreview;
-        else console.warn("[Filter] Preview bake unavailable (keeping unbaked preview)");
       }
 
       const filterParams = {
@@ -609,16 +679,25 @@ export default function EditorScreen() {
 
       await updatePhoto(idx, {
         edits: {
-          crop: finalCrop,
+          // UI 편의용(에디터 복원/디버깅용)
+          crop: finalCropUI,
           filterId: filterUi.filterId,
           filterParams,
           ui: { ...filterUi, crop: cropState },
-          committed: { cropPx: finalCrop as any, filterId: filterUi.filterId, filterParams },
+
+          // ✅ 서버 5000용 cropPx는 "원본 기준"으로 저장해야 정확
+          committed: {
+            cropPx: finalCropSRC as any,
+            filterId: filterUi.filterId,
+            filterParams,
+          },
         } as any,
         output: {
           ...(photo.output || {}),
           previewUri: finalPreviewUri,
-          printUri: finalPrintUri,
+          // ✅ viewUri는 큐에서 “필터 적용된 결과물”로 채움
+          viewUri: "",
+          printUri: photo.output?.printUri ?? "",
           quantity: photo.output?.quantity || 1,
         },
         frameRect,
@@ -627,6 +706,7 @@ export default function EditorScreen() {
 
       const myToken = bgTokenRef.current;
 
+      // ✅ 여기서 “Firebase에 올라갈 최종 파일(viewUri)”을 만든다 = 필터 적용된 3000px
       exportQueue.enqueue(async () => {
         if (!isAliveRef.current) return;
         if (bgPausedRef.current) return;
@@ -644,75 +724,68 @@ export default function EditorScreen() {
 
           if (!isAliveRef.current || bgPausedRef.current) return;
 
-          const CROP_SIZE_PX = frameRect.width;
-
-          const aspect = uiW / uiH;
-          let baseW = 0;
-          let baseH = 0;
-          if (aspect >= 1) {
-            baseH = CROP_SIZE_PX;
-            baseW = CROP_SIZE_PX * aspect;
-          } else {
-            baseW = CROP_SIZE_PX;
-            baseH = CROP_SIZE_PX / aspect;
-          }
-
-          const clampedUi = clampTransform(
-            cropState.x,
-            cropState.y,
-            cropState.scale,
-            baseW,
-            baseH,
-            CROP_SIZE_PX,
-            5.0
-          );
+          const viewTarget = 2048;
 
           const rawFinal = calculatePrecisionCrop({
             sourceSize: { width: origW, height: origH },
             containerSize: { width: vp.width, height: vp.height },
             frameRect: { ...frameRect },
-            transform: { scale: clampedUi.scale, translateX: clampedUi.tx, translateY: clampedUi.ty },
+            transform: {
+              scale: cropState.scale,
+              translateX: cropState.x,
+              translateY: cropState.y,
+            },
           });
-
-          const finalCrop = sanitizeCropRect(rawCrop, uiW, uiH);
+          const safeFinal = sanitizeCropRect(rawFinal, origW, origH);
 
           if (!isAliveRef.current || bgPausedRef.current) return;
 
-          const printRes = await generatePrintExport(photo.uri, finalCrop, {
-            srcW: origW,
-            srcH: origH,
-            viewW: vp.width,
-            viewH: vp.height,
-            viewCrop: finalCrop,
-          });
+          const viewRes = await manipulateAsync(
+            photo.uri,
+            [
+              {
+                crop: {
+                  originX: safeFinal.x,
+                  originY: safeFinal.y,
+                  width: safeFinal.width,
+                  height: safeFinal.height,
+                },
+              },
+              { resize: { width: viewTarget, height: viewTarget } },
+            ],
+            { compress: 0.92, format: SaveFormat.JPEG }
+          );
 
           if (!isAliveRef.current || bgPausedRef.current) return;
 
-          let finalPrint = printRes.uri;
+          let finalView = viewRes.uri;
 
+          // ✅ 핵심: viewUri에도 필터 bake 적용 (이게 checkout/myorder/firebase 모두의 “정답 파일”)
           if (filterUi.filterId !== "original") {
-            const bakedPrint = await requestSkiaBake(
-              printRes.uri,
-              printRes.width,
-              printRes.height,
-              matrix
+            const bakedView = await requestSkiaBake(
+              finalView,
+              viewRes.width || viewTarget,
+              viewRes.height || viewTarget,
+              matrix,
+              {
+                maxSide: 3072,
+                overlayColor: activeFilter.overlayColor,
+                overlayOpacity: activeFilter.overlayOpacity,
+              }
             );
-
-            if (!isAliveRef.current || bgPausedRef.current) return;
-
-            if (bakedPrint) finalPrint = bakedPrint;
-            else console.warn("[Filter] Print bake unavailable (keeping unbaked 5000 print)");
+            if (bakedView) finalView = bakedView;
           }
 
-          if (!isAliveRef.current || bgPausedRef.current) return;
+          const latestPhoto = (photosRef.current?.[idx] as any) || {};
+          const latestOutput = (latestPhoto.output as any) || {};
 
           await updatePhoto(idx, {
-            output: { ...(photos[idx] as any).output, printUri: finalPrint },
+            output: { ...latestOutput, viewUri: finalView },
           });
         } catch (err) {
-          console.error(`[ExportQueue] High-res failed for ${idx}:`, err);
+          console.error(`[ExportQueue] View export failed for ${idx}:`, err);
         }
-      }, `Print-${idx}`);
+      }, `View-${idx}`);
 
       if (idx < photos.length - 1) {
         const nextIdx = idx + 1;
@@ -734,21 +807,23 @@ export default function EditorScreen() {
         setIncomingResolved(null);
 
         setCurrentIndex(nextIdx);
-      } else {
-        bgPausedRef.current = true;
-        bgTokenRef.current += 1;
-
-        try {
-          pendingBakeResolveRef.current?.(null);
-        } catch { }
-        pendingBakeResolveRef.current = null;
-        setBakeJob(null);
-
-        router.push("/create/checkout");
+        return;
       }
+
+      setIsFinalizing(true);
+
+      const idleOk = await waitForQueueIdle(60000);
+      const viewsOk = await waitForAllViewUris(() => photosRef.current, 60000);
+
+      if (!idleOk || !viewsOk) {
+        Alert.alert("Preparing photos…", "Still generating view files. Please wait a moment and tap again.");
+        return;
+      }
+
+      router.push("/create/checkout");
     } catch (e) {
       console.error("[Next] HandleNext Error:", e);
-      Alert.alert(t.failedTitle || "Error", t.failedBody || "Failed to process photo.");
+      Alert.alert((t as any).failedTitle || "Error", (t as any).failedBody || "Failed to process photo.");
 
       setIsSwitchingPhoto(false);
       setIncomingResolved(null);
@@ -760,6 +835,7 @@ export default function EditorScreen() {
       incomingOpacity.value = 1;
     } finally {
       isExporting.current = false;
+      setIsFinalizing(false);
     }
   };
 
@@ -780,7 +856,7 @@ export default function EditorScreen() {
   );
 
   const onSelectFilter = async (f: any) => {
-    if (isSwitchingPhoto) return;
+    if (isSwitchingPhoto || isFinalizing) return;
 
     const newId = f.id;
     setCurrentUi((prev) => ({ ...prev, filterId: newId }));
@@ -821,12 +897,10 @@ export default function EditorScreen() {
         }}
       >
         <View style={{ flex: 1, width: "100%", height: "100%" }}>
-          {/* OUTGOING (A) */}
           {isSwitchingPhoto && outgoing && viewportDim && (
             <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingStyle]}>
               <CropFrameRN
                 key={`out-${outgoing.index}-${outgoing.resolved.uri}`}
-                // ✅ ref 제거 (outgoing이 ref 덮어쓰지 않게)
                 imageSrc={outgoing.resolved.uri}
                 imageWidth={outgoing.resolved.width}
                 imageHeight={outgoing.resolved.height}
@@ -835,12 +909,13 @@ export default function EditorScreen() {
                 crop={outgoing.ui.crop}
                 onChange={() => { }}
                 matrix={outgoing.matrix}
+                overlayColor={FILTERS.find(f => f.id === outgoing.ui.filterId)?.overlayColor}
+                overlayOpacity={FILTERS.find(f => f.id === outgoing.ui.filterId)?.overlayOpacity}
                 photoIndex={outgoing.index}
               />
             </Animated.View>
           )}
 
-          {/* INCOMING (B) */}
           <Animated.View
             pointerEvents={isSwitchingPhoto ? "none" : "auto"}
             style={[StyleSheet.absoluteFill, incomingStyle]}
@@ -861,19 +936,19 @@ export default function EditorScreen() {
                     const dx = Math.abs((newCrop?.x ?? 0) - p.x);
                     const dy = Math.abs((newCrop?.y ?? 0) - p.y);
                     const ds = Math.abs((newCrop?.scale ?? 1) - p.scale);
-
                     if (dx < 0.25 && dy < 0.25 && ds < 0.0005) return prev;
                     return { ...prev, crop: newCrop };
                   })
                 }
                 matrix={activeMatrix}
+                overlayColor={activeFilterObj.overlayColor}
+                overlayOpacity={activeFilterObj.overlayOpacity}
                 photoIndex={currentIndex}
-              />
-            ) : isSwitchingPhoto ? null : (
-              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <ActivityIndicator size="large" color={colors.ink} />
-              </View>
-            )}
+              />) : isSwitchingPhoto ? null : (
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <ActivityIndicator size="large" color={colors.ink} />
+                </View>
+              )}
           </Animated.View>
         </View>
 
@@ -896,7 +971,31 @@ export default function EditorScreen() {
               width={bakeJob.w}
               height={bakeJob.h}
               matrix={bakeJob.matrix}
+              // ✅ FilteredImageSkia가 지원하면 overlay까지 baked 됨
+              overlayColor={bakeJob.overlayColor as any}
+              overlayOpacity={bakeJob.overlayOpacity as any}
             />
+          </View>
+        )}
+
+        {isFinalizing && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              top: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(0,0,0,0.10)",
+            }}
+          >
+            <View style={{ padding: 14, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.92)" }}>
+              <ActivityIndicator />
+              <Text style={{ marginTop: 10, fontWeight: "600" }}>Preparing photos…</Text>
+            </View>
           </View>
         )}
       </View>
@@ -905,14 +1004,17 @@ export default function EditorScreen() {
         <FilterStripRN currentFilter={activeFilterObj} imageSrc={displayUri} onSelect={onSelectFilter} />
         <View style={styles.primaryBtnContainer}>
           <Pressable
-            style={[styles.primaryBtn, (!viewportDim || !activeResolved || isSwitchingPhoto) && { opacity: 0.5 }]}
+            style={[
+              styles.primaryBtn,
+              (!viewportDim || !activeResolved || isSwitchingPhoto || isFinalizing) && { opacity: 0.5 },
+            ]}
             onPress={handleNext}
-            disabled={!viewportDim || !activeResolved || isSwitchingPhoto || isExporting.current}
+            disabled={!viewportDim || !activeResolved || isSwitchingPhoto || isExporting.current || isFinalizing}
           >
             <Text style={styles.primaryBtnText}>
               {currentIndex === photos.length - 1
-                ? (t.saveCheckout || "Save & Checkout")
-                : (t.nextPhoto || "Next Photo")}
+                ? ((t as any).saveCheckout || "Save & Checkout")
+                : ((t as any).nextPhoto || "Next Photo")}
             </Text>
           </Pressable>
         </View>

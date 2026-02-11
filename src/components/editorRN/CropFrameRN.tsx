@@ -27,6 +27,8 @@ interface Props {
     onChange: (crop: Crop) => void;
     matrix: ColorMatrix;
     photoIndex: number;
+    overlayColor?: string;
+    overlayOpacity?: number;
 }
 
 const CropFrameRN = forwardRef((props: Props, ref) => {
@@ -210,12 +212,13 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                             animatedImageStyle,
                         ]}
                     >
-                        <Animated.Image source={{ uri: imageSrc }} style={styles.baseImage} resizeMode="cover" />
                         <FilteredImageSkia
                             uri={imageSrc}
                             width={base.w}
                             height={base.h}
                             matrix={matrix}
+                            overlayColor={props.overlayColor}
+                            overlayOpacity={props.overlayOpacity}
                             style={StyleSheet.absoluteFillObject as any}
                         />
                     </Animated.View>

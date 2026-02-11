@@ -23,7 +23,7 @@ export default function OrderCardRN({ order, onPress }: Props) {
 
     // ✅ Fallback to item-level previews if items are loaded (detail/subscription)
     const itemPreviewUris: string[] =
-        order.items?.map((it: any) => it.previewUrl || it.previewUri || it.src).filter(Boolean) ?? [];
+        order.items?.map((it: any) => it.assets?.viewUrl || it.previewUrl || it.previewUri || it.src).filter(Boolean) ?? [];
 
     // ✅ Final uris for strip
     const previewUris = (previewImages.length > 0 ? previewImages : itemPreviewUris).slice(0, 5);

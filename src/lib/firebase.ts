@@ -1,6 +1,16 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Auth
+import { initializeAuth, getAuth } from "firebase/auth";
+// @ts-ignore
+import { getReactNativePersistence } from "firebase/auth";
+
+// Functions
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
     apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -11,25 +21,50 @@ const firebaseConfig = {
     appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-import { initializeAuth, getAuth, Auth } from "firebase/auth";
-// @ts-ignore
-import { getReactNativePersistence } from "firebase/auth";
-import { Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-// --- Singleton Logic ---
+// --- App Singleton ---
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+
+// Logs
+console.log("[Firebase Config] projectId:", app.options.projectId);
+console.log("[Firebase Config] authDomain:", app.options.authDomain);
+
+// --- Core SDKs ---
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-export const auth = Platform.OS === 'web'
-    ? getAuth(app)
-    : initializeAuth(app, {
-        persistence: getReactNativePersistence(AsyncStorage),
-    });
+// --- Auth Singleton (🔥 CRITICAL FIX) ---
+let _auth: ReturnType<typeof getAuth> | null = null;
+
+export const auth = (() => {
+    if (_auth) return _auth;
+
+    if (Platform.OS === "web") {
+        _auth = getAuth(app);
+    } else {
+        try {
+            _auth = initializeAuth(app, {
+                persistence: getReactNativePersistence(AsyncStorage),
+            });
+        } catch (e: any) {
+            // 이미 초기화된 경우 (Fast Refresh / HMR / double import)
+            if (e?.code === "auth/already-initialized") {
+                _auth = getAuth(app);
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    return _auth;
+})();
+
+// --- Functions (region MUST match deployed functions) ---
+const FUNCTIONS_REGION = "us-central1"; // 🔁 change to "us-central1" if needed
+export const functions = getFunctions(app, FUNCTIONS_REGION);
 
 if (__DEV__) {
     console.log("[Firebase] Configured with bucket:", firebaseConfig.storageBucket);
+    console.log("[Firebase] Functions region:", FUNCTIONS_REGION);
 }
 
 /**

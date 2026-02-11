@@ -12,7 +12,11 @@ import {
     serverTimestamp,
     DocumentReference,
     updateDoc,
+    runTransaction,
 } from "firebase/firestore";
+
+import { onAuthStateChanged } from "firebase/auth";
+
 import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
 import { uploadFileUriToStorage } from "./storageUpload";
@@ -26,76 +30,114 @@ function yyyymmdd(d = new Date()): string {
 }
 
 function slugifyCustomer(input?: string): string {
-    // ⚠️ 실명 그대로 경로에 넣는 건 비추천
-    // 하지만 요청대로 "가능하게" 만들되, 안전하게 슬러그 + 길이 제한
     const s = (input || "").trim().toLowerCase();
     if (!s) return "customer";
-
-    // 영문/숫자/하이픈만 유지 (한글/태국어는 제거될 수 있음)
     const cleaned = s
         .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9\-]/g, "")
-        .replace(/\-+/g, "-")
-        .slice(0, 24);
-
+        .replace(/[^a-z0-9\-_]/g, "")
+        .replace(/-+/g, "-")
+        .slice(0, 32);
     return cleaned || "customer";
 }
 
-/**
- * Order code: YYYYMMDD-#### (예: 20260208-0421)
- */
-function generateOrderCode(): string {
-    const dateKey = yyyymmdd();
-    const rand = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
-    return `${dateKey}-${rand}`;
+function safeCustomerFolder(shipping: any, uid: string) {
+    const base = slugifyCustomer(shipping?.fullName);
+    const phone = (shipping?.phone || "").replace(/\D/g, "");
+    const tail4 = phone.length >= 4 ? phone.slice(-4) : "";
+    const uid6 = (uid || "").slice(0, 6);
+
+    if (base !== "customer") return tail4 ? `${base}-${tail4}` : `${base}-${uid6 || "u"}`;
+    return tail4 ? `customer-${tail4}` : `customer-${uid6 || "u"}`;
+}
+
+function getSourceUri(p: any): string | null {
+    const u = p?.output?.sourceUri || p?.originalUri || p?.uri || null;
+    return typeof u === "string" && u.length > 0 ? u : null;
+}
+
+/** auth ready + token refresh */
+async function ensureAuthed(): Promise<string> {
+    if (auth.currentUser?.uid) {
+        await auth.currentUser.getIdToken(true);
+        return auth.currentUser.uid;
+    }
+
+    const user = await new Promise<typeof auth.currentUser>((resolve) => {
+        const unsub = onAuthStateChanged(auth, (u) => {
+            unsub();
+            resolve(u);
+        });
+    });
+
+    if (!user?.uid) throw new Error("Not signed in");
+    await user.getIdToken(true);
+    return user.uid;
 }
 
 /**
- * Creates a "PAID" order and uploads photos to Storage.
- * Uses the subcollection structure: orders/{orderId}/items/{itemId}
+ * ✅ Firestore transaction based order code reservation
+ * - orderCounters/{YYYYMMDD}.nextSeq
+ * - If doc missing: create {nextSeq: 2} and return seq=1
+ * - Else: use current nextSeq as seq, then increment
  */
+async function reserveOrderCode(dateKey: string): Promise<string> {
+    if (!/^\d{8}$/.test(dateKey)) throw new Error("dateKey must be YYYYMMDD");
+
+    await ensureAuthed();
+
+    const counterRef = doc(db, "orderCounters", dateKey);
+
+    const { seq } = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(counterRef);
+
+        // 최초 생성
+        if (!snap.exists()) {
+            tx.set(counterRef, { nextSeq: 2 }); // rules에서 create==2 요구
+            return { seq: 1 };
+        }
+
+        const data = snap.data() as any;
+        const nextSeq = Number(data?.nextSeq ?? 1);
+        const seq = Number.isFinite(nextSeq) && nextSeq >= 1 ? nextSeq : 1;
+
+        tx.update(counterRef, { nextSeq: seq + 1 });
+        return { seq };
+    });
+
+    const orderCode = `${dateKey}-${String(seq).padStart(4, "0")}`;
+    return orderCode;
+}
+
 export async function createDevOrder(params: {
     uid: string;
     shipping: OrderDoc["shipping"];
-    photos: any[]; // These are local photo objects from editor
-    totals: {
-        subtotal: number;
-        discount: number;
-        shippingFee: number;
-        total: number;
-    };
-    promoCode?: {
-        code: string;
-        discountType: string;
-        discountValue: number;
-    };
+    photos: any[];
+    totals: { subtotal: number; discount: number; shippingFee: number; total: number };
+    promoCode?: { code: string; discountType: string; discountValue: number };
     locale?: string;
 }): Promise<string> {
     const { uid, shipping, photos, totals, promoCode, locale = "EN" } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
-    // 1. Generate IDs (New doc for every order)
+    const authedUid = await ensureAuthed();
+    if (authedUid !== uid) {
+        console.warn("[OrderService] uid mismatch (param vs auth). Using auth uid.", { uid, authedUid });
+    }
+
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
     const orderId = orderRef.id;
-    const orderCode = generateOrderCode();
-
-    // 2. Auth + base path (NEW)
-    const user = auth.currentUser;
-    if (!user) throw new Error("Not signed in");
-    const uidAuth = user.uid;
 
     const dateKey = yyyymmdd();
-    const customerSlug = slugifyCustomer(shipping?.fullName); // 원하면 나중에 nickname/phoneLast4로 교체 추천
-    const storageBasePath = `orders/${dateKey}/${orderCode}/${uidAuth}/${customerSlug}/${orderId}`;
-    console.log("[OrderService] storageBasePath:", storageBasePath);
+    const orderCode = await reserveOrderCode(dateKey);
 
-    // ✅ For list preview (we'll store print urls here)
+    const customerSlug = safeCustomerFolder(shipping, authedUid);
+    const storageBasePath = `orders/${dateKey}/${orderCode}/${customerSlug}`;
+
     const previewImages: string[] = [];
 
-    // 3. Create Header document
     const rawOrderData: any = {
-        uid,
+        uid: authedUid,
         orderCode,
         itemsCount: photos.length,
         storageBasePath,
@@ -122,93 +164,67 @@ export async function createDevOrder(params: {
         paymentMethod: "FREE",
         locale,
         promoCode: promoCode?.code,
-        // previewImages will be updated after uploads
     };
 
-    if (promoCode) {
-        rawOrderData.promo = promoCode;
-    }
+    if (promoCode) rawOrderData.promo = promoCode;
 
-    const orderData = stripUndefined(rawOrderData);
-    if (__DEV__) console.log("order payload sanitized", orderData);
+    await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    try {
-        await setDoc(orderRef, orderData);
-        console.log(`[OrderService] Header ${orderId} created.`);
-    } catch (e: any) {
-        console.log("[OrderService] Firestore write failed", { step: "header create", code: e?.code, message: e?.message });
-        throw e;
-    }
-
-    // 4. Upload PRINT assets only & Create Subcollection Items
     for (let i = 0; i < photos.length; i++) {
         const p = photos[i];
 
-        // ✅ PRINT only
-        const printUri = p.output?.printUri || p.uri;
+        const viewUri = p?.output?.viewUri;
+        if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
+
+        const sourceUri = getSourceUri(p);
+        if (!sourceUri) throw new Error(`SOURCE URI missing at index ${i}`);
+
+        const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
+        const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
         const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-        console.log(`[OrderService] Uploading PRINT item ${i}...`);
+        const sourceRes = await uploadFileUriToStorage(sourcePath, sourceUri);
+        const viewRes = await uploadFileUriToStorage(viewPath, viewUri);
 
-        const printRes = await uploadFileUriToStorage(printPath, printUri);
-
-        // ✅ Use print URL as preview for UI compatibility
-        if (printRes?.downloadUrl && previewImages.length < 5) {
-            previewImages.push(printRes.downloadUrl);
-        }
+        if (viewRes?.downloadUrl && previewImages.length < 5) previewImages.push(viewRes.downloadUrl);
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
+
         const rawItemData: any = {
             index: i,
             quantity: p.quantity || 1,
             filterId: p.edits?.filterId || "original",
             filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
             cropPx: p.edits?.committed?.cropPx || null,
+
             unitPrice: totals.subtotal / photos.length || 0,
             lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
             size: "20x20",
+
             assets: {
-                printPath: printRes.path,
-                printUrl: printRes.downloadUrl,
+                sourcePath: sourceRes.path,
+                sourceUrl: sourceRes.downloadUrl,
+                viewPath: viewRes.path,
+                viewUrl: viewRes.downloadUrl,
+                printPath,
+                printUrl: null,
             },
-            printUrl: printRes.downloadUrl,
-            // ✅ keep existing UI working
-            previewUrl: printRes.downloadUrl,
+
+            printUrl: null,
+            previewUrl: viewRes.downloadUrl,
+            createdAt: serverTimestamp(),
         };
 
-        const itemData = stripUndefined({
-            ...rawItemData,
-            createdAt: serverTimestamp()
-        });
-
-        try {
-            await setDoc(itemRef, itemData);
-        } catch (e: any) {
-            console.log("[OrderService] Firestore write failed", { step: "item create", code: e?.code, message: e?.message });
-            throw e;
-        }
+        await setDoc(itemRef, stripUndefined(rawItemData));
     }
 
-    // 5. Update header with previewImages (from print urls)
-    try {
-        if (previewImages.length > 0) {
-            await updateDoc(orderRef, stripUndefined({
-                previewImages,
-                updatedAt: serverTimestamp(),
-            }) as any);
-            console.log(`[OrderService] Header ${orderId} updated with previewImages (${previewImages.length}).`);
-        }
-    } catch (e: any) {
-        console.log("[OrderService] Header previewImages update failed", { orderId, code: e?.code, message: e?.message });
+    if (previewImages.length > 0) {
+        await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);
     }
 
-    console.log(`[OrderService] All items for ${orderId} uploaded and saved.`);
     return orderId;
 }
 
-/**
- * Retrieves a single order by ID, with subcollection fallback.
- */
 export async function getOrder(orderId: string): Promise<OrderDoc | null> {
     const docRef = doc(db, "orders", orderId);
     const snap = await getDoc(docRef);
@@ -216,48 +232,32 @@ export async function getOrder(orderId: string): Promise<OrderDoc | null> {
 
     const order = { id: snap.id, ...snap.data() } as OrderDoc;
 
-    // Load subcollection items
     const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
     if (!itemsSnap.empty) {
-        order.items = itemsSnap.docs
-            .map(d => d.data() as OrderItem)
-            .sort((a, b) => a.index - b.index);
+        order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
     }
 
     return order;
 }
 
-/**
- * Lists all orders for a specific user.
- * Note: Subcollection items are not loaded here for performance.
- */
 export async function listOrders(uid: string): Promise<OrderDoc[]> {
-    const q = query(
-        collection(db, "orders"),
-        where("uid", "==", uid),
-        orderBy("createdAt", "desc")
-    );
+    const q = query(collection(db, "orders"), where("uid", "==", uid), orderBy("createdAt", "desc"));
     const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() } as OrderDoc));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as OrderDoc));
 }
 
-/**
- * Subscribes to a specific order doc.
- */
 export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | null) => void) {
     const docRef = doc(db, "orders", orderId);
     return onSnapshot(docRef, async (snap) => {
-        if (!snap.exists()) {
-            onUpdate(null);
-        } else {
-            const order = { id: snap.id, ...snap.data() } as OrderDoc;
-            const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
-            if (!itemsSnap.empty) {
-                order.items = itemsSnap.docs
-                    .map(d => d.data() as OrderItem)
-                    .sort((a, b) => a.index - b.index);
-            }
-            onUpdate(order);
+        if (!snap.exists()) return onUpdate(null);
+
+        const order = { id: snap.id, ...snap.data() } as OrderDoc;
+
+        const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
+        if (!itemsSnap.empty) {
+            order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
         }
+
+        onUpdate(order);
     });
 }

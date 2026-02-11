@@ -1,5 +1,18 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, Alert, Platform, Modal } from "react-native";
+// src/screens/CheckoutStepOneScreen.tsx
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import {
+    View,
+    Text,
+    ScrollView,
+    Image,
+    TouchableOpacity,
+    StyleSheet,
+    TextInput,
+    ActivityIndicator,
+    Alert,
+    Platform,
+    Modal,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,83 +20,97 @@ import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 
-// ✅ ADD: pause export queue while checkout is visible (prevents Skia bake crash after leaving editor)
-import { exportQueue } from "../utils/exportQueue";
-
 // Firebase / Auth / Promo
 import { auth } from "../lib/firebase";
 import { User } from "firebase/auth";
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
-import { verifyAndRedeemPromo, PromoResult, PromoType } from "../utils/promo";
+import { verifyAndRedeemPromo, PromoType } from "../utils/promo";
 
-const LoginButton = ({ text, onPress, style, disabled, icon }: { text: string, onPress: () => void, style?: any, disabled?: boolean, icon?: React.ReactNode }) => (
-    <TouchableOpacity style={[styles.loginBtn, style, disabled && { opacity: 0.6 }, { flexDirection: 'row', gap: 8 }]} onPress={onPress} disabled={disabled}>
+const LoginButton = ({
+    text,
+    onPress,
+    style,
+    disabled,
+    icon,
+}: {
+    text: string;
+    onPress: () => void;
+    style?: any;
+    disabled?: boolean;
+    icon?: React.ReactNode;
+}) => (
+    <TouchableOpacity
+        style={[
+            styles.loginBtn,
+            style,
+            disabled && { opacity: 0.6 },
+            { flexDirection: "row", gap: 8 },
+        ]}
+        onPress={onPress}
+        disabled={disabled}
+    >
         {icon}
         <Text style={styles.loginBtnText}>{text}</Text>
     </TouchableOpacity>
 );
+
+// ✅ 고객앱 Checkout: 5000(print) 기다리지 말고 previewUri(2000대)만 기다린다
+async function waitForPreviewUrisSnapshot(photosRef: () => any[], timeoutMs = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        const arr = photosRef() || [];
+        const missing = arr
+            .map((p: any, idx: number) => ({ idx, previewUri: p?.output?.previewUri }))
+            .filter((x: any) => !x.previewUri);
+
+        if (missing.length === 0) return true;
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    return false;
+}
 
 export default function CheckoutStepOneScreen() {
     const router = useRouter();
     const { photos } = usePhoto();
     const { t, locale } = useLanguage();
 
-    // ✅ NEW: stop background export tasks while on checkout screens
+    const photosRef = useRef<any[]>(photos as any[]);
     useEffect(() => {
-        exportQueue.pause();
-        exportQueue.clear(); // drop any queued heavy tasks immediately
-        return () => {
-            exportQueue.resume();
-        };
-    }, []);
+        photosRef.current = photos as any[];
+    }, [photos]);
 
-    // Auth State
     const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-    // Promo State
     const [showPromo, setShowPromo] = useState(false);
-    const [promoCode, setPromoCode] = useState('');
-    const [promoStatus, setPromoStatus] = useState<'idle' | 'checking' | 'applied' | 'invalid'>('idle');
-    const [discount, setDiscount] = useState<{ type: PromoType, value: number, text?: string } | null>(null);
+    const [promoCode, setPromoCode] = useState("");
+    const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "applied" | "invalid">("idle");
+    const [discount, setDiscount] = useState<{ type: PromoType; value: number; text?: string } | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
-    // Preview Modal State
     const [previewUri, setPreviewUri] = useState<string | null>(null);
 
-    // Constants
-    const PRICE_PER_TILE = locale === 'TH' ? 200 : 6.45;
-    const CURRENCY_SYMBOL = locale === 'TH' ? '฿' : '$';
+    const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
+    const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
 
-    // Google Auth Hook (Auto-handles Firebase sign-in)
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
     useEffect(() => {
-        if (authError) {
-            Alert.alert("Login Error", authError);
-        }
+        if (authError) Alert.alert("Login Error", authError);
     }, [authError]);
 
     useEffect(() => {
-        const unsub = auth.onAuthStateChanged(user => {
-            setCurrentUser(user);
-        });
+        const unsub = auth.onAuthStateChanged((user) => setCurrentUser(user));
         return unsub;
     }, []);
 
-    // Price Calculation
     const subtotal = useMemo(() => photos.length * PRICE_PER_TILE, [photos.length, locale]);
 
     const total = useMemo(() => {
         if (!discount) return subtotal;
-
         let final = subtotal;
-        if (discount.type === 'free') {
-            final = 0;
-        } else if (discount.type === 'amount') {
-            final = Math.max(0, subtotal - discount.value);
-        } else if (discount.type === 'percent') {
-            final = subtotal * (1 - discount.value / 100);
-        }
+        if (discount.type === "free") final = 0;
+        else if (discount.type === "amount") final = Math.max(0, subtotal - discount.value);
+        else if (discount.type === "percent") final = subtotal * (1 - discount.value / 100);
         return final;
     }, [subtotal, discount]);
 
@@ -95,25 +122,30 @@ export default function CheckoutStepOneScreen() {
         }
 
         setIsApplyingPromo(true);
-        setPromoStatus('checking');
+        setPromoStatus("checking");
 
         try {
             const result = await verifyAndRedeemPromo(promoCode.trim(), currentUser.uid);
             if (result.success && result.data) {
-                setPromoStatus('applied');
+                setPromoStatus("applied");
                 setDiscount({
                     type: result.data.type,
                     value: result.data.value,
-                    text: `${result.data.type === 'free' ? 'Free' : result.data.type === 'percent' ? result.data.value + '%' : CURRENCY_SYMBOL + result.data.value} Off`
+                    text: `${result.data.type === "free"
+                            ? "Free"
+                            : result.data.type === "percent"
+                                ? result.data.value + "%"
+                                : CURRENCY_SYMBOL + result.data.value
+                        } Off`,
                 });
                 Alert.alert("Success", "Promo code applied!");
             } else {
-                setPromoStatus('invalid');
+                setPromoStatus("invalid");
                 setDiscount(null);
                 Alert.alert("Invalid Code", result.error || "Code could not be applied.");
             }
         } catch (e) {
-            setPromoStatus('invalid');
+            setPromoStatus("invalid");
             setDiscount(null);
             Alert.alert("Error", "Failed to apply promo code.");
         } finally {
@@ -127,27 +159,51 @@ export default function CheckoutStepOneScreen() {
     };
 
     const handleAppleLogin = () => {
-        Alert.alert("Apple Sign-In", t['auth.appleNotConfigured'] || "Apple Sign-In is not configured yet.");
+        Alert.alert("Apple Sign-In", (t as any)["auth.appleNotConfigured"] || "Apple Sign-In is not configured yet.");
     };
 
-    const handleStubLogin = (provider: string) => {
-        console.log(`Stub login for ${provider}`);
-        Alert.alert("Stub Login", `${provider} login is not implemented in this demo.`);
-    };
+    const [isPreparing, setIsPreparing] = useState(false);
 
-    const handleNext = () => {
-        if (currentUser) {
+    const handleNext = async () => {
+        if (!currentUser) return;
+        if (isPreparing) return;
+
+        try {
+            setIsPreparing(true);
+
+            // ✅ 5000(print) 기다리지 말고 previewUri(2000대)만 기다려서 결제 화면으로 넘어간다
+            const ok = await waitForPreviewUrisSnapshot(() => photosRef.current, 8000);
+
+            const latest = photosRef.current || [];
+            const missing = latest
+                .map((p: any, idx: number) => ({ idx, previewUri: p?.output?.previewUri }))
+                .filter((x: any) => !x.previewUri);
+
+            if (!ok || missing.length > 0) {
+                Alert.alert(
+                    "Preparing photos…",
+                    `Still rendering preview files.\nMissing: ${missing.map((m: any) => m.idx + 1).join(", ")}\n\nPlease wait a moment and try again.`
+                );
+                return;
+            }
+
             router.push("/create/checkout/payment");
+        } catch (e) {
+            console.error("[CheckoutStepOne] wait failed", e);
+            Alert.alert("Please wait", "Photos are still being prepared. Please try again in a moment.");
+        } finally {
+            setIsPreparing(false);
         }
     };
 
     const GoogleIconFallback = () => (
-        <Image
-            source={require('../assets/google_logo.png')}
-            style={{ width: 18, height: 18, marginRight: 0 }}
-            resizeMode="contain"
-        />
+        <Image source={require("../assets/google_logo.png")} style={{ width: 18, height: 18 }} resizeMode="contain" />
     );
+
+    const pickDisplayUri = (item: any) => {
+        // ✅ 고객앱 Checkout 미리보기: previewUri(2000대) 우선
+        return item?.output?.previewUri || item?.output?.viewUri || item?.uri;
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -161,50 +217,57 @@ export default function CheckoutStepOneScreen() {
                         <Ionicons name="chevron-back" size={24} color="black" />
                     </View>
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{t['checkoutTitle'] || "Checkout"}</Text>
+                <Text style={styles.headerTitle}>{(t as any)["checkoutTitle"] || "Checkout"}</Text>
                 <View style={{ width: 40 }} />
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
                 <View style={styles.stepContainer}>
-                    {/* Horizontal Image Preview */}
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll} contentContainerStyle={{ gap: 12 }}>
-                        {photos.map((item, idx) => {
-                            const sourceUri = (item as any).output?.previewUri || item.uri;
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.imageScroll}
+                        contentContainerStyle={{ gap: 12 }}
+                    >
+                        {photos.map((item: any, idx: number) => {
+                            const sourceUri = pickDisplayUri(item);
                             return (
                                 <TouchableOpacity key={item.assetId || idx} onPress={() => setPreviewUri(sourceUri)}>
-                                    <Image
-                                        source={{ uri: sourceUri }}
-                                        style={styles.previewImage}
-                                    />
+                                    <Image source={{ uri: sourceUri }} style={styles.previewImage} />
                                 </TouchableOpacity>
                             );
                         })}
                     </ScrollView>
 
-                    {/* Summary Block */}
                     <View style={styles.summaryBlock}>
                         <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>{photos.length} {t['tilesSize'] || "Tiles"}</Text>
-                            <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{subtotal.toFixed(2)}</Text>
+                            <Text style={styles.summaryLabel}>
+                                {photos.length} {(t as any)["tilesSize"] || "Tiles"}
+                            </Text>
+                            <Text style={styles.summaryValue}>
+                                {CURRENCY_SYMBOL}
+                                {subtotal.toFixed(2)}
+                            </Text>
                         </View>
+
                         <View style={styles.summaryRow}>
-                            <Text style={[styles.summaryLabel, { color: '#10B981' }]}>{t['shipping'] || "Shipping"}</Text>
-                            <Text style={[styles.summaryValue, { color: '#10B981' }]}>{t['free'] || "Free"}</Text>
+                            <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
+                                {(t as any)["shipping"] || "Shipping"}
+                            </Text>
+                            <Text style={[styles.summaryValue, { color: "#10B981" }]}>
+                                {(t as any)["free"] || "Free"}
+                            </Text>
                         </View>
 
                         {discount && (
                             <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: '#007AFF' }]}>Discount</Text>
-                                <Text style={[styles.summaryValue, { color: '#007AFF' }]}>-{discount.text}</Text>
+                                <Text style={[styles.summaryLabel, { color: "#007AFF" }]}>Discount</Text>
+                                <Text style={[styles.summaryValue, { color: "#007AFF" }]}>-{discount.text}</Text>
                             </View>
                         )}
 
-                        <TouchableOpacity
-                            style={styles.promoButton}
-                            onPress={() => setShowPromo(!showPromo)}
-                        >
-                            <Text style={styles.promoText}>{t['promoHaveCode'] || "Have a promo code?"}</Text>
+                        <TouchableOpacity style={styles.promoButton} onPress={() => setShowPromo(!showPromo)}>
+                            <Text style={styles.promoText}>{(t as any)["promoHaveCode"] || "Have a promo code?"}</Text>
                             <Ionicons name={showPromo ? "chevron-up" : "chevron-down"} size={16} color="#000" />
                         </TouchableOpacity>
 
@@ -216,98 +279,98 @@ export default function CheckoutStepOneScreen() {
                                     value={promoCode}
                                     onChangeText={setPromoCode}
                                     autoCapitalize="characters"
-                                    editable={!isApplyingPromo && promoStatus !== 'applied'}
+                                    editable={!isApplyingPromo && promoStatus !== "applied"}
                                 />
                                 <TouchableOpacity
-                                    style={[styles.applyBtn, (isApplyingPromo || promoStatus === 'applied') && { opacity: 0.5 }]}
+                                    style={[styles.applyBtn, (isApplyingPromo || promoStatus === "applied") && { opacity: 0.5 }]}
                                     onPress={handleApplyPromo}
-                                    disabled={isApplyingPromo || promoStatus === 'applied'}
+                                    disabled={isApplyingPromo || promoStatus === "applied"}
                                 >
-                                    {isApplyingPromo ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '600' }}>Apply</Text>}
+                                    {isApplyingPromo ? (
+                                        <ActivityIndicator color="#fff" size="small" />
+                                    ) : (
+                                        <Text style={{ color: "#fff", fontWeight: "600" }}>Apply</Text>
+                                    )}
                                 </TouchableOpacity>
                             </View>
                         )}
 
                         <View style={styles.divider} />
                         <View style={styles.totalRow}>
-                            <Text style={styles.totalLabel}>{t['totalLabel'] || "Total"}</Text>
-                            <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
+                            <Text style={styles.totalLabel}>{(t as any)["totalLabel"] || "Total"}</Text>
+                            <Text style={styles.totalValue}>
+                                {CURRENCY_SYMBOL}
+                                {total.toFixed(2)}
+                            </Text>
                         </View>
                     </View>
 
-                    {/* Login Section */}
                     <View style={styles.authSection}>
                         {!currentUser ? (
                             <>
                                 <View style={styles.signInToContinueContainer}>
                                     <Text style={styles.signInToContinueText}>
-                                        {t['signInToContinue'] || "Please sign in to continue."}
+                                        {(t as any)["signInToContinue"] || "Please sign in to continue."}
                                     </Text>
                                 </View>
+
                                 <LoginButton
-                                    text={t['signUpGoogle'] || "Sign up with Google"}
+                                    text={(t as any)["signUpGoogle"] || "Sign up with Google"}
                                     onPress={handleGoogleLogin}
-                                    style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' }}
+                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
                                     disabled={!isReady || isSigningIn}
                                     icon={isSigningIn ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
-                                {Platform.OS === 'ios' && (
+
+                                {Platform.OS === "ios" && (
                                     <LoginButton
-                                        text={t['auth.signinApple'] || "Continue with Apple"}
+                                        text={(t as any)["auth.signinApple"] || "Continue with Apple"}
                                         onPress={handleAppleLogin}
-                                        style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' }}
+                                        style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
                                         icon={<Ionicons name="logo-apple" size={20} color="#000" />}
                                     />
                                 )}
+
                                 <LoginButton
-                                    text={t['auth.continueEmail'] || "Continue with email"}
+                                    text={(t as any)["auth.continueEmail"] || "Continue with email"}
                                     onPress={() => router.push("/auth/email")}
-                                    style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' }}
+                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
                                     icon={<Ionicons name="mail" size={20} color="#333" />}
                                 />
                             </>
                         ) : (
                             <View style={styles.loggedInInfo}>
                                 <Text style={styles.loggedInText}>
-                                    {t['loggedInAs'] || "Logged in as"} {currentUser.email || "User"}
+                                    {(t as any)["loggedInAs"] || "Logged in as"} {currentUser.email || "User"}
                                 </Text>
                                 <TouchableOpacity onPress={() => auth.signOut()}>
-                                    <Text style={styles.signOutText}>
-                                        {t['signOut'] || "Sign Out"}
-                                    </Text>
+                                    <Text style={styles.signOutText}>{(t as any)["signOut"] || "Sign Out"}</Text>
                                 </TouchableOpacity>
                             </View>
                         )}
                     </View>
 
-                    {/* Next Button */}
                     <TouchableOpacity
-                        style={[styles.nextBtn, !currentUser && styles.disabledBtn]}
+                        style={[styles.nextBtn, (!currentUser || isPreparing) && styles.disabledBtn]}
                         onPress={handleNext}
-                        disabled={!currentUser}
+                        disabled={!currentUser || isPreparing}
                     >
-                        <Text style={styles.nextBtnText}>
-                            {t['next'] || "Next"}
-                        </Text>
+                        {isPreparing ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.nextBtnText}>{(t as any)["next"] || "Next"}</Text>
+                        )}
                     </TouchableOpacity>
-
                 </View>
             </ScrollView>
 
-            {/* Photo Preview Modal */}
-            <Modal visible={!!previewUri} transparent={true} animationType="fade" onRequestClose={() => setPreviewUri(null)}>
+            <Modal visible={!!previewUri} transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
                 <View style={styles.modalContainer}>
                     <TouchableOpacity style={styles.modalBackground} onPress={() => setPreviewUri(null)} />
                     <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setPreviewUri(null)}>
                         <Ionicons name="close" size={28} color="#fff" />
                     </TouchableOpacity>
-                    {previewUri && (
-                        <Image
-                            source={{ uri: previewUri }}
-                            style={styles.modalImage}
-                            resizeMode="contain"
-                        />
-                    )}
+                    {previewUri && <Image source={{ uri: previewUri }} style={styles.modalImage} resizeMode="contain" />}
                 </View>
             </Modal>
         </SafeAreaView>
@@ -315,47 +378,59 @@ export default function CheckoutStepOneScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#fff' },
-    header: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+    container: { flex: 1, backgroundColor: "#fff" },
+    header: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
     backBtn: { padding: 4 },
-    headerTitle: { flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 16 },
+    headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
     content: { padding: 20 },
-    stepContainer: { maxWidth: 500, alignSelf: 'center', width: '100%' },
-    imageScroll: { marginBottom: 16, flexDirection: 'row' },
-    previewImage: { width: 100, height: 100, backgroundColor: '#eee', resizeMode: 'cover' },
+    stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
+    imageScroll: { marginBottom: 16, flexDirection: "row" },
+    previewImage: { width: 100, height: 100, backgroundColor: "#eee", resizeMode: "cover" },
 
-    summaryBlock: { backgroundColor: '#fff', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#f0f0f0', marginBottom: 24, shadowColor: "#000", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8, elevation: 2 },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-    summaryLabel: { fontSize: 15, color: '#333' },
-    summaryValue: { fontSize: 15, fontWeight: '600' },
+    summaryBlock: {
+        backgroundColor: "#fff",
+        borderRadius: 20,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: "#f0f0f0",
+        marginBottom: 24,
+        shadowColor: "#000",
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
+    summaryLabel: { fontSize: 15, color: "#333" },
+    summaryValue: { fontSize: 15, fontWeight: "600" },
 
-    promoButton: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
-    promoText: { fontWeight: '600', marginRight: 5, fontSize: 14 },
-    promoInputContainer: { marginTop: 10, flexDirection: 'row', gap: 8 },
-    promoInput: { flex: 1, height: 44, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', paddingHorizontal: 12, backgroundColor: '#f9fafb' },
-    applyBtn: { width: 70, height: 44, borderRadius: 8, backgroundColor: colors.ink || '#000', alignItems: 'center', justifyContent: 'center' },
+    promoButton: { flexDirection: "row", alignItems: "center", marginTop: 10 },
+    promoText: { fontWeight: "600", marginRight: 5, fontSize: 14 },
+    promoInputContainer: { marginTop: 10, flexDirection: "row", gap: 8 },
+    promoInput: { flex: 1, height: 44, borderRadius: 8, borderWidth: 1, borderColor: "#ddd", paddingHorizontal: 12, backgroundColor: "#f9fafb" },
+    applyBtn: { width: 70, height: 44, borderRadius: 8, backgroundColor: colors.ink || "#000", alignItems: "center", justifyContent: "center" },
 
-    divider: { height: 1, backgroundColor: '#eee', marginVertical: 15 },
-    totalRow: { flexDirection: 'row', justifyContent: 'space-between' },
-    totalLabel: { fontSize: 18, fontWeight: '700' },
-    totalValue: { fontSize: 18, fontWeight: '700' },
+    divider: { height: 1, backgroundColor: "#eee", marginVertical: 15 },
+    totalRow: { flexDirection: "row", justifyContent: "space-between" },
+    totalLabel: { fontSize: 18, fontWeight: "700" },
+    totalValue: { fontSize: 18, fontWeight: "700" },
 
     authSection: { gap: 10, marginBottom: 20 },
-    loginBtn: { height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-    loginBtnText: { fontWeight: '600', fontSize: 15, color: '#333' },
+    loginBtn: { height: 50, borderRadius: 25, alignItems: "center", justifyContent: "center" },
+    loginBtnText: { fontWeight: "600", fontSize: 15, color: "#333" },
 
-    loggedInInfo: { padding: 15, backgroundColor: '#e0f2fe', borderRadius: 12, alignItems: 'center' },
-    loggedInText: { color: '#0284c7', fontWeight: '600' },
-    signOutText: { color: '#666', fontSize: 13, marginTop: 4, textDecorationLine: 'underline' },
-    signInToContinueContainer: { marginBottom: 12, alignItems: 'center' },
-    signInToContinueText: { fontSize: 14, color: '#666', opacity: 0.8 },
+    loggedInInfo: { padding: 15, backgroundColor: "#e0f2fe", borderRadius: 12, alignItems: "center" },
+    loggedInText: { color: "#0284c7", fontWeight: "600" },
+    signOutText: { color: "#666", fontSize: 13, marginTop: 4, textDecorationLine: "underline" },
+    signInToContinueContainer: { marginBottom: 12, alignItems: "center" },
+    signInToContinueText: { fontSize: 14, color: "#666", opacity: 0.8 },
 
-    nextBtn: { height: 56, borderRadius: 28, backgroundColor: colors.ink || '#000', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
-    disabledBtn: { backgroundColor: '#ccc' },
-    nextBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+    nextBtn: { height: 56, borderRadius: 28, backgroundColor: colors.ink || "#000", alignItems: "center", justifyContent: "center", marginTop: 10 },
+    disabledBtn: { backgroundColor: "#ccc" },
+    nextBtnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 
-    modalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
+    modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },
     modalBackground: { ...StyleSheet.absoluteFillObject },
-    modalCloseBtn: { position: "absolute", top: 60, right: 30, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 },
-    modalImage: { width: '100%', height: '80%' },
+    modalCloseBtn: { position: "absolute", top: 60, right: 30, zIndex: 10, padding: 8, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 20 },
+    modalImage: { width: "100%", height: "80%" },
 });

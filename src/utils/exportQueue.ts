@@ -13,13 +13,10 @@ class ExportQueue {
     private currentTaskName: string | null = null;
 
     private paused = false;
-    private generation = 0; // increments on pause/clear to invalidate queued tasks
+    private generation = 0;
 
     enqueue(task: Task, name?: string) {
-        if (this.paused) {
-            // Enqueue ignored while paused (prevents new heavy exports during checkout/unmount)
-            return;
-        }
+        if (this.paused) return;
         const token = this.generation;
         this.queue.push({ task, token, name });
         this.process();
@@ -27,7 +24,7 @@ class ExportQueue {
 
     pause() {
         this.paused = true;
-        this.generation += 1; // invalidate queued tasks
+        this.generation += 1;
     }
 
     resume() {
@@ -37,7 +34,7 @@ class ExportQueue {
 
     clear() {
         this.queue = [];
-        this.generation += 1; // invalidate queued tasks
+        this.generation += 1;
     }
 
     get isPaused() {
@@ -48,9 +45,26 @@ class ExportQueue {
         return this.generation;
     }
 
+    get pendingCount() {
+        return this.queue.length;
+    }
+
+    get isBusy() {
+        return this.isProcessing;
+    }
+
+    // ✅ ADD: wait until all export tasks finish
+    async waitForIdle(timeoutMs = 20000, intervalMs = 120) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            if (!this.isProcessing && this.queue.length === 0) return;
+            await new Promise(r => setTimeout(r, intervalMs));
+        }
+        throw new Error("ExportQueue timeout: export not finished");
+    }
+
     private async process() {
-        if (this.isProcessing) return;
-        if (this.paused) return;
+        if (this.isProcessing || this.paused) return;
 
         this.isProcessing = true;
 
@@ -59,32 +73,16 @@ class ExportQueue {
 
             const item = this.queue.shift();
             if (!item) continue;
-
-            // If generation changed since enqueue -> drop silently
             if (item.token !== this.generation) continue;
 
-            const { task, name } = item;
-            this.currentTaskName = name ?? null;
-
             try {
-                await task();
+                await item.task();
             } catch (e) {
                 console.error("[ExportQueue] Task failed", e);
-            } finally {
-                this.currentTaskName = null;
             }
         }
 
         this.isProcessing = false;
-        this.currentTaskName = null;
-    }
-
-    get pendingCount() {
-        return this.queue.length;
-    }
-
-    get isBusy() {
-        return this.isProcessing;
     }
 }
 

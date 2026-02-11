@@ -1,0 +1,26 @@
+{
+    "name": "functions",
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "serve": "npm run build && firebase emulators:start --only functions",
+        "shell": "npm run build && firebase functions:shell",
+        "start": "npm run shell",
+        "deploy": "firebase deploy --only functions:reserveOrderCode",
+        "logs": "firebase functions:log"
+    },
+    "engines": {
+        "node": "20"
+    },
+    "main": "lib/index.js",
+    "dependencies": {
+        "archiver": "^7.0.1",
+        "firebase-admin": "^12.0.0",
+        "firebase-functions": "^4.6.0",
+        "sharp": "^0.33.2"
+    },
+    "devDependencies": {
+        "@types/archiver": "^7.0.0",
+        "typescript": "^5.0.0"
+    },
+    "private": true
+}

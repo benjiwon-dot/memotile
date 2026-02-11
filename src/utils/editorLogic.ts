@@ -69,11 +69,16 @@ export const generatePreviewExport = async (
     uri: string,
     cropRect: { x: number; y: number; width: number; height: number }
 ) => {
+    // ✅ 긴 변 512로 고정 (메모리 안전 + 썸네일 용도)
+    const longSide = 512;
+    const isLandscape = cropRect.width >= cropRect.height;
+    const resizeObj = isLandscape ? { width: longSide } : { height: longSide };
+
     const result = await manipulateAsync(
         uri,
         [
             { crop: { originX: cropRect.x, originY: cropRect.y, width: cropRect.width, height: cropRect.height } },
-            { resize: { width: Math.min(cropRect.width, 1000) } }
+            { resize: resizeObj }
         ],
         { compress: 0.8, format: SaveFormat.JPEG }
     );

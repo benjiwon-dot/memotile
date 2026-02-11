@@ -38,7 +38,7 @@ export default function MyOrders() {
                                 <div style={styles.imageStrip}>
                                     {order.items.slice(0, 5).map((item, idx) => (
                                         <div key={idx} style={styles.stripItem}>
-                                            <img src={item.previewUrl || item.src} alt="" style={styles.stripImg} />
+                                            <img src={item.assets?.viewUrl || item.previewUrl || item.src} alt="" style={styles.stripImg} />
                                         </div>
                                     ))}
                                     {order.items.length > 5 && (

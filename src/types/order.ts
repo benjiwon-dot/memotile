@@ -13,10 +13,12 @@ export interface OrderItem {
     printStoragePath?: string;  // GCS path for high-res
     index: number;
     assets?: {
+        viewPath?: string;
+        viewUrl?: string;
         previewPath: string;
         previewUrl: string;
         printPath: string;
-        printUrl: string;
+        printUrl: string | null;
     };
 
     quantity: number;

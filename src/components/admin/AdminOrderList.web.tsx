@@ -1,515 +1,411 @@
+// src/components/admin/AdminOrderList.web.tsx
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Link, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "expo-router";
 import {
     Search,
-    Filter,
     ChevronRight,
     RefreshCw,
     Calendar,
     Package,
-    ArrowUpDown,
-    Printer,
+    Download,
     CheckSquare,
     Square,
-    Download,
-    FileText,
-    Truck,
-    Edit3
-} from 'lucide-react-native';
-import { OrderHeader } from '@/lib/admin/types';
-import StatusBadge from './StatusBadge';
-import { auth } from '@/lib/firebase';
+    FileSpreadsheet,
+} from "lucide-react";
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+import { OrderHeader, OrderStatus } from "@/lib/admin/types";
+import { listOrders } from "@/lib/admin/orderRepo";
+import StatusBadge from "./StatusBadge";
+
+const isWeb = typeof window !== "undefined";
+
+function norm(s: any) {
+    return String(s || "").toLowerCase().trim();
+}
+
+function toCsv(rows: Record<string, any>[]) {
+    if (!rows.length) return "";
+    const headers = Object.keys(rows[0] || {});
+    const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [
+        headers.join(","),
+        ...rows.map((r) => headers.map((h) => escape(r[h])).join(",")),
+    ];
+    return lines.join("\n");
+}
+
+function downloadTextFile(filename: string, text: string, mime = "text/csv;charset=utf-8") {
+    if (!isWeb) return;
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+async function downloadFromUrl(url: string, filename = "prints.zip") {
+    if (!isWeb) return;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Download failed");
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+    } catch (e) {
+        console.error("Download error:", e);
+        throw e;
+    }
+}
 
 export default function AdminOrderList() {
     const router = useRouter();
+
     const [orders, setOrders] = useState<OrderHeader[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Filters
-    const [q, setQ] = useState('');
-    const [status, setStatus] = useState<string>('ALL');
-    const [from, setFrom] = useState('');
-    const [to, setTo] = useState('');
-    const [sort, setSort] = useState<'asc' | 'desc'>('desc');
-    const [mode, setMode] = useState<'default' | 'queue'>('default');
+    const [q, setQ] = useState("");
+    const [statusFilter, setStatusFilter] = useState<string>("ALL");
+    const [from, setFrom] = useState<string>("");
+    const [to, setTo] = useState<string>("");
 
-    // Selection
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [bulkStatus, setBulkStatus] = useState<string>('');
     const [bulkLoading, setBulkLoading] = useState(false);
 
-    // Bulk Ops State
-    const [showBulkNote, setShowBulkNote] = useState(false);
-    const [bulkNoteText, setBulkNoteText] = useState('');
-    const [showBulkTracking, setShowBulkTracking] = useState(false);
-    const [bulkTrackingText, setBulkTrackingText] = useState('');
+    const lastSigRef = useRef<string>("");
 
     const fetchOrders = async () => {
         setLoading(true);
         setError(null);
+        setSelectedIds(new Set());
+
         try {
-            const token = await auth.currentUser?.getIdToken();
-            if (!token) throw new Error("No admin token available");
+            // ✅ IMPORTANT: Firestore "contains" 검색 불가 → repo는 recent fetch 후, 여기서 부분검색
+            const data: any = await listOrders({
+                status: statusFilter !== "ALL" ? (statusFilter as OrderStatus) : undefined,
+                from: from || undefined,
+                to: to || undefined,
+                sort: "desc",
+                limit: 500, // ✅ 운영 초기: 300~500 정도면 충분
+            } as any);
 
-            const params = new URLSearchParams();
-            if (q.trim()) params.append('q', q.trim());
-            if (status !== 'ALL') params.append('status', status);
-            if (from) params.append('from', from);
-            if (to) params.append('to', to);
-            if (sort) params.append('sort', sort);
-            if (mode === 'queue') params.append('mode', 'queue');
-
-
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders?${params.toString()}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || "Failed to fetch orders");
-            }
-
-            const data = await res.json();
-            setOrders(data.rows || []);
-            setSelectedIds(new Set());
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message);
+            const rows: OrderHeader[] = Array.isArray(data) ? data : (data?.rows ?? []);
+            setOrders(rows);
+        } catch (e: any) {
+            setError(e?.message || String(e));
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            fetchOrders();
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [q, status, from, to, sort, mode]);
-
-    const handleSelectAll = () => {
-        if (selectedIds.size === orders.length && orders.length > 0) {
-            setSelectedIds(new Set());
-        } else {
-            setSelectedIds(new Set(orders.map(o => o.id)));
-        }
-    };
-
     const toggleSelect = (id: string) => {
         const next = new Set(selectedIds);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
+        next.has(id) ? next.delete(id) : next.add(id);
         setSelectedIds(next);
     };
 
-    const handleBulkUpdate = async () => {
-        if (selectedIds.size === 0 || !bulkStatus) return;
-        if (!confirm(`Update ${selectedIds.size} orders to ${bulkStatus}?`)) return;
+    const toggleSelectAll = () => {
+        if (visibleOrders.length === 0) return;
+        if (selectedIds.size === visibleOrders.length) setSelectedIds(new Set());
+        else setSelectedIds(new Set(visibleOrders.map((o) => o.id)));
+    };
+
+    const handleBulkStatus = async (newStatus: string) => {
+        if (selectedIds.size === 0) return;
+        if (isWeb && !confirm(`Update ${selectedIds.size} orders to ${newStatus}?`)) return;
 
         setBulkLoading(true);
         try {
-            const token = await auth.currentUser?.getIdToken();
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders/batch/status`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    orderIds: Array.from(selectedIds),
-                    status: bulkStatus
-                })
-            });
-
-            if (!res.ok) throw new Error("Bulk update failed");
-
-            alert("Orders updated");
-            setBulkStatus('');
-            fetchOrders();
-        } catch (err: any) {
-            alert(err.message);
+            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminBatchUpdateStatus");
+            await fn({ orderIds: Array.from(selectedIds), status: newStatus });
+            await fetchOrders();
+        } catch (e: any) {
+            alert("Bulk update failed: " + (e?.message || String(e)));
         } finally {
             setBulkLoading(false);
         }
     };
 
-    const handleBulkNote = async () => {
-        if (selectedIds.size === 0 || !bulkNoteText.trim()) return;
-        setBulkLoading(true);
-        try {
-            const token = await auth.currentUser?.getIdToken();
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders/batch/notes`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ orderIds: Array.from(selectedIds), adminNote: bulkNoteText })
-            });
-            if (!res.ok) throw new Error("Batch note update failed");
-            alert("Notes updated");
-            setShowBulkNote(false);
-            setBulkNoteText('');
-            fetchOrders();
-        } catch (err: any) { alert(err.message); } finally { setBulkLoading(false); }
-    };
+    const handleBulkZip = async () => {
+        if (selectedIds.size === 0) return;
 
-    const handleBulkTracking = async () => {
-        if (selectedIds.size === 0 || !bulkTrackingText.trim()) return;
         setBulkLoading(true);
         try {
-            const token = await auth.currentUser?.getIdToken();
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders/batch/tracking`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ orderIds: Array.from(selectedIds), trackingNumber: bulkTrackingText })
-            });
-            if (!res.ok) throw new Error("Batch tracking update failed");
-            alert("Tracking numbers updated");
-            setShowBulkTracking(false);
-            setBulkTrackingText('');
-            fetchOrders();
-        } catch (err: any) { alert(err.message); } finally { setBulkLoading(false); }
+            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminExportZipPrints");
+            const res = await fn({ orderIds: Array.from(selectedIds), type: "print" });
+            const { url } = (res.data as any) || {};
+
+            if (url) {
+                await downloadFromUrl(url, `Memotile_Print_${new Date().toISOString().slice(0, 10)}.zip`);
+            } else {
+                alert("ZIP generation returned no URL.");
+            }
+        } catch (e: any) {
+            alert("ZIP export failed: " + (e?.message || String(e)));
+        } finally {
+            setBulkLoading(false);
+        }
     };
 
     const handleExportCSV = async () => {
-        try {
-            const token = await auth.currentUser?.getIdToken();
-            const params = new URLSearchParams();
-            if (q.trim()) params.append('q', q.trim());
-            if (status !== 'ALL') params.append('status', status);
-            if (from) params.append('from', from);
-            if (to) params.append('to', to);
-            // etc...
+        // Use selected items if any, otherwise all visible items
+        const targets = selectedIds.size > 0
+            ? visibleOrders.filter(o => selectedIds.has(o.id))
+            : visibleOrders;
 
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders/export/customers?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error("Export failed");
+        if (targets.length === 0) {
+            alert("No orders to export.");
+            return;
+        }
 
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `orders_${new Date().toISOString()}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-        } catch (err: any) { alert(err.message); }
+        const rows = targets.map(o => ({
+            Date: formatDate(o.createdAt),
+            Name: o.customer?.fullName || o.shipping?.fullName || "Guest",
+            Address: [o.shipping?.address1, o.shipping?.address2, o.shipping?.city, o.shipping?.state, o.shipping?.postalCode, o.shipping?.country].filter(Boolean).join(" "),
+            Phone: o.customer?.phone || o.shipping?.phone || "",
+            OrderNo: o.orderCode,
+            Email: o.customer?.email || o.shipping?.email || "",
+            TileCount: o.itemsCount,
+            Status: o.status
+        }));
+
+        const csv = toCsv(rows);
+        downloadTextFile(`orders_${new Date().toISOString().slice(0, 10)}.csv`, csv);
     };
 
-    const handleDownloadZIP = async (type: 'preview' | 'print') => {
-        if (selectedIds.size === 0) return;
-        try {
-            // Note: In real app, might want to show clearer loading state for large downloads
-            const token = await auth.currentUser?.getIdToken();
-            const API_BASE = process.env.EXPO_PUBLIC_ADMIN_API_BASE || 'http://localhost:4000';
-            const res = await fetch(`${API_BASE}/api/admin/orders/export/zip`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ orderIds: Array.from(selectedIds), type })
-            });
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            const sig = JSON.stringify({ status: statusFilter, from, to });
+            if (lastSigRef.current === sig) return;
+            lastSigRef.current = sig;
+            fetchOrders();
+        }, 200);
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || "ZIP generation failed");
-            }
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [statusFilter, from, to]);
 
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `orders_${type}_${new Date().getTime()}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-        } catch (err: any) { alert("ZIP Error: " + err.message); }
-    };
+    const visibleOrders = useMemo(() => {
+        const qq = norm(q);
+        if (!qq) return orders;
 
-    const formatDate = (dateStr: string) => {
-        const d = new Date(dateStr);
-        return d.toLocaleDateString('en-US', {
-            month: 'short', day: 'numeric', year: 'numeric',
-            hour: '2-digit', minute: '2-digit'
+        return orders.filter((o) => {
+            const hay = [
+                o.orderCode,
+                o.id,
+                o.customer?.fullName,
+                o.customer?.email,
+                o.customer?.phone,
+                o.shipping?.fullName,
+                o.shipping?.phone,
+                o.shipping?.email,
+                o.shipping?.address1,
+                o.shipping?.address2,
+                o.shipping?.city,
+                o.shipping?.state,
+                o.shipping?.postalCode,
+            ]
+                .map(norm)
+                .join(" | ");
+
+            return hay.includes(qq);
         });
-    };
+    }, [orders, q]);
 
-    const isAllSelected = orders.length > 0 && selectedIds.size === orders.length;
+    const formatDate = (dateStr: string) =>
+        new Date(dateStr).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+        });
 
     return (
         <div className="space-y-6">
-            {/* Controls Bar */}
-            <div className="flex flex-col gap-4">
-                {/* Search & Main Filters */}
-                <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                    <div className="relative flex-1 w-full max-w-md">
-                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">
-                            <Search size={18} />
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Search by Order Code..."
-                            className="admin-input pl-10 w-full"
-                            value={q}
-                            onChange={(e) => setQ(e.target.value)}
-                        />
-                    </div>
+            {/* Status Tabs */}
+            <div className="flex gap-2 overflow-x-auto border-b pb-2">
+                {["ALL", "paid", "processing", "printed", "shipping", "delivered", "canceled", "refunded"].map((st) => (
+                    <button
+                        key={st}
+                        onClick={() => setStatusFilter(st)}
+                        className={`px-4 py-2 rounded-full text-xs font-black uppercase ${statusFilter === st ? "bg-zinc-900 text-white" : "bg-white text-zinc-400 border"
+                            }`}
+                    >
+                        {st}
+                    </button>
+                ))}
+            </div>
 
-                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                        <button
-                            onClick={handleExportCSV}
-                            className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50"
+            {/* Search + Date */}
+            <div className="flex flex-col md:flex-row gap-4">
+                <div className="relative flex-1">
+                    <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                        className="admin-input pl-10 w-full"
+                        placeholder="Search by name / email / phone / orderCode / address… (1 char ok)"
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                    />
+                </div>
+
+                <div className="flex gap-2 items-center">
+                    <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                    <span>-</span>
+                    <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                    <button onClick={fetchOrders} className="admin-btn admin-btn-secondary !p-2" disabled={loading}>
+                        <RefreshCw size={16} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Bulk Bar */}
+            {selectedIds.size > 0 && (
+                <div className="bg-zinc-900 text-white p-3 rounded-xl flex flex-col md:flex-row gap-3 md:justify-between md:items-center">
+                    <span className="font-bold">{selectedIds.size} selected</span>
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <select
+                            disabled={bulkLoading}
+                            onChange={(e) => {
+                                if (e.target.value) handleBulkStatus(e.target.value);
+                                e.target.value = "";
+                            }}
+                            className="bg-zinc-800 text-xs px-2 py-2 rounded"
                         >
-                            <FileText size={14} /> Export CSV
-                        </button>
+                            <option value="">Set Status</option>
+                            <option value="paid">Paid</option>
+                            <option value="processing">Processing</option>
+                            <option value="printed">Printed</option>
+                            <option value="shipping">Shipping</option>
+                            <option value="delivered">Delivered</option>
+                            <option value="canceled">Canceled</option>
+                        </select>
 
                         <button
-                            onClick={() => setMode(mode === 'queue' ? 'default' : 'queue')}
-                            className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition-colors ${mode === 'queue'
-                                ? 'bg-purple-50 text-purple-600 border-purple-200 shadow-sm'
-                                : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300'
-                                }`}
+                            onClick={handleBulkZip}
+                            disabled={bulkLoading}
+                            className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2"
                         >
-                            <Printer size={14} />
-                            {mode === 'queue' ? 'Printing Queue' : 'All Orders'}
-                        </button>
-
-                        <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm">
-                            <Filter size={16} color="#71717a" />
-                            <select
-                                className="bg-transparent text-sm font-bold text-zinc-600 focus:outline-none cursor-pointer"
-                                value={status}
-                                onChange={(e) => setStatus(e.target.value)}
-                            >
-                                <option value="ALL">All Status</option>
-                                <option value="paid">Paid</option>
-                                <option value="processing">Processing</option>
-                                <option value="printed">Printed</option>
-                                <option value="shipping">Shipping</option>
-                                <option value="delivered">Delivered</option>
-                                <option value="canceled">Canceled</option>
-                            </select>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <input type="date" className="admin-input py-1.5 px-2 text-xs w-32" value={from} onChange={(e) => setFrom(e.target.value)} />
-                            <span className="text-zinc-400">-</span>
-                            <input type="date" className="admin-input py-1.5 px-2 text-xs w-32" value={to} onChange={(e) => setTo(e.target.value)} />
-                        </div>
-
-                        <button
-                            onClick={() => setSort(sort === 'desc' ? 'asc' : 'desc')}
-                            className="p-2 bg-white border border-zinc-200 rounded-xl text-zinc-500 hover:text-zinc-900"
-                        >
-                            <ArrowUpDown size={16} className={sort === 'asc' ? 'rotate-180' : ''} />
-                        </button>
-
-                        <button onClick={() => fetchOrders()} className="admin-btn admin-btn-secondary h-10 w-10 !p-0 justify-center">
-                            <RefreshCw size={18} color={loading ? '#007AFF' : '#71717a'} />
+                            <Download size={12} /> ZIP (Print)
                         </button>
                     </div>
                 </div>
+            )}
 
-                {/* Bulk Actions Bar */}
-                {selectedIds.size > 0 && (
-                    <div className="bg-accent/5 border border-accent/20 p-3 rounded-xl flex items-center justify-between flex-wrap gap-4 animate-in fade-in slide-in-from-top-2">
-                        <div className="flex items-center gap-4">
-                            <span className="text-sm font-bold text-accent px-2 border-r border-accent/20 pr-4">
-                                {selectedIds.size} selected
-                            </span>
+            <div className="flex justify-between items-center">
+                <div className="text-xs text-zinc-500 font-bold">
+                    Showing <span className="text-zinc-900">{visibleOrders.length}</span> / {orders.length}
+                </div>
 
-                            {/* Standard Status Update */}
-                            <div className="flex items-center gap-2">
-                                <select
-                                    className="admin-input py-1.5 px-3 text-sm border-accent/20 w-32"
-                                    value={bulkStatus}
-                                    onChange={(e) => setBulkStatus(e.target.value)}
-                                >
-                                    <option value="">Status...</option>
-                                    <option value="processing">Processing</option>
-                                    <option value="printed">Printed</option>
-                                    <option value="shipping">Shipping</option>
-                                    <option value="delivered">Delivered</option>
-                                </select>
-                                <button
-                                    onClick={handleBulkUpdate}
-                                    disabled={!bulkStatus || bulkLoading}
-                                    className="bg-accent text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:brightness-110 disabled:opacity-50"
-                                >
-                                    Apply
-                                </button>
-                            </div>
-
-                            {/* Custom Bulk Buttons */}
-                            <button
-                                onClick={() => setShowBulkNote(!showBulkNote)}
-                                className="bg-white border border-accent/20 text-accent px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-accent/5 flex items-center gap-1"
-                            >
-                                <Edit3 size={12} /> Note
-                            </button>
-                            <button
-                                onClick={() => setShowBulkTracking(!showBulkTracking)}
-                                className="bg-white border border-accent/20 text-accent px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-accent/5 flex items-center gap-1"
-                            >
-                                <Truck size={12} /> Track
-                            </button>
-
-                            {/* ZIP Downloads */}
-                            <button
-                                onClick={() => handleDownloadZIP('preview')}
-                                className="bg-white border border-accent/20 text-accent px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-accent/5 flex items-center gap-1"
-                            >
-                                <Download size={12} /> ZIP (Prev)
-                            </button>
-                            <button
-                                onClick={() => handleDownloadZIP('print')}
-                                className="bg-white border border-accent/20 text-accent px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-accent/5 flex items-center gap-1"
-                            >
-                                <Download size={12} /> ZIP (Print)
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Inline Bulk Forms */}
-                {selectedIds.size > 0 && showBulkNote && (
-                    <div className="bg-white border border-dashed border-accent/30 p-4 rounded-xl flex gap-3 animate-in fade-in">
-                        <input
-                            placeholder="Add admin note to selected orders..."
-                            className="admin-input flex-1"
-                            value={bulkNoteText}
-                            onChange={(e) => setBulkNoteText(e.target.value)}
-                        />
-                        <button
-                            onClick={handleBulkNote}
-                            disabled={!bulkNoteText || bulkLoading}
-                            className="bg-accent text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:brightness-110 disabled:opacity-50"
-                        >
-                            Save Notes
-                        </button>
-                    </div>
-                )}
-                {selectedIds.size > 0 && showBulkTracking && (
-                    <div className="bg-white border border-dashed border-accent/30 p-4 rounded-xl flex gap-3 animate-in fade-in">
-                        <input
-                            placeholder="Set tracking # for selected orders..."
-                            className="admin-input flex-1"
-                            value={bulkTrackingText}
-                            onChange={(e) => setBulkTrackingText(e.target.value)}
-                        />
-                        <button
-                            onClick={handleBulkTracking}
-                            disabled={!bulkTrackingText || bulkLoading}
-                            className="bg-accent text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:brightness-110 disabled:opacity-50"
-                        >
-                            Save Tracking
-                        </button>
-                    </div>
-                )}
+                <button
+                    onClick={handleExportCSV}
+                    disabled={bulkLoading}
+                    className="text-xs font-bold text-zinc-500 inline-flex items-center gap-2"
+                >
+                    <FileSpreadsheet size={14} /> Export CSV
+                </button>
             </div>
 
             {/* Table */}
-            <div className="admin-card">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="bg-zinc-50 border-b border-zinc-100">
-                                <th className="px-4 py-4 w-12">
-                                    <button onClick={handleSelectAll} className="flex items-center justify-center text-zinc-400 hover:text-zinc-600">
-                                        {isAllSelected ? <CheckSquare size={18} className="text-accent" /> : <Square size={18} />}
+            <div className="admin-card overflow-x-auto">
+                <table className="w-full">
+                    <thead>
+                        <tr className="bg-zinc-50">
+                            <th className="p-4">
+                                <button onClick={toggleSelectAll}>
+                                    {selectedIds.size === visibleOrders.length && visibleOrders.length > 0 ? (
+                                        <CheckSquare size={16} />
+                                    ) : (
+                                        <Square size={16} />
+                                    )}
+                                </button>
+                            </th>
+                            <th>Order</th>
+                            <th>Date</th>
+                            <th>Customer</th>
+                            <th>Items</th>
+                            <th>Total</th>
+                            <th>Status</th>
+                            <th />
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {visibleOrders.map((order) => (
+                            <tr key={order.id} className={selectedIds.has(order.id) ? "bg-blue-50" : ""}>
+                                <td className="p-4">
+                                    <button onClick={() => toggleSelect(order.id)}>
+                                        {selectedIds.has(order.id) ? <CheckSquare size={16} /> : <Square size={16} />}
                                     </button>
-                                </th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest">Order</th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest">Date</th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest">Customer</th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest">Items</th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest">Total</th>
-                                <th className="px-6 py-4 text-xs font-black text-zinc-400 uppercase tracking-widest text-center">Status</th>
-                                <th className="px-6 py-4"></th>
+                                </td>
+
+                                <td className="font-mono font-bold whitespace-nowrap">{order.orderCode}</td>
+
+                                <td className="whitespace-nowrap">
+                                    <span className="inline-flex items-center gap-2 text-sm">
+                                        <Calendar size={14} /> {formatDate(order.createdAt)}
+                                    </span>
+                                </td>
+
+                                <td>
+                                    <div className="font-bold">{order.customer?.fullName || "-"}</div>
+                                    <div className="text-xs text-zinc-400">{order.customer?.email || "-"}</div>
+                                    {order.customer?.phone ? <div className="text-xs text-zinc-400">{order.customer.phone}</div> : null}
+                                </td>
+
+                                <td className="whitespace-nowrap">
+                                    <span className="inline-flex items-center gap-2 text-sm">
+                                        <Package size={14} /> {order.itemsCount}
+                                    </span>
+                                </td>
+
+                                <td className="font-black whitespace-nowrap">฿{order.pricing?.total?.toLocaleString?.() ?? "-"}</td>
+
+                                <td>
+                                    <StatusBadge status={order.status} />
+                                    {order.hasPrintWarning && (
+                                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold border border-rose-200">
+                                            <span>⚠</span> Print issue
+                                        </div>
+                                    )}
+                                </td>
+
+                                <td>
+                                    <button
+                                        onClick={() => router.push(`/admin/orders/${order.id}`)}
+                                        className="inline-flex items-center"
+                                        aria-label="Open order detail"
+                                    >
+                                        <ChevronRight size={20} />
+                                    </button>
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                            {loading && orders.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="px-6 py-12 text-center text-zinc-500 font-medium">
-                                        Loading records...
-                                    </td>
-                                </tr>
-                            ) : orders.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="px-6 py-12 text-center text-zinc-500 font-medium">
-                                        No orders found matching your criteria.
-                                    </td>
-                                </tr>
-                            ) : (
-                                orders.map((order) => (
-                                    <tr key={order.id} className={`hover:bg-zinc-50 transition-colors ${selectedIds.has(order.id) ? 'bg-accent/5' : ''}`}>
-                                        <td className="px-4 py-4">
-                                            <button
-                                                onClick={() => toggleSelect(order.id)}
-                                                className="flex items-center justify-center text-zinc-400 hover:text-zinc-600"
-                                            >
-                                                {selectedIds.has(order.id) ? <CheckSquare size={18} className="text-accent" /> : <Square size={18} />}
-                                            </button>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-black text-zinc-900 font-mono">{order.orderCode}</span>
-                                                <span className="text-[10px] text-zinc-400 font-mono uppercase">{order.id.slice(0, 8)}...</span>
-                                                {order.trackingNumber ? (
-                                                    <span className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1">
-                                                        <Truck size={10} /> {order.trackingNumber}
-                                                    </span>
-                                                ) : null}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-2 text-zinc-600">
-                                                <Calendar size={14} color="#a1a1aa" />
-                                                <span className="text-sm">{formatDate(order.createdAt)}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-zinc-800">{order.customer.fullName}</span>
-                                                <span className="text-xs text-zinc-400">{order.customer.email}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-2 text-zinc-600">
-                                                <Package size={14} color="#a1a1aa" />
-                                                <span className="text-sm font-bold">{order.itemsCount} tiles</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="text-sm font-black text-zinc-900">
-                                                {order.currency === 'USD' ? '$' : '฿'}{order.pricing.total.toLocaleString()}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                                            <StatusBadge status={order.status} />
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <Link href={`/admin/orders/${order.id}`} asChild>
-                                                <button className="text-zinc-600 hover:text-accent transition-colors">
-                                                    <ChevronRight size={20} />
-                                                </button>
-                                            </Link>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                        ))}
+
+                        {!loading && visibleOrders.length === 0 ? (
+                            <tr>
+                                <td colSpan={8} className="p-8 text-center text-zinc-400">
+                                    No orders found.
+                                </td>
+                            </tr>
+                        ) : null}
+                    </tbody>
+                </table>
             </div>
+
+            {error && <p className="text-red-500 font-bold">{error}</p>}
         </div>
     );
 }

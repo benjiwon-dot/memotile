@@ -26,6 +26,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="memotile"/>
+        <data android:scheme="com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"/>
         <data android:scheme="exp+memotile-app-anti"/>
       </intent-filter>
     </activity>

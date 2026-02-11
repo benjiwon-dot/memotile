@@ -1,4 +1,4 @@
-export type OrderStatus = "paid" | "processing" | "printed" | "shipping" | "delivered" | "failed" | "refunded";
+export type OrderStatus = "paid" | "processing" | "printed" | "shipping" | "delivered" | "failed" | "refunded" | "canceled";
 
 export interface Pricing {
     subtotal: number;
@@ -52,6 +52,7 @@ export interface OrderHeader {
     trackingNumber?: string;
     refundedAt?: string;
     canceledAt?: string;
+    hasPrintWarning?: boolean;
 }
 
 export interface OrderItemAdmin {
@@ -67,6 +68,13 @@ export interface OrderItemAdmin {
         previewUrl?: string;
         printPath?: string;
         printUrl?: string;
+        printMeta?: {
+            width: number;
+            height: number;
+            ok5000: boolean;
+            checkedAt: string; // ISO or Timestamp
+            source: "storage_finalize" | "manual";
+        };
     };
 }
 

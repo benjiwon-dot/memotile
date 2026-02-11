@@ -101,9 +101,9 @@ export default function OrderDetail() {
                             <button
                                 key={idx}
                                 style={styles.itemCard}
-                                onClick={() => setPreviewImage(item.previewUrl || item.src)}
+                                onClick={() => setPreviewImage(item.assets?.viewUrl || item.previewUrl || item.src)}
                             >
-                                <img src={item.previewUrl || item.src} alt="" style={styles.itemImg} />
+                                <img src={item.assets?.viewUrl || item.previewUrl || item.src} alt="" style={styles.itemImg} />
                             </button>
                         ))}
                     </div>
