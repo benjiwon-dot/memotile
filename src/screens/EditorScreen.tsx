@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Image as RNImage,
+  Platform, // <-- 이 부분 추가
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -719,6 +720,22 @@ export default function EditorScreen() {
   const outgoing = outgoingRef.current;
   const incomingDisplayResolved = isSwitchingPhoto ? incomingResolved : activeResolved || initialInfo;
 
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
+        <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 10 }}>Photo Editing is App Exclusive</Text>
+        <Text style={{ textAlign: 'center', color: '#666', marginBottom: 20 }}>
+          The web version is for preview and checkout testing. Please download our mobile app for full photo editing features.
+        </Text>
+        <Pressable
+          style={styles.primaryBtn}
+          onPress={() => router.push("/create/checkout")} // 바로 결제창으로 넘기기
+        >
+          <Text style={styles.primaryBtnText}>Skip to Checkout</Text>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
