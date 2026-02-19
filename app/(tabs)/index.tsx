@@ -1,4 +1,4 @@
-// app/index.tsx
+// app/(tabs)/index.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
     View,
@@ -7,7 +7,7 @@ import {
     ScrollView,
     Pressable,
     Alert,
-    Linking, // ✅ 이미 import 되어 있음
+    Linking,
     type PressableStateCallbackType,
     type StyleProp,
     type ViewStyle,
@@ -17,15 +17,18 @@ import { Image as ExpoImage, type ImageSource } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { BlurView } from "expo-blur";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
+// ✅ 테마 및 컨텍스트 경로
 import { colors } from "../../src/theme/colors";
 import { layout } from "../../src/theme/layout";
 import { shadows } from "../../src/theme/shadows";
 import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
+
+// ✅ 로고 이미지 경로
+import logoHorizontal from "../../assets/logo_horizontal.png";
 
 // --- Assets ---
 const heroNew1 = require("../../src/assets/hero_new_1.jpg") as ImageSource;
@@ -55,22 +58,19 @@ export default function Index() {
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
 
-    // ✅ SNS 연결 핸들러 추가
+    // ✅ SNS 연결 핸들러
     const handleLinePress = () => {
-        // 라인 비즈니스 계정 연결 (스크린샷의 @946zhley 사용)
         Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
             Alert.alert("Error", "LINE 앱을 열 수 없습니다.");
         });
     };
 
     const handleInstagramPress = () => {
-        // 인스타그램 계정 연결 (memotile_studio 사용)
         Linking.openURL("https://instagram.com/memotile_studio").catch(() => {
             Alert.alert("Error", "인스타그램을 열 수 없습니다.");
         });
     };
 
-    // Resume Handler
     const handleResume = async () => {
         const loaded = await loadDraft();
         if (loaded) {
@@ -163,12 +163,21 @@ export default function Index() {
         pressed && { transform: [{ scale: 0.98 }] },
     ];
 
-    const benefits = (t.benefits ?? []) as Benefit[];
+    // Benefits 데이터 처리
+    const rawBenefits = (t.benefits ?? []) as Benefit[];
+    const extraBenefit: Benefit = {
+        title: locale === 'TH' ? 'ความคมชัดระดับแกลเลอรี' : 'Gallery-Grade Clarity',
+        desc: locale === 'TH'
+            ? 'อัปเกรดภาพเป็น 4000px โดยอัตโนมัติ เพื่อการพิมพ์ที่คมชัดสมจริง'
+            : 'Auto-enhanced to 4000px for razor-sharp, exhibition-quality prints.'
+    };
+    const benefits = [...rawBenefits, extraBenefit];
+
     const steps = (t.steps ?? []) as Step[];
     const billboard = (t.billboard ?? []) as BillboardItem[];
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.container}>
             {hasDraft && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
                     <View style={styles.resumeContent}>
@@ -184,52 +193,68 @@ export default function Index() {
                 </View>
             )}
 
-            <BlurView intensity={80} tint="light" style={[styles.topNav, { paddingTop: insets.top }]}>
-                <View style={styles.navContent}>
-                    <View style={styles.logoGroup}>
-                        <Text style={styles.brandTitle}>MEMOTILE</Text>
-                    </View>
-
-                    <View style={styles.langContainer}>
-                        <Feather
-                            name={"globe" as any}
-                            size={14}
-                            color={colors.textSecondary}
-                            style={{ marginRight: 6 }}
-                        />
-                        <View style={styles.langPill}>
-                            <Pressable
-                                style={[styles.langBtn, locale === "TH" && styles.langBtnActive]}
-                                onPress={() => setLocale("TH")}
-                            >
-                                <Text style={[styles.langText, locale === "TH" && styles.langTextActive]}>TH</Text>
-                            </Pressable>
-                            <Pressable
-                                style={[styles.langBtn, locale === "EN" && styles.langBtnActive]}
-                                onPress={() => setLocale("EN")}
-                            >
-                                <Text style={[styles.langText, locale === "EN" && styles.langTextActive]}>EN</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-            </BlurView>
-
             <ScrollView
                 contentContainerStyle={{
-                    paddingTop: 64,
+                    paddingTop: 0,
                     paddingBottom: layout.spacing.bottomTabHeight + insets.bottom + 20,
                 }}
                 showsVerticalScrollIndicator={false}
+                style={{ flex: 1 }}
             >
-                {/* Hero Section ... */}
+                {/* 헤더 영역 */}
+                <View style={[styles.headerRow, { paddingTop: insets.top - 20 }]}>
+                    <View style={styles.logoContainer}>
+                        <ExpoImage
+                            source={logoHorizontal}
+                            style={{ width: 360, height: 120 }}
+                            contentFit="contain"
+                            contentPosition="left"
+                            transition={200}
+                        />
+                    </View>
+
+                    <View style={[styles.langPill, { transform: [{ translateY: -4 }] }]}>
+                        <Pressable
+                            style={[styles.langBtn, locale === "TH" && styles.langBtnActive]}
+                            onPress={() => setLocale("TH")}
+                        >
+                            <Text style={[styles.langText, locale === "TH" && styles.langTextActive]}>TH</Text>
+                        </Pressable>
+                        <Pressable
+                            style={[styles.langBtn, locale === "EN" && styles.langBtnActive]}
+                            onPress={() => setLocale("EN")}
+                        >
+                            <Text style={[styles.langText, locale === "EN" && styles.langTextActive]}>EN</Text>
+                        </Pressable>
+                    </View>
+                </View>
+
+                {/* Hero Section */}
                 <View style={styles.hero}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
-                            <Text style={styles.heroHeadline1}>{t.heroHeadlineLine1}</Text>
-                            <Text style={styles.heroHeadline2}>{t.heroHeadlineLine2}</Text>
+                            {/* ✅ [수정됨] 언어(locale)에 따라 다른 스타일 적용 */}
+                            <Text style={[
+                                styles.heroHeadline1,
+                                locale === 'TH' ? styles.heroHeadline1_TH : styles.heroHeadline1_EN
+                            ]}>
+                                {t.heroHeadlineLine1}
+                            </Text>
+                            <Text style={[
+                                styles.heroHeadline2,
+                                locale === 'TH' ? styles.heroHeadline2_TH : styles.heroHeadline2_EN
+                            ]}>
+                                {t.heroHeadlineLine2}
+                            </Text>
                         </View>
-                        <Text style={styles.heroSupporting}>{t.heroSupporting}</Text>
+
+                        {/* ✅ [수정됨] 서브 문구도 언어별 분리 */}
+                        <Text style={[
+                            styles.heroSupporting,
+                            locale === 'TH' ? styles.heroSupporting_TH : styles.heroSupporting_EN
+                        ]}>
+                            {t.heroSupporting?.replace(/\.$/, '')}
+                        </Text>
 
                         <View style={styles.heroPreview}>
                             <View style={styles.slideshowContainer}>
@@ -261,7 +286,7 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* Benefits Section ... */}
+                {/* Benefits Section */}
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
                     <Text style={styles.sectionSmallTitle}>{t.benefitsTitle}</Text>
                     <View style={styles.grid}>
@@ -273,8 +298,10 @@ export default function Index() {
                                         <Feather name={"scissors" as any} size={20} color={colors.ink} />
                                     ) : i === 1 ? (
                                         <Feather name={"move" as any} size={20} color={colors.ink} />
-                                    ) : (
+                                    ) : i === 2 ? (
                                         <Feather name={"info" as any} size={20} color={colors.ink} />
+                                    ) : (
+                                        <Feather name={"zap" as any} size={20} color={colors.ink} />
                                     )
                                 }
                                 title={b.title}
@@ -284,7 +311,7 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* Billboard Section ... */}
+                {/* Billboard Section */}
                 <View style={styles.section}>
                     <View style={styles.billboardContainer}>
                         <View style={styles.billboardImgWrapper}>
@@ -333,7 +360,7 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* How it works Section ... */}
+                {/* How it works Section */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>{t.howItWorks}</Text>
                     <View style={styles.stepsContainer}>
@@ -349,7 +376,7 @@ export default function Index() {
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
-                {/* ✅ Footer: 버튼 연결 완료 */}
+                {/* Footer */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
@@ -369,7 +396,6 @@ export default function Index() {
     );
 }
 
-// ... BenefitCard, StepItem, styles (기존과 동일하므로 유지)
 const BenefitCard = ({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) => (
     <View style={styles.benefitCard}>
         <View style={styles.benefitIcon}>{icon}</View>
@@ -394,17 +420,22 @@ const StepItem = ({ num, title, desc }: { num: number; title: string; desc: stri
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.surface },
-    topNav: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 100 },
-    navContent: {
-        height: 64,
-        paddingHorizontal: 24,
+
+    headerRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        paddingHorizontal: 20,
+        marginBottom: -20,
     },
-    logoGroup: { flexDirection: "row", alignItems: "center" },
+    logoContainer: {
+        flex: 1,
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        marginLeft: -20,
+    },
+
     brandTitle: { ...typography.brand, color: colors.text },
-    langContainer: { flexDirection: "row", alignItems: "center" },
     langPill: {
         flexDirection: "row",
         backgroundColor: colors.background,
@@ -419,35 +450,87 @@ const styles = StyleSheet.create({
     langTextActive: { color: colors.text },
 
     section: { padding: layout.spacing.pagePadding, paddingVertical: 40 },
-    hero: { paddingTop: 32, paddingBottom: 48, alignItems: "center" },
+    hero: { paddingTop: 0, paddingBottom: 48, alignItems: "center" },
     heroContent: { maxWidth: 480, width: "100%", alignItems: "center" },
     headlineGroup: { marginBottom: 8, paddingHorizontal: 20, alignItems: "center" },
-    heroHeadline1: { ...typography.h1, textAlign: "center", color: colors.ink },
-    heroHeadline2: { ...typography.h2, marginTop: 4, textAlign: "center", color: colors.ink },
+
+    // ----------------------------------------------------
+    // ✅ [수정됨] 헤드라인 글자: 공통 속성
+    // ----------------------------------------------------
+    heroHeadline1: {
+        ...typography.h1,
+        textAlign: "center",
+        color: colors.ink
+    },
+    heroHeadline2: {
+        ...typography.h2,
+        marginTop: 4,
+        textAlign: "center",
+        color: colors.ink
+    },
     heroSupporting: {
         ...typography.body,
         textAlign: "center",
-        marginBottom: 40,
+        marginBottom: 30,
         paddingHorizontal: 24,
         opacity: 0.9,
         color: colors.textMuted,
     },
+
+    // ----------------------------------------------------
+    // ✅ [추가됨] 태국어(TH) 전용 스타일 (여기서 숫자 조절)
+    // ----------------------------------------------------
+    heroHeadline1_TH: {
+        fontSize: 44,
+        lineHeight: 56,
+    },
+    heroHeadline2_TH: {
+        fontSize: 36,
+        lineHeight: 46,
+    },
+    heroSupporting_TH: {
+        fontSize: 18,
+        lineHeight: 26,
+    },
+
+    // ----------------------------------------------------
+    // ✅ [추가됨] 영어(EN) 전용 스타일 (여기서 숫자 조절)
+    // ----------------------------------------------------
+    heroHeadline1_EN: {
+        fontSize: 36,
+        lineHeight: 48,
+    },
+    heroHeadline2_EN: {
+        fontSize: 26,
+        lineHeight: 40,
+    },
+    heroSupporting_EN: {
+        fontSize: 16,
+        lineHeight: 24,
+    },
+    // ----------------------------------------------------
+
     heroPreview: {
         height: 280,
         width: "100%",
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 40,
+        marginBottom: 34,
     },
     slideshowContainer: { width: 260, height: 260 },
     heroTile: { width: 260, height: 260, borderRadius: 4, ...shadows.md },
 
     ctaWrapper: { width: "100%", alignItems: "center", paddingHorizontal: 24 },
-    ctaGroup: { width: "100%", maxWidth: 360 },
-    primaryBtn: {
+
+    ctaGroup: {
         width: "100%",
+        maxWidth: 360,
+        alignItems: "center",
+    },
+    primaryBtn: {
+        width: 320,
+        height: 68,
         backgroundColor: colors.ink,
-        height: 52,
         borderRadius: 16,
         flexDirection: "row",
         alignItems: "center",
@@ -455,7 +538,12 @@ const styles = StyleSheet.create({
         ...shadows.md,
     },
     ctaInner: { flexDirection: "row", alignItems: "center" },
-    ctaText: { ...typography.button },
+
+    ctaText: {
+        ...typography.button,
+        fontSize: 20,
+        fontWeight: "700"
+    },
     ctaHint: { ...typography.caption, marginTop: 10, textAlign: "center" },
 
     sectionTitle: { ...typography.h3, marginBottom: 24, textAlign: "center", color: colors.ink },
@@ -565,7 +653,7 @@ const styles = StyleSheet.create({
         right: 16,
         backgroundColor: colors.surface,
         borderRadius: 16,
-        padding: 16,
+        padding: 10,
         zIndex: 90,
         ...shadows.md,
         borderWidth: 1,
@@ -590,7 +678,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: colors.ink,
-        paddingVertical: 8,
+        paddingVertical: 6,
         paddingHorizontal: 14,
         borderRadius: 20,
         gap: 6,

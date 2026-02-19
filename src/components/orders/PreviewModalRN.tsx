@@ -108,7 +108,7 @@ export default function PreviewModalRN({
                     {/* ✅ enableHighRes=true AND 다운로드 불가일 때만 안내 노출 */}
                     {enableHighRes && !canDownload && (
                         <View style={styles.notice}>
-                            <Text style={styles.noticeTitle}>High-res (5000px) is generating…</Text>
+                            <Text style={styles.noticeTitle}>High-res (4K) is generating…</Text>
                             <Text style={styles.noticeBody}>
                                 It will appear automatically when ready.{" "}
                                 {Platform.OS === "ios"

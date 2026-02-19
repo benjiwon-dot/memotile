@@ -160,7 +160,7 @@ export async function createDevOrder(params: {
 
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    // ✅ [추가] 유저 프로필에 주소 및 최근 결제수단 자동 저장/업데이트
+    // ✅ 유저 프로필에 주소 및 최근 결제수단 자동 저장/업데이트
     const userProfileRef = doc(db, "users", authedUid);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}. ${String(today.getMonth() + 1).padStart(2, '0')}. ${String(today.getDate()).padStart(2, '0')}`;
@@ -179,16 +179,21 @@ export async function createDevOrder(params: {
         const viewUri = p?.output?.viewUri;
         if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
+        // ✅ Print URI 가져오기
+        const printUri = p?.output?.printUri || viewUri; // fallback to viewUri
+
         const sourceUri = getSourceUri(p);
         if (!sourceUri) throw new Error(`SOURCE URI missing at index ${i}`);
 
         const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
         const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
-        const printPath = `${storageBasePath}/items/${i}_print.jpg`;
+        const printPath = `${storageBasePath}/items/${i}_print.jpg`; // 파일명 설정
 
-        const [sourceRes, viewRes] = await Promise.all([
+        // ✅ 3개 파일 모두 업로드 (Source, View, Print)
+        const [sourceRes, viewRes, printRes] = await Promise.all([
             uploadFileUriToStorage(sourcePath, sourceUri),
-            uploadFileUriToStorage(viewPath, viewUri)
+            uploadFileUriToStorage(viewPath, viewUri),
+            uploadFileUriToStorage(printPath, printUri), // 🔥 고화질 업로드
         ]);
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
@@ -207,10 +212,10 @@ export async function createDevOrder(params: {
                 sourceUrl: sourceRes.downloadUrl,
                 viewPath: viewRes.path,
                 viewUrl: viewRes.downloadUrl,
-                printPath,
-                printUrl: null,
+                printPath: printRes.path,       // ✅ 경로 저장
+                printUrl: printRes.downloadUrl, // ✅ 다운로드 URL 저장 (어드민용)
             },
-            printUrl: null,
+            printUrl: printRes.downloadUrl,     // ✅ 최상위 필드에도 저장
             previewUrl: viewRes.downloadUrl,
             createdAt: serverTimestamp(),
         };
@@ -256,6 +261,7 @@ export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | nul
         if (!itemsSnap.empty) {
             order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
         }
+
         onUpdate(order);
     });
 }

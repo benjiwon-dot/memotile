@@ -1,3 +1,4 @@
+// Contact.tsx
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Alert, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -10,7 +11,7 @@ import { colors } from '../src/theme/colors';
 import { shadows } from '../src/theme/shadows';
 import { layout } from '../src/theme/layout';
 
-const EMAIL_SUPPORT = 'support@memotile.com';
+const EMAIL_SUPPORT = 'official@memotile.com';
 
 export default function Contact() {
     const router = useRouter();
@@ -28,8 +29,12 @@ export default function Contact() {
         Linking.openURL(`mailto:${EMAIL_SUPPORT}`);
     };
 
+    // ✅ [수정됨] Soon 알림 대신 실제 LINE 링크로 연결
     const handleLineClick = () => {
-        Alert.alert("Info", t.comingSoon);
+        // LINE 앱이 설치되어 있으면 앱으로, 없으면 브라우저로 연결됩니다.
+        Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
+            Alert.alert("Error", "Could not open LINE link.");
+        });
     };
 
     return (
@@ -81,6 +86,7 @@ export default function Contact() {
                         onPress={handleLineClick}
                         style={({ pressed }) => [styles.lineBtn, pressed && { opacity: 0.9 }]}
                     >
+                        {/* 문구는 그대로 유지하되 기능만 변경되었습니다 */}
                         <Text style={styles.lineBtnText}>{t.chatWithUs} on LINE</Text>
                     </Pressable>
                     <Text style={styles.cardHint}>{t.quickAssistance}</Text>

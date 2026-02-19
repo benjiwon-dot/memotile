@@ -129,7 +129,14 @@ export default function TermsOfService() {
                 <View style={styles.section}>
                     <Text style={styles.sectionHeading}>{t.terms_sec14_title}</Text>
                     <Text style={styles.paragraph}>
-                        {t.terms_sec14_text} <Text style={styles.link} onPress={handleEmailPress}>{t.supportEmail}</Text>.
+                        {t.terms_sec14_text}
+                    </Text>
+                </View>
+
+                <View style={styles.section}>
+                    <Text style={styles.sectionHeading}>{t.terms_sec15_title}</Text>
+                    <Text style={styles.paragraph}>
+                        {t.terms_sec15_text} <Text style={styles.link} onPress={handleEmailPress}>{t.supportEmail}</Text>.
                     </Text>
                 </View>
 

@@ -12,7 +12,7 @@ import Animated, {
 import FilteredImageSkia from "./FilteredImageSkia";
 import { ColorMatrix } from "../../utils/colorMatrix";
 import { useLanguage } from "../../context/LanguageContext";
-import { clampTransform } from "../../utils/cropMath";
+import { clampTransform, getMaxTranslate, rubberBand, getMinScale } from "../../utils/cropMath";
 
 export type Crop = { x: number; y: number; scale: number };
 
@@ -66,87 +66,106 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
     const savedSc = useSharedValue(1);
 
     useImperativeHandle(ref, () => ({
-        getLatestCrop: () => ({ x: tx.value, y: ty.value, scale: sc.value }),
+        getLatestCrop: () => {
+            const valid = clampTransform(tx.value, ty.value, sc.value, base.w, base.h, CROP_SIZE, 5.0);
+            return { x: valid.tx, y: valid.ty, scale: valid.scale };
+        },
         getFrameRect: () => ({ x: MARGIN_X, y: MARGIN_Y, width: CROP_SIZE, height: CROP_SIZE }),
     }));
 
-    // props sync
     useEffect(() => {
         tx.value = crop.x;
         ty.value = crop.y;
         sc.value = crop.scale;
-
-        // 싱크 맞추기
-        savedTx.value = crop.x;
-        savedTy.value = crop.y;
-        savedSc.value = crop.scale;
     }, [crop]);
 
-    const PAN_DAMP = 0.8; // 드래그 감도 살짝 올림
     const SPRING_CONFIG = {
-        mass: 0.5, // 가볍게
+        mass: 0.5,
         damping: 15,
-        stiffness: 150,
-        overshootClamping: true,
-    };
-
-    const clampNow = (nx: number, ny: number, ns: number) => {
-        "worklet";
-        if (base.w <= 0 || base.h <= 0) return { tx: 0, ty: 0, scale: 1 };
-        return clampTransform(nx, ny, ns, base.w, base.h, CROP_SIZE, 5.0);
+        stiffness: 120,
+        overshootClamping: false,
     };
 
     // 1. 드래그 (Pan)
+    // ✅ activeOffsetX를 작게 설정하여 손가락이 조금만 움직여도 즉시 드래그로 인식하게 함 (핵심)
     const panGesture = Gesture.Pan()
-        .averageTouches(true)
-        .onBegin(() => {
+        .averageTouches(true) // 2손가락일 때 중심점 이동 처리
+        .activeOffsetX([-5, 5])
+        .activeOffsetY([-5, 5])
+        .onStart(() => {
             cancelAnimation(tx); cancelAnimation(ty);
-            savedTx.value = tx.value; savedTy.value = ty.value;
         })
-        .onUpdate((e) => {
-            const nx = savedTx.value + e.translationX * PAN_DAMP;
-            const ny = savedTy.value + e.translationY * PAN_DAMP;
-            const t0 = clampNow(nx, ny, sc.value);
-            tx.value = t0.tx; ty.value = t0.ty;
-        })
-        .onEnd(() => {
-            savedTx.value = tx.value; savedTy.value = ty.value;
-            runOnJS(onChange)({ x: tx.value, y: ty.value, scale: sc.value });
-        });
+        .onChange((e) => {
+            // Pan은 오직 "이동(Translation)"만 담당합니다.
+            // 줌 중에도 손가락이 움직이면 changeX/Y가 발생하여 자연스럽게 위치가 이동됩니다.
+            const nextX = tx.value + e.changeX;
+            const nextY = ty.value + e.changeY;
 
-    // 2. 줌 (Pinch)
-    const pinchGesture = Gesture.Pinch()
-        .onBegin(() => {
-            cancelAnimation(sc); cancelAnimation(tx); cancelAnimation(ty);
-            savedSc.value = sc.value; savedTx.value = tx.value; savedTy.value = ty.value;
-        })
-        .onUpdate((e) => {
-            const nextScale = Math.max(1, Math.min(savedSc.value * e.scale, 5.0));
+            const { maxX, maxY } = getMaxTranslate(base.w, base.h, CROP_SIZE, sc.value);
 
-            // 줌 중심점 계산 (Focal Point Logic)
-            const fx = e.focalX - PREVIEW_W / 2;
-            const fy = e.focalY - PREVIEW_H / 2;
-
-            // 비율에 따라 위치 이동 (줌인하면 중심점 쪽으로 당겨짐)
-            const ratio = nextScale / savedSc.value;
-            const nx = fx + (savedTx.value - fx) * ratio;
-            const ny = fy + (savedTy.value - fy) * ratio;
-
-            const t0 = clampNow(nx, ny, nextScale);
-            sc.value = t0.scale; tx.value = t0.tx; ty.value = t0.ty;
+            if (Number.isFinite(nextX) && Number.isFinite(nextY)) {
+                tx.value = rubberBand(nextX, -maxX, maxX, PREVIEW_W);
+                ty.value = rubberBand(nextY, -maxY, maxY, PREVIEW_H);
+            }
         })
         .onEnd(() => {
-            const t0 = clampNow(tx.value, ty.value, sc.value);
-            // 줌 끝났을 때 위치 저장
-            savedSc.value = t0.scale; savedTx.value = t0.tx; savedTy.value = t0.ty;
-
-            sc.value = withSpring(t0.scale, SPRING_CONFIG);
+            const t0 = clampTransform(tx.value, ty.value, sc.value, base.w, base.h, CROP_SIZE, 5.0);
             tx.value = withSpring(t0.tx, SPRING_CONFIG);
             ty.value = withSpring(t0.ty, SPRING_CONFIG);
             runOnJS(onChange)({ x: t0.tx, y: t0.ty, scale: t0.scale });
         });
 
-    // 동시 인식 (Simultaneous)
+    // 2. 줌 (Pinch)
+    // 2. 줌 (Pinch)
+    const pinchGesture = Gesture.Pinch()
+        .onStart(() => {
+            cancelAnimation(sc); cancelAnimation(tx); cancelAnimation(ty);
+            savedSc.value = sc.value;
+        })
+        .onChange((e) => {
+            const minScale = getMinScale(base.w, base.h, CROP_SIZE);
+
+            // 🔥 [수정 포인트] 줌 속도 조절
+            // e.scale은 1부터 시작합니다. (e.scale - 1)은 변화량입니다.
+            // 여기에 0.6을 곱하면 속도가 60%로 줄어듭니다.
+            // 더 느리게 하려면 0.4, 조금 더 빠르게 하려면 0.8로 변경하세요.
+            const ZOOM_SPEED = 0.6;
+            const dampenedScale = 1 + (e.scale - 1) * ZOOM_SPEED;
+            const targetScale = savedSc.value * dampenedScale;
+
+            // 기존 코드: const targetScale = savedSc.value * e.scale; (이건 100% 속도)
+
+            const elasticScale = rubberBand(targetScale, minScale, 5.0, PREVIEW_W);
+
+            if (sc.value < 0.01 || elasticScale < 0.01) return;
+
+            const scaleRatio = elasticScale / sc.value;
+
+            const fx = e.focalX - PREVIEW_W / 2;
+            const fy = e.focalY - PREVIEW_H / 2;
+
+            const adjustX = (fx - tx.value) * (1 - scaleRatio);
+            const adjustY = (fy - ty.value) * (1 - scaleRatio);
+
+            const { maxX, maxY } = getMaxTranslate(base.w, base.h, CROP_SIZE, elasticScale);
+
+            if (Number.isFinite(elasticScale)) {
+                sc.value = elasticScale;
+                tx.value = rubberBand(tx.value + adjustX, -maxX, maxX, PREVIEW_W);
+                ty.value = rubberBand(ty.value + adjustY, -maxY, maxY, PREVIEW_H);
+            }
+        })
+        .onEnd(() => {
+            const t0 = clampTransform(tx.value, ty.value, sc.value, base.w, base.h, CROP_SIZE, 5.0);
+
+            sc.value = withSpring(t0.scale, SPRING_CONFIG);
+            tx.value = withSpring(t0.tx, SPRING_CONFIG);
+            ty.value = withSpring(t0.ty, SPRING_CONFIG);
+
+            savedSc.value = t0.scale;
+            runOnJS(onChange)({ x: t0.tx, y: t0.ty, scale: t0.scale });
+        });
+    // Pan과 Pinch가 동시에 실행되도록 설정
     const gesture = Gesture.Simultaneous(panGesture, pinchGesture);
 
     const animatedImageStyle = useAnimatedStyle(() => ({
@@ -170,8 +189,6 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                         <View style={[styles.dim, { bottom: 0, left: 0, right: 0, height: MARGIN_Y }]} />
                         <View style={[styles.dim, { top: MARGIN_Y, bottom: MARGIN_Y, left: 0, width: MARGIN_X }]} />
                         <View style={[styles.dim, { top: MARGIN_Y, bottom: MARGIN_Y, right: 0, width: MARGIN_X }]} />
-
-                        {/* 흰색 테두리 + 그림자 */}
                         <View style={[styles.embossedFrame, { width: CROP_SIZE, height: CROP_SIZE, left: MARGIN_X, top: MARGIN_Y }]} />
                     </View>
                 </View>

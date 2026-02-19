@@ -1,11 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import {
     View,
-    Text,
+    Image,
     StyleSheet,
     Animated,
     Pressable,
-    Platform,
+    Dimensions
 } from 'react-native';
 
 interface SplashOverlayProps {
@@ -14,6 +14,8 @@ interface SplashOverlayProps {
 
 export default function SplashOverlay({ onFinish }: SplashOverlayProps) {
     const fadeAnim = useRef(new Animated.Value(1)).current;
+
+    // 중복 호출 방지용 Ref
     const hasFinished = useRef(false);
 
     const handleFinish = () => {
@@ -23,24 +25,19 @@ export default function SplashOverlay({ onFinish }: SplashOverlayProps) {
     };
 
     useEffect(() => {
-        // Start fade out after 1.5s
-        const fadeTimer = setTimeout(() => {
+        // 1. 2초 대기 후 페이드 아웃 시작
+        const timer = setTimeout(() => {
             Animated.timing(fadeAnim, {
                 toValue: 0,
-                duration: 400,
+                duration: 500, // 0.5초 동안 부드럽게 사라짐
                 useNativeDriver: true,
-            }).start();
-        }, 1500);
+            }).start(() => {
+                // 2. 애니메이션이 완전히 끝나면 종료 함수 호출
+                handleFinish();
+            });
+        }, 2000);
 
-        // Finish after 1.9s (1.5s delay + 0.4s fade)
-        const finishTimer = setTimeout(() => {
-            handleFinish();
-        }, 1900);
-
-        return () => {
-            clearTimeout(fadeTimer);
-            clearTimeout(finishTimer);
-        };
+        return () => clearTimeout(timer);
     }, []);
 
     return (
@@ -49,12 +46,18 @@ export default function SplashOverlay({ onFinish }: SplashOverlayProps) {
                 styles.container,
                 { opacity: fadeAnim },
             ]}
-            pointerEvents="auto" // Ensure it captures touches
+            pointerEvents="auto" // 터치 이벤트 가로채기
         >
             <Pressable style={styles.touchable} onPress={handleFinish}>
-                <View style={styles.square}>
-                    <Text style={styles.text}>MEMOTILE</Text>
-                </View>
+                {/* React Native의 Image 컴포넌트는 padding 스타일이 
+                  의도대로 작동하지 않을 수 있어 View로 감싸거나 
+                  부모(touchable)에서 padding을 주는 것이 좋습니다.
+                */}
+                <Image
+                    source={require('../../assets/splash.png')}
+                    style={styles.image}
+                    resizeMode="contain"
+                />
             </Pressable>
         </Animated.View>
     );
@@ -64,7 +67,7 @@ const styles = StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: '#FFFFFF',
-        zIndex: 9999, // Ensure it's on top
+        zIndex: 9999, // 최상단 배치
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -74,25 +77,13 @@ const styles = StyleSheet.create({
         height: '100%',
         alignItems: 'center',
         justifyContent: 'center',
+        // ✅ 여기에 패딩을 주어야 이미지가 줄어들면서 여백이 생깁니다.
+        paddingHorizontal: 40,
     },
-    square: {
-        width: 160,
-        height: 160,
-        backgroundColor: '#FFFFFF',
-        alignItems: 'center',
-        justifyContent: 'center',
-        // iOS Shadow
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.08,
-        shadowRadius: 30,
-        // Android Shadow
-        elevation: 10,
-    },
-    text: {
-        fontSize: 22,
-        fontWeight: '700',
-        letterSpacing: 2.6,
-        color: '#111111',
+    image: {
+        width: '100%',
+        height: '100%',
+        // Image 컴포넌트 자체의 padding 대신 부모의 padding을 따릅니다.
+        maxWidth: 400, // 로고가 태블릿 등에서 너무 커지는 것 방지
     },
 });

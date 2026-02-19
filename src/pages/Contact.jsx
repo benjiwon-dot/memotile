@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, Mail, MessageCircle, Copy, Check } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 
-const EMAIL_SUPPORT = 'support@memotile.com';
+const EMAIL_SUPPORT = 'official@memotile.com';
 
 export default function Contact() {
     const navigate = useNavigate();

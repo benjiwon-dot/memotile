@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
     Dimensions,
     TouchableOpacity,
+    Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -25,18 +26,10 @@ const { width } = Dimensions.get("window");
 const GRID_SPACING = 12;
 const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
-// ✅ 주문 생성 직후 “아직 없음” 상태를 기다려주는 시간
+// 주문 생성 직후 “아직 없음” 상태를 기다려주는 시간
 const NOT_FOUND_GRACE_MS = 12000;
 
-/**
- * ✅ CUSTOMER APP RULE:
- * - 고객(앱) 화면에서는 "2000대(2048/2000) 프리뷰"만 사용
- * - 절대 print(5000) URL을 사용하지 않음
- */
 function pickCustomerPreviewUri(it: any): string | null {
-    // ✅ 1순위: previewUrl (서버에서 만든 "앱 프리뷰용")
-    // ✅ 2순위: legacy previewUrl/previewUri
-    // ✅ 3순위: viewUrl (앱에서 만든 view 파일) - 마지막 fallback
     const uri =
         it?.assets?.previewUrl ||
         it?.previewUrl ||
@@ -47,7 +40,6 @@ function pickCustomerPreviewUri(it: any): string | null {
         it?.output?.viewUri ||
         null;
 
-    // ✅ 안전장치: 어떤 필드에든 printUrl이 섞였으면 강제로 배제
     if (typeof uri === "string" && /print/i.test(uri)) {
         return (
             it?.assets?.previewUrl ||
@@ -60,7 +52,6 @@ function pickCustomerPreviewUri(it: any): string | null {
             null
         );
     }
-
     return typeof uri === "string" && uri.length > 0 ? uri : null;
 }
 
@@ -70,11 +61,8 @@ export default function OrderDetailScreen() {
     const { t } = useLanguage();
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
-
-    // ✅ 3-state: 로딩중 / 기다리는중 / 진짜없음
     const [loading, setLoading] = useState(true);
     const [gaveUp, setGaveUp] = useState(false);
-
     const [previewItem, setPreviewItem] = useState<any | null>(null);
 
     const aliveRef = useRef(true);
@@ -96,7 +84,6 @@ export default function OrderDetailScreen() {
         let unsub: (() => void) | null = null;
         let timeout: any = null;
 
-        // ✅ NotFound 즉시 표시 X -> grace time 이후에만 “진짜 없음”
         timeout = setTimeout(() => {
             if (!aliveRef.current) return;
             setGaveUp(true);
@@ -114,7 +101,6 @@ export default function OrderDetailScreen() {
                     const data = snap.data();
                     const newOrder = { id: snap.id, ...data } as OrderDoc;
 
-                    // ✅ subcollection items 우선 로드
                     try {
                         const itemsSnap = await getDocs(collection(db, "orders", snap.id, "items"));
                         if (!itemsSnap.empty) {
@@ -130,13 +116,10 @@ export default function OrderDetailScreen() {
                     setLoading(false);
                     setGaveUp(false);
                     if (timeout) clearTimeout(timeout);
-                } else {
-                    // doc 미생성/지연: timeout이 gaveUp 처리
                 }
             },
             (err) => {
                 console.error("Order snapshot error", err);
-                // timeout이 gaveUp 처리
             }
         );
 
@@ -171,7 +154,6 @@ export default function OrderDetailScreen() {
         return (order as any).paymentMethod || (t as any).paymentTitle || "Payment";
     };
 
-    // ✅ 로딩(또는 생성 대기)
     if (loading && !order) {
         return (
             <SafeAreaView style={styles.container}>
@@ -186,7 +168,6 @@ export default function OrderDetailScreen() {
         );
     }
 
-    // ✅ grace time 이후에도 못 찾으면 Not Found
     if (!order && gaveUp) {
         return (
             <SafeAreaView style={styles.container}>
@@ -196,7 +177,6 @@ export default function OrderDetailScreen() {
                     <Text style={styles.notFoundDesc}>
                         {(t as any).orderNotFoundDesc || "We couldn't find the order yet. Please try again in a moment."}
                     </Text>
-
                     <TouchableOpacity
                         style={{ marginTop: 16, alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 }}
                         onPress={() => {
@@ -210,7 +190,6 @@ export default function OrderDetailScreen() {
         );
     }
 
-    // ✅ 안전: order는 없는데 gaveUp 전이면 스피너
     if (!order) {
         return (
             <SafeAreaView style={styles.container}>
@@ -235,8 +214,31 @@ export default function OrderDetailScreen() {
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
                     if (item.type === "summary") {
+                        const status = (order as any).status;
+                        const trackingNumber = (order as any).trackingNumber;
+                        const isShipped = status === 'shipping' || status === 'delivered';
+
                         return (
                             <View style={styles.section}>
+                                {/* ✅ 배송 알림 배너 (다국어 적용) */}
+                                {isShipped && (
+                                    <View style={styles.shippingBanner}>
+                                        <Ionicons name="gift-outline" size={24} color="#fff" />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.shippingBannerTitle}>
+                                                {/* 태국어: พัสดุของคุณถูกจัดส่งแล้ว! */}
+                                                {(t as any).packageSent || "Your package is on the way!"}
+                                            </Text>
+                                            {trackingNumber && (
+                                                <Text style={styles.shippingBannerText}>
+                                                    {/* 태국어: หมายเลขพัสดุ: ... */}
+                                                    {(t as any).trackingLabel || "Tracking"}: {trackingNumber}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    </View>
+                                )}
+
                                 <View style={styles.orderSummary}>
                                     <View style={styles.summaryRowTop}>
                                         <View style={styles.orderMeta}>
@@ -261,22 +263,15 @@ export default function OrderDetailScreen() {
                         return (
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>{(t as any).itemsTitle || "Items"}</Text>
-
                                 <View style={styles.itemGrid}>
                                     {(order.items || []).map((it: any, idx: number) => {
                                         const uri = pickCustomerPreviewUri(it);
-
                                         return (
                                             <TouchableOpacity key={String(it?.id || it?.index || idx)} style={styles.itemCard} onPress={() => setPreviewItem(it)}>
                                                 {uri ? (
                                                     <Image source={{ uri }} style={styles.itemImg} />
                                                 ) : (
-                                                    <View
-                                                        style={[
-                                                            styles.itemImg,
-                                                            { backgroundColor: "#f0f0f0", alignItems: "center", justifyContent: "center" },
-                                                        ]}
-                                                    >
+                                                    <View style={[styles.itemImg, { backgroundColor: "#f0f0f0", alignItems: "center", justifyContent: "center" }]}>
                                                         <Ionicons name="image-outline" size={24} color="#ccc" />
                                                     </View>
                                                 )}
@@ -293,6 +288,19 @@ export default function OrderDetailScreen() {
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>{(t as any).shippingAddressTitle || "Shipping Address"}</Text>
                                 <View style={styles.detailsCard}>
+                                    {/* ✅ 송장 번호 표시 (다국어 적용) */}
+                                    {(order as any).trackingNumber ? (
+                                        <View style={styles.trackingRow}>
+                                            <Text style={styles.trackingLabel}>
+                                                {/* 태국어: หมายเลขพัสดุ */}
+                                                📦 {(t as any).trackingNumberLabel || "TRACKING NUMBER"}
+                                            </Text>
+                                            <Text style={styles.trackingValue} selectable>
+                                                {(order as any).trackingNumber}
+                                            </Text>
+                                        </View>
+                                    ) : null}
+
                                     <DetailRow label={(t as any).fullName || "Full Name"} value={(order as any).shipping?.fullName || ""} />
                                     <DetailRow
                                         label={(t as any).addressLabel || (t as any).address1 || "Address"}
@@ -307,7 +315,6 @@ export default function OrderDetailScreen() {
                                     />
                                     <DetailRow label={(t as any).postalCode || "Zip"} value={(order as any).shipping?.postalCode || ""} />
                                     <DetailRow label={(t as any).phoneLabel || "Phone"} value={(order as any).shipping?.phone || ""} />
-                                    <DetailRow label={(t as any).emailLabel || "Email"} value={(order as any).shipping?.email || ""} />
                                 </View>
                             </View>
                         );
@@ -411,4 +418,27 @@ const styles = StyleSheet.create({
     promoText: { color: "#10B981", fontWeight: "700", fontSize: 14 },
     notFoundTitle: { fontSize: 20, fontWeight: "800", marginBottom: 8, textAlign: "center", marginTop: 40 },
     notFoundDesc: { fontSize: 14, color: "#666", textAlign: "center" },
+
+    // ✅ 배송 배너 스타일
+    shippingBanner: {
+        backgroundColor: "#10B981",
+        borderRadius: 16,
+        padding: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        marginBottom: 20,
+        shadowColor: "#10B981",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 6,
+    },
+    shippingBannerTitle: { color: "#fff", fontSize: 16, fontWeight: "800", marginBottom: 2 },
+    shippingBannerText: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "600", fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+
+    // ✅ 송장 번호 행 스타일
+    trackingRow: { borderBottomWidth: 1, borderBottomColor: '#eee', paddingBottom: 12, marginBottom: 12 },
+    trackingLabel: { fontSize: 11, fontWeight: "700", color: '#10B981', textTransform: "uppercase", marginBottom: 2 },
+    trackingValue: { fontSize: 18, color: '#10B981', fontWeight: "700" },
 });

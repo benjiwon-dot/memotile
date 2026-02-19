@@ -1,3 +1,4 @@
+// src/lib/admin/adminOrderDetail.tsx (또는 해당 파일 경로)
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -19,10 +20,11 @@ import {
     StickyNote,
     Truck,
     Tag,
-    Trash2, // 추가
-    Clock,  // 추가
+    Trash2,
+    Clock,
 } from "lucide-react";
 
+import { getFirestore, doc, deleteDoc } from "firebase/firestore";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -64,6 +66,15 @@ function yyyymmddFromISO(iso?: string) {
     return `${y}${m}${day}`;
 }
 
+// ✅ 오늘 날짜 챌린지 코드 생성
+function getDeleteChallenge() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `delete${y}${m}${day}`;
+}
+
 async function resolveStorageUrl(
     storage: ReturnType<typeof getStorage>,
     maybeUrl?: string | null,
@@ -95,9 +106,8 @@ function browserDownloadUrl(url: string, filename?: string) {
 function alertCallableError(prefix: string, e: any) {
     const code = e?.code || "unknown";
     const msg = e?.message || String(e);
-    const details = e?.details ? JSON.stringify(e.details) : "";
     console.error(prefix, e);
-    alert(`${prefix}\ncode: ${code}\nmessage: ${msg}${details ? `\ndetails: ${details}` : ""}`);
+    alert(`${prefix}\ncode: ${code}\nmessage: ${msg}`);
 }
 
 export default function AdminOrderDetail({ orderId }: { orderId: string }) {
@@ -115,6 +125,8 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [printDims, setPrintDims] = useState<Record<number, { w: number; h: number }>>({});
 
     const storage = useMemo(() => getStorage(app), []);
+    // ✅ Firestore 인스턴스
+    const db = useMemo(() => getFirestore(app), []);
     const functions = useMemo(() => getFunctions(app, "us-central1"), []);
 
     const aliveRef = useRef(true);
@@ -326,26 +338,30 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✅ [추가됨] 영구 삭제 핸들러
+    // ✅ 영구 삭제 핸들러 (DB 직접 삭제)
     const handleDeleteOrder = async () => {
         if (!order || !isWeb) return;
 
         if (!confirm("🚨 경고: 이 주문 데이터를 서버에서 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) return;
-        const confirmCode = prompt(`삭제를 확정하려면 주문 코드 [${order.orderCode}]를 입력하세요:`);
 
-        if (confirmCode !== order.orderCode) {
-            alert("주문 코드가 일치하지 않습니다. 삭제가 취소되었습니다.");
+        const challenge = getDeleteChallenge();
+        const userInput = prompt(`삭제를 확정하려면 다음 코드를 정확히 입력하세요: ${challenge}`);
+
+        if (userInput !== challenge) {
+            alert("코드가 일치하지 않습니다. 삭제가 취소되었습니다.");
             return;
         }
 
         setBusy(true);
         try {
-            const fn = httpsCallable(functions, "adminDeleteOrder");
-            await fn({ orderId });
+            // DB에서 직접 문서를 삭제합니다.
+            await deleteDoc(doc(db, "orders", orderId));
+
             alert("주문이 성공적으로 삭제되었습니다.");
             router.replace("/admin/orders");
         } catch (e: any) {
-            alertCallableError("영구 삭제 실패:", e);
+            console.error(e);
+            alert(`영구 삭제 실패!\n오류 코드: ${e.code}\n\n[해결 방법]\nFirestore Rules에서 'allow delete' 권한이 켜져 있는지 확인하세요.`);
         } finally {
             setBusy(false);
         }
@@ -393,26 +409,25 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const customerEmail = order.customer?.email || order.shipping?.email || "-";
     const customerPhone = order.customer?.phone || order.shipping?.phone || "-";
 
-    // 📱 기기 정보 가져오기
     const deviceInfo = orderOps.deviceInfo;
     const isIos = deviceInfo?.os === "ios";
 
-    // ✅ [추가됨] 방치 주문 체크 (24시간)
     const isAbandoned = order.status === 'paid' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
     const isArchived = order.status === 'archived';
 
     return (
-        <div className="space-y-8 pb-20">
-            {/* ✅ 아카이브 안내 */}
+        // ✅ [수정] Spacer div를 제거하고 pb-[200px] 추가하여 하단 여백 확보
+        <div className="flex flex-col gap-8 pb-[1000px]">
+            {/* 아카이브 안내 */}
             {isArchived && (
-                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3 text-amber-700 font-bold">
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3 text-amber-700 font-bold shrink-0">
                     <Clock size={20} />
                     이 주문은 오래되어 아카이브(보관) 처리되었습니다. 데이터만 조회 가능합니다.
                 </div>
             )}
 
             {/* Header */}
-            <div className="flex flex-col md:flex-row justify-between gap-6">
+            <div className="flex flex-col md:flex-row justify-between gap-6 shrink-0">
                 <div className="flex items-center gap-4">
                     <button onClick={safeBack} className="admin-btn admin-btn-secondary !p-2">
                         <ChevronLeft size={24} />
@@ -423,7 +438,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             <h1 className="text-3xl font-black font-mono">{order.orderCode}</h1>
                             <StatusBadge status={order.status} />
 
-                            {/* ✅ [추가됨] 방치 알림 배지 */}
                             {isAbandoned && (
                                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs bg-rose-600 text-white font-black animate-pulse shadow-lg shadow-rose-200">
                                     <AlertCircle size={14} />
@@ -470,7 +484,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         </button>
                     )}
 
-                    {/* ✅ [추가됨] 영구 삭제 버튼 */}
+                    {/* ✅ 영구 삭제 버튼 */}
                     <button onClick={handleDeleteOrder} disabled={busy} className="admin-btn bg-rose-600 text-white hover:bg-rose-700 border-none shadow-md shadow-rose-100">
                         <Trash2 size={16} />
                         Delete Permanently
@@ -488,7 +502,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             </div>
 
             {/* Customer / Shipping / Ops */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
                 {/* Customer */}
                 <div className="admin-card p-4 space-y-2">
                     <div className="text-xs font-black text-zinc-400 uppercase">Customer</div>
@@ -618,14 +632,16 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             </div>
 
             {/* Items */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
                 {order.items.map((item, idx) => {
                     const meta = (item as any)?.assets?.printMeta as
                         | { width: number; height: number; ok5000?: boolean }
                         | undefined;
 
                     const client = printDims[idx];
-                    const clientOk5000 = client ? client.w >= 5000 && client.h >= 5000 : false;
+
+                    // ✅ [수정됨] 4000px 이상이면 OK로 표시 (기존 5000px -> 4000px 완화)
+                    const clientOk5000 = client ? client.w >= 4000 && client.h >= 4000 : false;
 
                     const previewUrl = resolved[idx]?.previewUrl || pickAdminThumb(item);
                     const printUrl = resolved[idx]?.printUrl || (item as any)?.assets?.printUrl || null;

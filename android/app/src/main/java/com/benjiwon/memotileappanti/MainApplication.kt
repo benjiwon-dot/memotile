@@ -1,4 +1,4 @@
-package com.anonymous.memotileappanti
+package com.benjiwon.memotileappanti
 
 import android.app.Application
 import android.content.res.Configuration

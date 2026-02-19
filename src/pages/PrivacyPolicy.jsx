@@ -104,7 +104,7 @@ export default function PrivacyPolicy() {
                 <section style={styles.section}>
                     <h2 style={styles.sectionHeading}>11. Contact Information</h2>
                     <p style={styles.paragraph}>
-                        For any privacy-related inquiries, please contact our support team at <a href="mailto:support@memotile.com" style={styles.link}>support@memotile.com</a>.
+                        For any privacy-related inquiries, please contact our support team at <a href="mailto:official@memotile.com" style={styles.link}>official@memotile.com</a>.
                     </p>
                 </section>
             </div>

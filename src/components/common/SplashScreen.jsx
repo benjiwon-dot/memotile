@@ -1,4 +1,11 @@
 import React, { useEffect, useState } from 'react';
+// Assuming assets are served from root or via a loader. 
+// If using Vite/Webpack with standard config, we might need to import it.
+// Let's try to reference it relatively if possible, or use the public absolute path if it's in public.
+// However, the assets folder is at root. 
+// In many Expo Web setups, `require` for images works similar to Native.
+// Let's try standard import which is safest.
+import splashImage from '../../../assets/splash.png';
 
 /**
  * Premium Splash Screen
@@ -10,15 +17,15 @@ export default function SplashScreen({ onFinish }) {
     const [fade, setFade] = useState('in');
 
     useEffect(() => {
-        // Start fade out after 1.5s (max 2s total)
+        // Start fade out after 2.0s (was 1.5s)
         const fadeOutTimer = setTimeout(() => {
             setFade('out');
-        }, 1500);
+        }, 2000);
 
-        // Finish after 1.9s (to ensure fade out completes within 2s)
+        // Finish after 2.4s (to ensure fade out completes within 2s)
         const finishTimer = setTimeout(() => {
             onFinish();
-        }, 1900);
+        }, 2400);
 
         return () => {
             clearTimeout(fadeOutTimer);
@@ -36,10 +43,11 @@ export default function SplashScreen({ onFinish }) {
                 cursor: 'pointer'
             }}
         >
-            <div style={styles.square}>
-                <h1 style={styles.text}>MEMOTILE</h1>
-                {/* Slogan removed as requested */}
-            </div>
+            <img
+                src={splashImage}
+                alt="Splash Logo"
+                style={styles.image}
+            />
         </div>
     );
 }
@@ -58,22 +66,14 @@ const styles = {
         zIndex: 9999,
         userSelect: 'none',
     },
-    square: {
-        width: '160px',
-        height: '160px',
-        backgroundColor: '#FFFFFF',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.08)', // Premium soft shadow
-        // Square corners (0 radius)
-    },
-    text: {
-        fontSize: '22px', // Slightly larger as suggested for branding
-        fontWeight: '700',
-        letterSpacing: '0.12em',
-        color: '#111111',
-        margin: 0,
-        padding: 0,
+    image: {
+        width: '100%',
+        height: '100%',
+        maxWidth: '100%',
+        maxHeight: '100%',
+        objectFit: 'contain',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        boxSizing: 'border-box'
     }
 };

@@ -224,7 +224,7 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                 pipeline = pipeline.extract(rect);
             }
 
-            let buf = await pipeline.resize(5000, 5000, { fit: "cover" }).jpeg({ quality: 92 }).toBuffer();
+            let buf = await pipeline.resize(4096, 4096, { fit: "cover" }).jpeg({ quality: 92 }).toBuffer();
 
             if (matrix && Array.isArray(matrix) && matrix.length === 20) {
                 buf = await applyColorMatrixRGBA(buf, matrix);
@@ -241,8 +241,8 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 
                 const overlayPng = await sharp({
                     create: {
-                        width: 5000,
-                        height: 5000,
+                        width: 4096,
+                        height: 4096,
                         channels: 4,
                         background: { r: overlay.r, g: overlay.g, b: overlay.b, alpha },
                     },
@@ -726,7 +726,7 @@ export const onPrintFileFinalized = onObjectFinalized(
             const meta = await sharp(buf).metadata();
             const width = meta.width || 0;
             const height = meta.height || 0;
-            const ok5000 = width >= 5000 && height >= 5000;
+            const ok5000 = width >= 4000 && height >= 4000;
 
             console.log(`[PrintAudit] ${filePath} => ${width}x${height}, ok=${ok5000}`);
 
@@ -785,48 +785,56 @@ export const onPrintFileFinalized = onObjectFinalized(
 /**
  * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
  */
+/**
+ * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
+ */
 export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
     const db = getFirestore();
     const now = new Date();
     // 24시간 전 시점 계산 (Timestamp 형식)
     const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
 
-    // 'paid' 상태인데 생성된 지 24시간이 지난 주문 조회
-    const snapshot = await db.collection("orders")
-        .where("status", "==", "paid")
-        .where("createdAt", "<=", twentyFourHoursAgo)
-        .get();
-
-    if (snapshot.empty) {
-        console.log("[Scheduler] No abandoned orders found.");
-        return;
-    }
-
-    const count = snapshot.size;
-    const orderDetails = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return `• 주문번호: ${data.orderCode} (고객: ${data.customer?.fullName || 'Guest'})`;
-    }).join("\n");
-
-    const message = {
-        text: `🚨 *[방치 주문 알림]* 24시간 동안 '결제완료' 상태에서 변동이 없는 주문이 *${count}건* 있습니다.`,
-        attachments: [{
-            color: "#FF0000",
-            title: "조치 필요 주문 목록",
-            text: orderDetails,
-            footer: "Memotile Admin Bot",
-            ts: Math.floor(now.getTime() / 1000)
-        }]
-    };
-
     try {
+        // 'paid' 상태인데 생성된 지 24시간이 지난 주문 조회
+        // ⚠️ 주의: Firestore 콘솔에서 (status ASC, createdAt ASC) 복합 인덱스 생성이 필요할 수 있습니다.
+        const snapshot = await db.collection("orders")
+            .where("status", "==", "paid")
+            .where("createdAt", "<=", twentyFourHoursAgo)
+            .orderBy("createdAt", "asc") // 👈 정렬을 명시하여 인덱스 활용 및 안정적 결과 확보
+            .get();
+
+        if (snapshot.empty) {
+            console.log("[Scheduler] No abandoned orders found.");
+            return;
+        }
+
+        const count = snapshot.size;
+        const orderDetails = snapshot.docs.map(doc => {
+            const data = doc.data();
+            // 데이터 누락 방지를 위한 기본값 처리
+            const code = data.orderCode || doc.id;
+            const name = data.customer?.fullName || data.shipping?.fullName || 'Guest';
+            return `• 주문번호: ${code} (고객: ${name})`;
+        }).join("\n");
+
+        const message = {
+            text: `🚨 *[방치 주문 알림]* 24시간 동안 '결제완료' 상태에서 변동이 없는 주문이 *${count}건* 있습니다.`,
+            attachments: [{
+                color: "#FF0000",
+                title: "조치 필요 주문 목록",
+                text: orderDetails,
+                footer: "Memotile Admin Bot",
+                ts: Math.floor(now.getTime() / 1000)
+            }]
+        };
+
         await axios.post(SLACK_WEBHOOK_URL, message);
         console.log(`[Scheduler] Slack alert sent for ${count} orders.`);
     } catch (e: any) {
-        console.error("[Scheduler] Slack alert failed", e?.message);
+        // 쿼리 에러(인덱스 미생성 등) 확인을 위해 로그 강화
+        console.error("[Scheduler] Alert Failed:", e?.message);
     }
 });
-
 /**
  * 🕒 매일 새벽 3시 실행: 7일 지난 완료/취소 주문 자동 아카이브
  */
