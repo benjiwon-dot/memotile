@@ -174,7 +174,17 @@ export default function Index() {
     const benefits = [...rawBenefits, extraBenefit];
 
     const steps = (t.steps ?? []) as Step[];
-    const billboard = (t.billboard ?? []) as BillboardItem[];
+
+    // ✅ [버그 수정 1] 다국어(TH/EN) 연동: translation 파일에서 제대로 데이터를 못 가져올 때를 대비해 기본값 설정
+    const billboard = (t.billboard ?? [
+        { id: 'couple', label: 'Couple', caption: 'Love, framed by none.' },
+        { id: 'pet', label: 'Dog & Cat', caption: 'Your best buddy, always close.' },
+        { id: 'travel', label: 'Travel', caption: 'Moments from everywhere.' },
+        { id: 'family', label: 'Family', caption: 'Home is made of stories.' }
+    ]) as BillboardItem[];
+
+    // 현재 인덱스에 해당하는 빌보드 안전 추출
+    const currentBillboard = billboard[billboardIndex] || billboard[0];
 
     return (
         <View style={styles.container}>
@@ -233,7 +243,6 @@ export default function Index() {
                 <View style={styles.hero}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
-                            {/* ✅ [수정됨] 언어(locale)에 따라 다른 스타일 적용 */}
                             <Text style={[
                                 styles.heroHeadline1,
                                 locale === 'TH' ? styles.heroHeadline1_TH : styles.heroHeadline1_EN
@@ -248,7 +257,6 @@ export default function Index() {
                             </Text>
                         </View>
 
-                        {/* ✅ [수정됨] 서브 문구도 언어별 분리 */}
                         <Text style={[
                             styles.heroSupporting,
                             locale === 'TH' ? styles.heroSupporting_TH : styles.heroSupporting_EN
@@ -336,11 +344,14 @@ export default function Index() {
                             ))}
                         </View>
 
+                        {/* ✅ [버그 수정 2] 화면 꿀렁임 방지: 텍스트 줄 수에 상관없이 영역 높이 고정 */}
                         <View style={styles.billboardInfo}>
                             <View style={styles.billboardLabelContainer}>
-                                <Text style={styles.billboardLabel}>{billboard[billboardIndex]?.label}</Text>
+                                <Text style={styles.billboardLabel}>{currentBillboard?.label}</Text>
                             </View>
-                            <Text style={styles.billboardCaption}>{billboard[billboardIndex]?.caption}</Text>
+                            <View style={styles.billboardCaptionWrapper}>
+                                <Text style={styles.billboardCaption}>{currentBillboard?.caption}</Text>
+                            </View>
                         </View>
 
                         <View style={styles.billboardDots}>
@@ -376,7 +387,7 @@ export default function Index() {
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
-                {/* Footer */}
+                {/* ✅ Paymentwall 심사 최적화: Footer 영역에 필수 약관/연락처 링크 추가 */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
@@ -389,6 +400,20 @@ export default function Index() {
                             <Text style={styles.footerBtnText}>Instagram</Text>
                         </Pressable>
                     </View>
+
+                    {/* 약관 링크 (심사역이 찾기 쉬운 위치) */}
+                    <View style={styles.legalLinksRow}>
+                        <Pressable onPress={() => router.push("/privacy" as any)}>
+                            <Text style={styles.legalLinkText}>Privacy Policy</Text>
+                        </Pressable>
+                        <Text style={styles.legalDot}> • </Text>
+                        <Pressable onPress={() => router.push("/terms" as any)}>
+                            <Text style={styles.legalLinkText}>Terms of Service</Text>
+                        </Pressable>
+                    </View>
+
+                    <Text style={styles.footerEmail}>Contact: official@memotile.com</Text>
+
                     <Text style={styles.legal}>{t.copyright}</Text>
                 </View>
             </ScrollView>
@@ -454,96 +479,27 @@ const styles = StyleSheet.create({
     heroContent: { maxWidth: 480, width: "100%", alignItems: "center" },
     headlineGroup: { marginBottom: 8, paddingHorizontal: 20, alignItems: "center" },
 
-    // ----------------------------------------------------
-    // ✅ [수정됨] 헤드라인 글자: 공통 속성
-    // ----------------------------------------------------
-    heroHeadline1: {
-        ...typography.h1,
-        textAlign: "center",
-        color: colors.ink
-    },
-    heroHeadline2: {
-        ...typography.h2,
-        marginTop: 4,
-        textAlign: "center",
-        color: colors.ink
-    },
-    heroSupporting: {
-        ...typography.body,
-        textAlign: "center",
-        marginBottom: 30,
-        paddingHorizontal: 24,
-        opacity: 0.9,
-        color: colors.textMuted,
-    },
+    heroHeadline1: { ...typography.h1, textAlign: "center", color: colors.ink },
+    heroHeadline2: { ...typography.h2, marginTop: 4, textAlign: "center", color: colors.ink },
+    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 30, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
 
-    // ----------------------------------------------------
-    // ✅ [추가됨] 태국어(TH) 전용 스타일 (여기서 숫자 조절)
-    // ----------------------------------------------------
-    heroHeadline1_TH: {
-        fontSize: 44,
-        lineHeight: 56,
-    },
-    heroHeadline2_TH: {
-        fontSize: 36,
-        lineHeight: 46,
-    },
-    heroSupporting_TH: {
-        fontSize: 18,
-        lineHeight: 26,
-    },
+    heroHeadline1_TH: { fontSize: 44, lineHeight: 56 },
+    heroHeadline2_TH: { fontSize: 36, lineHeight: 46 },
+    heroSupporting_TH: { fontSize: 18, lineHeight: 26 },
 
-    // ----------------------------------------------------
-    // ✅ [추가됨] 영어(EN) 전용 스타일 (여기서 숫자 조절)
-    // ----------------------------------------------------
-    heroHeadline1_EN: {
-        fontSize: 36,
-        lineHeight: 48,
-    },
-    heroHeadline2_EN: {
-        fontSize: 26,
-        lineHeight: 40,
-    },
-    heroSupporting_EN: {
-        fontSize: 16,
-        lineHeight: 24,
-    },
-    // ----------------------------------------------------
+    heroHeadline1_EN: { fontSize: 36, lineHeight: 48 },
+    heroHeadline2_EN: { fontSize: 26, lineHeight: 40 },
+    heroSupporting_EN: { fontSize: 16, lineHeight: 24 },
 
-    heroPreview: {
-        height: 280,
-        width: "100%",
-        alignItems: "center",
-        justifyContent: "center",
-        marginBottom: 34,
-    },
+    heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 34 },
     slideshowContainer: { width: 260, height: 260 },
     heroTile: { width: 260, height: 260, borderRadius: 4, ...shadows.md },
 
     ctaWrapper: { width: "100%", alignItems: "center", paddingHorizontal: 24 },
-
-    ctaGroup: {
-        width: "100%",
-        maxWidth: 360,
-        alignItems: "center",
-    },
-    primaryBtn: {
-        width: 320,
-        height: 68,
-        backgroundColor: colors.ink,
-        borderRadius: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        ...shadows.md,
-    },
+    ctaGroup: { width: "100%", maxWidth: 360, alignItems: "center" },
+    primaryBtn: { width: 320, height: 68, backgroundColor: colors.ink, borderRadius: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", ...shadows.md },
     ctaInner: { flexDirection: "row", alignItems: "center" },
-
-    ctaText: {
-        ...typography.button,
-        fontSize: 20,
-        fontWeight: "700"
-    },
+    ctaText: { ...typography.button, fontSize: 20, fontWeight: "700" },
     ctaHint: { ...typography.caption, marginTop: 10, textAlign: "center" },
 
     sectionTitle: { ...typography.h3, marginBottom: 24, textAlign: "center", color: colors.ink },
@@ -551,141 +507,53 @@ const styles = StyleSheet.create({
     grid: { gap: 24 },
 
     benefitCard: { flexDirection: "row", gap: 16, alignItems: "center" },
-    benefitIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: 12,
-        backgroundColor: colors.surface,
-        alignItems: "center",
-        justifyContent: "center",
-        ...shadows.sm,
-    },
+    benefitIcon: { width: 48, height: 48, borderRadius: 12, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", ...shadows.sm },
     benefitTitle: { ...typography.h4, marginBottom: 4, color: colors.ink },
     benefitDesc: { fontSize: 14, color: colors.textMuted, lineHeight: 21 },
 
-    billboardContainer: {
-        paddingVertical: 40,
-        backgroundColor: colors.canvas,
-        borderRadius: 32,
-        alignItems: "center",
-    },
-    billboardImgWrapper: {
-        width: 280,
-        height: 280,
-        marginBottom: 32,
-        position: "relative",
-        alignItems: "center",
-        justifyContent: "center",
-    },
+    billboardContainer: { paddingVertical: 40, backgroundColor: colors.canvas, borderRadius: 32, alignItems: "center" },
+    billboardImgWrapper: { width: 280, height: 280, marginBottom: 32, position: "relative", alignItems: "center", justifyContent: "center" },
     billboardImgContainer: { borderRadius: 4, overflow: "hidden", ...shadows.md },
-    billboardInfo: { paddingHorizontal: 24, alignItems: "center" },
-    billboardLabelContainer: {
-        backgroundColor: colors.fill,
-        borderRadius: 20,
-        paddingVertical: 6,
-        paddingHorizontal: 14,
-        marginBottom: 16,
-    },
-    billboardLabel: {
-        fontSize: 11,
-        fontWeight: "800",
-        textTransform: "uppercase",
-        letterSpacing: 0.55,
-        color: colors.text,
-    },
+
+    // ✅ [버그 수정 2 스타일] 꿀렁임 방지 (최소 높이 부여)
+    billboardInfo: { paddingHorizontal: 24, alignItems: "center", width: "100%" },
+    billboardLabelContainer: { backgroundColor: colors.fill, borderRadius: 20, paddingVertical: 6, paddingHorizontal: 14, marginBottom: 16 },
+    billboardLabel: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.55, color: colors.text },
+    billboardCaptionWrapper: { minHeight: 60, justifyContent: "flex-start", alignItems: "center" },
     billboardCaption: { fontSize: 19, fontWeight: "700", color: colors.ink, textAlign: "center", lineHeight: 27 },
-    billboardDots: { flexDirection: "row", gap: 8, marginTop: 24 },
+
+    billboardDots: { flexDirection: "row", gap: 8, marginTop: 16 },
     dot: { width: 6, height: 6, borderRadius: 3 },
 
     stepsContainer: { gap: 40, paddingVertical: 10 },
     stepItem: { flexDirection: "row", gap: 20, alignItems: "flex-start" },
-    stepNum: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: colors.ink,
-        alignItems: "center",
-        justifyContent: "center",
-    },
+    stepNum: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.ink, alignItems: "center", justifyContent: "center" },
     stepNumText: { color: colors.surface, fontSize: 14, fontWeight: "800" },
     stepInfo: { flex: 1 },
     stepTitle: { fontSize: 20, fontWeight: "900", marginBottom: 6, color: colors.ink },
     stepDesc: { ...typography.bodySmall, color: colors.textMuted },
 
-    deliverySection: {
-        margin: 24,
-        paddingVertical: 60,
-        paddingHorizontal: 24,
-        backgroundColor: colors.ink,
-        borderRadius: 32,
-        alignItems: "center",
-    },
+    deliverySection: { margin: 24, paddingVertical: 60, paddingHorizontal: 24, backgroundColor: colors.ink, borderRadius: 32, alignItems: "center" },
     deliveryTitle: { color: colors.surface, fontSize: 28, fontWeight: "800", marginBottom: 12 },
     deliverySubtitle: { color: colors.surface, fontSize: 18, opacity: 0.8, textAlign: "center" },
 
-    footer: {
-        paddingVertical: 60,
-        paddingHorizontal: 24,
-        alignItems: "center",
-        borderTopWidth: 1,
-        borderTopColor: colors.border,
-    },
+    footer: { paddingVertical: 60, paddingHorizontal: 24, alignItems: "center", borderTopWidth: 1, borderTopColor: colors.border },
     footerHelpTitle: { fontSize: 20, fontWeight: "800", marginBottom: 24, color: colors.ink },
-    footerActions: { flexDirection: "row", justifyContent: "center", gap: 12, marginBottom: 48 },
-    footerBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-        paddingVertical: 14,
-        paddingHorizontal: 24,
-        borderColor: colors.border,
-        borderWidth: 1,
-        borderRadius: 14,
-        backgroundColor: colors.surface,
-        ...shadows.sm,
-    },
+    footerActions: { flexDirection: "row", justifyContent: "center", gap: 12, marginBottom: 32 },
+    footerBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 14, paddingHorizontal: 24, borderColor: colors.border, borderWidth: 1, borderRadius: 14, backgroundColor: colors.surface, ...shadows.sm },
     footerBtnText: { fontSize: 15, fontWeight: "700", color: colors.text },
+
+    // ✅ Footer 링크 텍스트 스타일 추가
+    footerEmail: { fontSize: 13, color: colors.textSecondary, marginBottom: 16 },
+    legalLinksRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+    legalLinkText: { fontSize: 13, color: colors.ink, textDecorationLine: "underline", fontWeight: "500" },
+    legalDot: { fontSize: 13, color: colors.textMuted, marginHorizontal: 8 },
     legal: { fontSize: 13, color: colors.textSecondary },
 
-    resumeBanner: {
-        position: 'absolute',
-        left: 16,
-        right: 16,
-        backgroundColor: colors.surface,
-        borderRadius: 16,
-        padding: 10,
-        zIndex: 90,
-        ...shadows.md,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
-    resumeContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    resumeTitle: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: colors.ink,
-        marginBottom: 2,
-    },
-    resumeSubtitle: {
-        fontSize: 12,
-        color: colors.textMuted,
-    },
-    resumeBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: colors.ink,
-        paddingVertical: 6,
-        paddingHorizontal: 14,
-        borderRadius: 20,
-        gap: 6,
-    },
-    resumeBtnText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: '700',
-    },
+    resumeBanner: { position: 'absolute', left: 16, right: 16, backgroundColor: colors.surface, borderRadius: 16, padding: 10, zIndex: 90, ...shadows.md, borderWidth: 1, borderColor: colors.border },
+    resumeContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    resumeTitle: { fontSize: 14, fontWeight: '700', color: colors.ink, marginBottom: 2 },
+    resumeSubtitle: { fontSize: 12, color: colors.textMuted },
+    resumeBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.ink, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, gap: 6 },
+    resumeBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
