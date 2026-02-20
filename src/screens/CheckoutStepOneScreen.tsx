@@ -281,7 +281,7 @@ export default function CheckoutStepOneScreen() {
                                 {/* ✅ [버그 수정] 이메일 로그인 라우팅 경로를 루트 레벨의 /(auth)/email 모달로 변경 */}
                                 <LoginButton
                                     text={(t as any)["auth.continueEmail"] || "Continue with email"}
-                                    onPress={() => router.push("/(auth)/email")}
+                                    onPress={() => router.push("/auth/email")}
                                     style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
                                     icon={<Ionicons name="mail" size={20} color="#333" />}
                                 />
