@@ -53,6 +53,21 @@ export default function CheckoutStepTwoScreen() {
         instagram: "",
     });
 
+    // ✅ 에러 상태 관리를 위한 state 추가 (빨간 테두리 표시용)
+    const [errors, setErrors] = useState({
+        fullName: false,
+        addressLine1: false,
+        city: false,
+        state: false,
+        postalCode: false,
+        phone: false,
+        email: false,
+        emailFormat: false,
+    });
+
+    // 폼 전체 에러 메시지 (상단에 띄울 용도)
+    const [formErrorMsg, setFormErrorMsg] = useState<string | null>(null);
+
     const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
@@ -89,8 +104,13 @@ export default function CheckoutStepTwoScreen() {
         }
     };
 
-    const handleInputChange = (field: string, value: string) => {
+    const handleInputChange = (field: keyof typeof formData, value: string) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
+        // 입력 시 해당 필드의 에러 상태를 해제
+        if (errors[field as keyof typeof errors]) {
+            setErrors((prev) => ({ ...prev, [field]: false }));
+            setFormErrorMsg(null);
+        }
     };
 
     const fillAddressFromGoogle = (details: any) => {
@@ -116,6 +136,8 @@ export default function CheckoutStepTwoScreen() {
             state: adminArea,
             postalCode: postalCode,
         }));
+        setErrors((prev) => ({ ...prev, addressLine1: false, city: false, state: false, postalCode: false }));
+        setFormErrorMsg(null);
         Keyboard.dismiss();
     };
 
@@ -169,24 +191,50 @@ export default function CheckoutStepTwoScreen() {
         return re.test(email);
     };
 
+    // ✅ 강화된 Validation (빨간 박스 표시 로직)
     const validateShipping = () => {
         if (!currentUser) {
             Alert.alert("Login", "Please login to place an order.");
             router.push("/auth/email");
             return false;
         }
-        if (!formData.fullName || !formData.addressLine1 || !formData.city || !formData.phone || !formData.email) {
-            Alert.alert("Shipping", (t as any)?.["alertFillShipping"] || "Please fill in all required shipping fields.");
+
+        let isValid = true;
+        let newErrors = { fullName: false, addressLine1: false, city: false, state: false, postalCode: false, phone: false, email: false, emailFormat: false };
+
+        if (!formData.fullName.trim()) { newErrors.fullName = true; isValid = false; }
+        if (!formData.addressLine1.trim()) { newErrors.addressLine1 = true; isValid = false; }
+        if (!formData.city.trim()) { newErrors.city = true; isValid = false; }
+        if (!formData.state.trim()) { newErrors.state = true; isValid = false; }
+        if (!formData.postalCode.trim()) { newErrors.postalCode = true; isValid = false; }
+        if (!formData.phone.trim()) { newErrors.phone = true; isValid = false; }
+
+        if (!formData.email.trim()) {
+            newErrors.email = true;
+            isValid = false;
+        } else if (!validateEmail(formData.email)) {
+            newErrors.email = true;
+            newErrors.emailFormat = true;
+            isValid = false;
+        }
+
+        setErrors(newErrors);
+
+        if (!isValid) {
+            let msg = (t as any)?.["alertFillShipping"] || "Please fill in all required shipping fields marked with *.";
+            if (newErrors.emailFormat) msg = "Please enter a valid email address format.";
+            else if (newErrors.phone && formData.phone.length > 0 && formData.phone.length < 9) msg = "Please enter a valid phone number (min 9 digits).";
+
+            setFormErrorMsg(msg);
+
+            // 앱일 때만 알림창 띄우기 (웹은 화면의 붉은 글씨로 안내)
+            if (Platform.OS !== 'web') {
+                Alert.alert("Required Fields", msg);
+            }
             return false;
         }
-        if (!validateEmail(formData.email)) {
-            Alert.alert("Invalid Email", "Please enter a valid email address.");
-            return false;
-        }
-        if (formData.phone.length < 9) {
-            Alert.alert("Invalid Phone", "Please enter a valid phone number.");
-            return false;
-        }
+
+        setFormErrorMsg(null);
         return true;
     };
 
@@ -213,7 +261,6 @@ export default function CheckoutStepTwoScreen() {
         setIsCreatingOrder(true);
 
         try {
-            // ✅ [강력한 보완] 웹과 모바일에서 던지던 예민한 에러를 모두 제거하고 무조건 주문을 생성하도록 유도
             await ensureTokenReady(user!);
 
             const orderId = await createDevOrder({
@@ -230,7 +277,7 @@ export default function CheckoutStepTwoScreen() {
                     email: formData.email,
                 },
                 totals: { subtotal, discount, shippingFee, total },
-                photos: Array.isArray(photos) ? photos : [], // 안전한 배열 전달
+                photos: Array.isArray(photos) ? photos : [],
                 promoCode: promoResult?.success
                     ? {
                         code: promoResult.promoCode!,
@@ -245,7 +292,6 @@ export default function CheckoutStepTwoScreen() {
             await clearDraft();
             clearPhotos();
 
-            // ✅ 즉시 라우팅 (에러 방지)
             router.replace({ pathname: "/myorder/success", params: { id: orderId } });
         } catch (e: any) {
             console.error("Failed to place order:", e);
@@ -286,9 +332,18 @@ export default function CheckoutStepTwoScreen() {
                     <View style={styles.formSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
 
+                        {/* ✅ 웹 화면용 폼 전체 에러 메시지 */}
+                        {formErrorMsg && (
+                            <View style={styles.errorBox}>
+                                <Ionicons name="warning" size={16} color="#B91C1C" />
+                                <Text style={styles.errorBoxText}>{formErrorMsg}</Text>
+                            </View>
+                        )}
+
+                        {/* ✅ 필드별 에러 테두리 (styles.inputError) 적용 */}
                         <TextInput
                             placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
-                            style={styles.input}
+                            style={[styles.input, errors.fullName && styles.inputError]}
                             value={formData.fullName}
                             onChangeText={(v) => handleInputChange("fullName", v)}
                         />
@@ -296,7 +351,7 @@ export default function CheckoutStepTwoScreen() {
                         {Platform.OS === 'web' ? (
                             <TextInput
                                 placeholder={(t as any)?.["streetAddress"] || "Street Address *"}
-                                style={styles.input}
+                                style={[styles.input, errors.addressLine1 && styles.inputError]}
                                 value={formData.addressLine1}
                                 onChangeText={(v) => handleInputChange("addressLine1", v)}
                             />
@@ -308,10 +363,14 @@ export default function CheckoutStepTwoScreen() {
                                     onPress={(data, details = null) => fillAddressFromGoogle(details)}
                                     query={{ key: GOOGLE_PLACES_API_KEY, language: safeLocale === 'TH' ? 'th' : 'en' }}
                                     disableScroll={true} listProps={{ scrollEnabled: false }}
-                                    textInputProps={{ value: formData.addressLine1 || "", onChangeText: (text) => handleInputChange("addressLine1", text), placeholderTextColor: "#C7C7CD" }}
+                                    textInputProps={{
+                                        value: formData.addressLine1 || "",
+                                        onChangeText: (text) => handleInputChange("addressLine1", text),
+                                        placeholderTextColor: "#C7C7CD"
+                                    }}
                                     styles={{
                                         textInputContainer: { width: '100%', backgroundColor: 'transparent' },
-                                        textInput: { height: 50, color: '#000', fontSize: 15, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, backgroundColor: "#fff" },
+                                        textInput: [styles.input, { marginBottom: 0 }, errors.addressLine1 && styles.inputError],
                                         listView: { position: 'absolute', top: 55, width: '100%', backgroundColor: 'white', borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB' },
                                         row: { padding: 13, height: 48, flexDirection: 'row' }, separator: { height: 0.5, backgroundColor: '#E5E7EB' },
                                     }}
@@ -320,17 +379,57 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         )}
 
-                        <TextInput placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`} style={styles.input} value={formData.addressLine2} onChangeText={(v) => handleInputChange("addressLine2", v)} />
+                        <TextInput
+                            placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
+                            style={styles.input}
+                            value={formData.addressLine2}
+                            onChangeText={(v) => handleInputChange("addressLine2", v)}
+                        />
+
                         <View style={styles.row}>
-                            <TextInput placeholder={`${(t as any)?.["city"] || "City"} *`} style={[styles.input, { flex: 1, marginRight: 8 }]} value={formData.city} onChangeText={(v) => handleInputChange("city", v)} />
-                            <TextInput placeholder={`${(t as any)?.["stateProv"] || "State"} *`} style={[styles.input, { flex: 1 }]} value={formData.state} onChangeText={(v) => handleInputChange("state", v)} />
+                            <TextInput
+                                placeholder={`${(t as any)?.["city"] || "City"} *`}
+                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.city && styles.inputError]}
+                                value={formData.city}
+                                onChangeText={(v) => handleInputChange("city", v)}
+                            />
+                            <TextInput
+                                placeholder={`${(t as any)?.["stateProv"] || "State"} *`}
+                                style={[styles.input, { flex: 1 }, errors.state && styles.inputError]}
+                                value={formData.state}
+                                onChangeText={(v) => handleInputChange("state", v)}
+                            />
                         </View>
+
                         <View style={styles.row}>
-                            <TextInput placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`} style={[styles.input, { flex: 1, marginRight: 8 }]} value={formData.postalCode} keyboardType="numeric" onChangeText={(v) => handleInputChange("postalCode", v)} />
-                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}><Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text></View>
+                            <TextInput
+                                placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`}
+                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]}
+                                value={formData.postalCode}
+                                keyboardType="numeric"
+                                onChangeText={(v) => handleInputChange("postalCode", v)}
+                            />
+                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}>
+                                <Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text>
+                            </View>
                         </View>
-                        <TextInput placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`} style={styles.input} value={formData.phone} keyboardType="phone-pad" onChangeText={(v) => handleInputChange("phone", v)} />
-                        <TextInput placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`} style={styles.input} value={formData.email} keyboardType="email-address" autoCapitalize="none" onChangeText={(v) => handleInputChange("email", v)} />
+
+                        <TextInput
+                            placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`}
+                            style={[styles.input, errors.phone && styles.inputError]}
+                            value={formData.phone}
+                            keyboardType="phone-pad"
+                            onChangeText={(v) => handleInputChange("phone", v)}
+                        />
+
+                        <TextInput
+                            placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`}
+                            style={[styles.input, errors.email && styles.inputError]}
+                            value={formData.email}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            onChangeText={(v) => handleInputChange("email", v)}
+                        />
 
                         <View style={styles.instagramInputContainer}>
                             <View style={styles.instagramIconBox}><Ionicons name="logo-instagram" size={22} color="#E4405F" /></View>
@@ -417,7 +516,7 @@ export default function CheckoutStepTwoScreen() {
                             <Text style={styles.soonBadge}>Soon</Text>
                         </TouchableOpacity>
 
-                        {/* ✅ Test Free Order 버튼 (무조건 작동) */}
+                        {/* ✅ Test Free Order 버튼 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
@@ -444,7 +543,13 @@ const styles = StyleSheet.create({
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
     formSection: { marginBottom: 32 },
     sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
+
+    // ✅ 에러 UI 스타일 추가
+    errorBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEE2E2", padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: "#FCA5A5" },
+    errorBoxText: { color: "#B91C1C", fontSize: 13, fontWeight: "600", marginLeft: 8, flex: 1 },
     input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
+    inputError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2", borderWidth: 1.5 },
+
     instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff", overflow: "hidden" },
     instagramIconBox: { paddingLeft: 14, paddingRight: 8, height: "100%", justifyContent: "center" },
     marketingHint: { fontSize: 10, color: "#6366F1", fontWeight: "bold", marginLeft: 4, marginTop: 4, marginBottom: 16 },
