@@ -1,5 +1,5 @@
 // src/screens/CheckoutStepTwoScreen.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Component, ReactNode, ErrorInfo } from "react";
 import {
     View,
     Text,
@@ -17,7 +17,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+
+// ⚠️ 웹에서 충돌(Crash)을 자주 일으키는 요주의 라이브러리들
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
+import PromptPayModal from "../components/payments/PromptPayModal";
+import TrueMoneyModal from "../components/payments/TrueMoneyModal";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -29,15 +33,37 @@ import { User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { createDevOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
-import PromptPayModal from "../components/payments/PromptPayModal";
-import TrueMoneyModal from "../components/payments/TrueMoneyModal";
 
 const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
+
+// ✅ [핵심 방어벽] 하얀 화면(WSOD) 방지를 위한 에러 캐치 컴포넌트
+interface ErrorBoundaryProps { name: string; children: ReactNode; fallback?: ReactNode; }
+interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
+class SafeRender extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+    constructor(props: ErrorBoundaryProps) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error: Error) { return { hasError: true, error }; }
+    componentDidCatch(error: Error, errorInfo: ErrorInfo) { console.error(`[${this.props.name}] crashed:`, error, errorInfo); }
+    render() {
+        if (this.state.hasError) {
+            if (this.props.fallback) return this.props.fallback;
+            return (
+                <View style={{ padding: 12, backgroundColor: "#FEE2E2", borderRadius: 8, borderWidth: 1, borderColor: "#FCA5A5", marginBottom: 12 }}>
+                    <Text style={{ color: "#B91C1C", fontWeight: "bold", fontSize: 13 }}>⚠️ UI Module Error ({this.props.name})</Text>
+                    <Text style={{ color: "#991B1B", fontSize: 11, marginTop: 4 }}>This module is not supported on the web, but you can still proceed with the order below.</Text>
+                </View>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
 
-    // ✅ [방어 1] 데이터가 찰나의 순간에 없어도 앱이 뻗지 않도록 기본값([]) 설정
+    // ✅ 데이터가 없어도 죽지 않도록 기본값 할당
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
 
@@ -57,6 +83,7 @@ export default function CheckoutStepTwoScreen() {
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
     useEffect(() => {
+        if (!auth) return;
         const unsub = auth.onAuthStateChanged((user) => {
             setCurrentUser(user);
             if (user) {
@@ -95,7 +122,6 @@ export default function CheckoutStepTwoScreen() {
     };
 
     const fillAddressFromGoogle = (details: any) => {
-        // ✅ [방어 2] 구글 API 응답이 불안정해도 죽지 않도록 옵셔널 체이닝(?.) 적용
         if (!details || !details.address_components) return;
 
         let streetNumber = "";
@@ -139,7 +165,6 @@ export default function CheckoutStepTwoScreen() {
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
 
-    // ✅ [방어 3] NaN 에러 방지 계산식 강화
     const subtotal = (photos || []).length * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
     const shippingFee = 0;
@@ -316,41 +341,44 @@ export default function CheckoutStepTwoScreen() {
                             onChangeText={(v) => handleInputChange("fullName", v)}
                         />
 
-                        <View style={{ marginBottom: 12, zIndex: 5000 }}>
-                            <GooglePlacesAutocomplete
-                                placeholder={(t as any)?.["streetAddress"] || "Search Address *"}
-                                fetchDetails={true}
-                                onPress={(data, details = null) => {
-                                    fillAddressFromGoogle(details);
-                                }}
-                                query={{
-                                    key: GOOGLE_PLACES_API_KEY,
-                                    language: safeLocale === 'TH' ? 'th' : 'en',
-                                }}
-                                disableScroll={true}
-                                listProps={{ scrollEnabled: false }}
-                                textInputProps={{
-                                    value: formData.addressLine1 || "",
-                                    onChangeText: (text) => handleInputChange("addressLine1", text),
-                                    placeholderTextColor: "#C7C7CD"
-                                }}
-                                styles={{
-                                    textInputContainer: { width: '100%', backgroundColor: 'transparent' },
-                                    textInput: {
-                                        height: 50, color: '#000', fontSize: 15, borderRadius: 12,
-                                        borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, backgroundColor: "#fff",
-                                    },
-                                    listView: {
-                                        position: 'absolute', top: 55, width: '100%', backgroundColor: 'white',
-                                        borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB',
-                                    },
-                                    row: { padding: 13, height: 48, flexDirection: 'row' },
-                                    separator: { height: 0.5, backgroundColor: '#E5E7EB' },
-                                }}
-                                enablePoweredByContainer={false}
-                                fields={['address_components', 'formatted_address', 'geometry']}
-                            />
-                        </View>
+                        {/* ✅ [안전 구역] 구글 지도 자동완성이 웹에서 터져도 하얀 화면 대신 빨간 박스만 띄움 */}
+                        <SafeRender name="Google Address Search">
+                            <View style={{ marginBottom: 12, zIndex: 5000 }}>
+                                <GooglePlacesAutocomplete
+                                    placeholder={(t as any)?.["streetAddress"] || "Search Address *"}
+                                    fetchDetails={true}
+                                    onPress={(data, details = null) => {
+                                        fillAddressFromGoogle(details);
+                                    }}
+                                    query={{
+                                        key: GOOGLE_PLACES_API_KEY,
+                                        language: safeLocale === 'TH' ? 'th' : 'en',
+                                    }}
+                                    disableScroll={true}
+                                    listProps={{ scrollEnabled: false }}
+                                    textInputProps={{
+                                        value: formData.addressLine1 || "",
+                                        onChangeText: (text) => handleInputChange("addressLine1", text),
+                                        placeholderTextColor: "#C7C7CD"
+                                    }}
+                                    styles={{
+                                        textInputContainer: { width: '100%', backgroundColor: 'transparent' },
+                                        textInput: {
+                                            height: 50, color: '#000', fontSize: 15, borderRadius: 12,
+                                            borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, backgroundColor: "#fff",
+                                        },
+                                        listView: {
+                                            position: 'absolute', top: 55, width: '100%', backgroundColor: 'white',
+                                            borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB',
+                                        },
+                                        row: { padding: 13, height: 48, flexDirection: 'row' },
+                                        separator: { height: 0.5, backgroundColor: '#E5E7EB' },
+                                    }}
+                                    enablePoweredByContainer={false}
+                                    fields={['address_components', 'formatted_address', 'geometry']}
+                                />
+                            </View>
+                        </SafeRender>
 
                         <TextInput
                             placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
@@ -613,9 +641,11 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
-            {/* ✅ [방어 4] 웹 환경 첫 로드 시 Modal 모듈이 충돌을 일으키지 않도록 '보여질 때만' 렌더링하도록 조건부 처리 */}
-            {showPromptPay && <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />}
-            {showTrueMoney && <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />}
+            {/* ✅ [안전 구역] 모달이 웹에서 터져도 전체 화면을 죽이지 못하게 격리 */}
+            <SafeRender name="Payment Modals">
+                {showPromptPay && <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />}
+                {showTrueMoney && <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />}
+            </SafeRender>
         </SafeAreaView>
     );
 }
@@ -654,8 +684,6 @@ const styles = StyleSheet.create({
     signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
     signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
     paymentSection: { marginBottom: 32 },
-
-    // ✅ [방어 5] shadows 객체가 웹에서 지연 로딩되어도 안전하게 작동하도록 ...(shadows?.sm || {}) 처리
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
     paymentLogo: { width: 32, height: 32, marginRight: 12 },
