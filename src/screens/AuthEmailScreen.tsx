@@ -19,19 +19,24 @@ import { colors } from '../theme/colors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import {
-    createUserWithEmailAndPassword,
-    signInWithEmailAndPassword,
     sendEmailVerification,
     reload,
-    sendPasswordResetEmail // 추가됨
+    sendPasswordResetEmail,
 } from "firebase/auth";
 
+// ✅ Firebase 공통 인스턴스
 import { auth } from "../lib/firebase";
 
-// ✅ 경로 통일: 구글 로그인 훅 가져오기
-import { useGoogleAuthRequest } from '../utils/firebaseAuth';
+// ✅ [경로 수정] 사장님이 주신 utils/firebaseAuth.ts의 함수들 사용
+import {
+    useGoogleAuthRequest,
+    signUpWithEmail,
+    signInWithEmail
+} from '../utils/firebaseAuth';
 
-// ✅ [핵심 추가] 웹(Web) 환경에서 Alert가 무시되는 현상 방지 헬퍼 함수
+/**
+ * ✅ showAlert: 웹 브라우저가 알림창(Alert.alert)을 무시하지 못하게 하는 안전장치
+ */
 const showAlert = (title: string, message?: string) => {
     if (Platform.OS === 'web') {
         window.alert(`${title}\n\n${message || ""}`);
@@ -56,9 +61,7 @@ export default function AuthEmailScreen() {
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
     useEffect(() => {
-        if (authError) {
-            showAlert("Login Error", authError);
-        }
+        if (authError) showAlert("Login Error", authError);
     }, [authError]);
 
     // Cooldown Timer
@@ -86,26 +89,21 @@ export default function AuthEmailScreen() {
         setLoading(true);
         try {
             if (isSignUp) {
-                // 1. 회원가입
-                const cred = await createUserWithEmailAndPassword(auth, emailTrim, passwordTrim);
-
+                // 1. 회원가입 (utils의 헬퍼 함수 사용)
+                const cred = await signUpWithEmail(emailTrim, passwordTrim);
                 // 2. 인증 메일 발송
                 await sendEmailVerification(cred.user);
 
-                // 3. 성공 알림 (웹에서도 무조건 보이게 처리)
                 showAlert(
                     (t as any)['auth.verificationSentTitle'] || "Verification email sent",
                     (t as any)['auth.verificationSentBody'] || "Please check your inbox and verify your email."
                 );
-
-                // 4. 상태 초기화 후 로그인 탭으로 전환
-                setIsSignUp(false);
-                setPassword('');
-                setConfirmPassword('');
+                setIsSignUp(false); // 로그인 탭으로 전환
             } else {
-                // 로그인 시도
-                const { user } = await signInWithEmailAndPassword(auth, emailTrim, passwordTrim);
+                // 1. 로그인 시도
+                const { user } = await signInWithEmail(emailTrim, passwordTrim);
 
+                // 2. 이메일 인증 여부 확인
                 if (!user.emailVerified) {
                     if (cooldown > 0) {
                         showAlert(
@@ -124,10 +122,7 @@ export default function AuthEmailScreen() {
                         );
                     } catch (verifyErr: any) {
                         if (verifyErr.code === 'auth/too-many-requests') {
-                            showAlert(
-                                (t as any)['auth.verifyCheckInboxTitle'] || "Verify your email",
-                                ((t as any)['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + ((t as any)['auth.verifySpamTip'] || "")
-                            );
+                            showAlert((t as any)['auth.verifyCheckInboxTitle'] || "Verify your email", "Check inbox");
                             setCooldown(30);
                         } else {
                             throw verifyErr;
@@ -135,28 +130,16 @@ export default function AuthEmailScreen() {
                     }
                     return;
                 }
-
+                // 인증 성공 시 이전 화면으로
                 router.back();
             }
         } catch (error: any) {
             console.error("Auth Error:", error);
             const code = error?.code ?? "";
             let msg = error?.message ?? "Authentication failed.";
-
-            if (code === "auth/invalid-credential") {
-                msg = "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
-            } else if (code === "auth/email-already-in-use") {
-                msg = "อีเมลนี้ถูกใช้งานแล้ว โปรดเข้าสู่ระบบ";
-            } else if (code === "auth/weak-password") {
-                msg = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร";
-            } else if (code === "auth/invalid-email") {
-                msg = "รูปแบบอีเมลไม่ถูกต้อง";
-            } else if (code === "auth/network-request-failed") {
-                msg = "เครือข่ายขัดข้อง โปรดตรวจสอบอินเทอร์เน็ต";
-            } else if (code === "auth/too-many-requests") {
-                msg = "กรุณารอสักครู่ก่อนทำรายการใหม่";
-            }
-
+            if (code === "auth/invalid-credential") msg = "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
+            else if (code === "auth/email-already-in-use") msg = "อีเมลนี้ถูกใช้งานแล้ว โปรดเข้าสู่ระบบ";
+            else if (code === "auth/weak-password") msg = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร";
             showAlert((t as any)['failedTitle'] || "Failed", msg);
         } finally {
             setLoading(false);
@@ -165,39 +148,31 @@ export default function AuthEmailScreen() {
 
     const handleRefreshVerification = async () => {
         try {
-            if (!auth.currentUser) {
-                showAlert((t as any)['auth.refresh'] || "Refresh", (t as any)['auth.notLoggedIn'] || "Not logged in.");
-                return;
-            }
-
+            if (!auth.currentUser) return;
             setLoading(true);
             await reload(auth.currentUser);
-
             if (auth.currentUser.emailVerified) {
-                showAlert((t as any)['auth.verifiedSuccess'] || "Verified ✅", (t as any)['auth.verifiedSuccessBody'] || "Verified.");
+                showAlert((t as any)['auth.verifiedSuccess'] || "Verified ✅", "Success");
                 router.back();
             } else {
-                showAlert((t as any)['auth.notVerifiedYet'] || "Not verified", (t as any)['auth.notVerifiedYetBody'] || "Not verified.");
+                showAlert((t as any)['auth.notVerifiedYet'] || "Not verified", "Check your email.");
             }
-        } catch (e) {
-            showAlert((t as any)['auth.refresh'] || "Refresh", (t as any)['auth.refreshFailed'] || "Failed.");
         } finally {
             setLoading(false);
         }
     };
 
     const handleForgotPassword = async () => {
+        const emailTrim = (email ?? "").trim();
+        if (!emailTrim) {
+            showAlert("Error", (t as any)['auth.enterEmailFirst'] || "Enter email first.");
+            return;
+        }
         try {
-            const emailTrim = (email ?? "").trim();
-            if (!emailTrim) {
-                showAlert("Error", (t as any)['auth.enterEmailFirst'] || "Please enter your email address first.");
-                return;
-            }
-            // ✅ 파일 임포트 충돌 방지를 위해 직접 Firebase 함수 호출
             await sendPasswordResetEmail(auth, emailTrim);
-            showAlert((t as any)['auth.resetSentTitle'] || "Password reset email sent", (t as any)['auth.resetSentBody'] || "Please check your inbox for instructions to reset your password.");
-        } catch (e: any) {
-            showAlert((t as any)['auth.resetFailed'] || "Reset failed", (t as any)['auth.resetFailed'] || "Failed to reset password.");
+            showAlert((t as any)['auth.resetSentTitle'] || "Sent", "Check your inbox.");
+        } catch (e) {
+            showAlert("Failed", "Reset failed.");
         }
     };
 
@@ -213,117 +188,52 @@ export default function AuthEmailScreen() {
                 <View style={{ width: 40 }} />
             </View>
 
-            <KeyboardAvoidingView
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
-                style={{ flex: 1 }}
-            >
-                <ScrollView contentContainerStyle={styles.content}>
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+                <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
                     <View style={styles.formContainer}>
-
                         <View style={styles.tabContainer}>
-                            <TouchableOpacity
-                                style={[styles.tab, !isSignUp && styles.activeTab]}
-                                onPress={() => setIsSignUp(false)}
-                            >
-                                <Text style={[styles.tabText, !isSignUp && styles.activeTabText]}>
-                                    {(t as any)['auth.loginTab'] || "Log In"}
-                                </Text>
+                            <TouchableOpacity style={[styles.tab, !isSignUp && styles.activeTab]} onPress={() => setIsSignUp(false)}>
+                                <Text style={[styles.tabText, !isSignUp && styles.activeTabText]}>{(t as any)['auth.loginTab'] || "Log In"}</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.tab, isSignUp && styles.activeTab]}
-                                onPress={() => setIsSignUp(true)}
-                            >
-                                <Text style={[styles.tabText, isSignUp && styles.activeTabText]}>
-                                    {(t as any)['auth.signupTab'] || "Sign Up"}
-                                </Text>
+                            <TouchableOpacity style={[styles.tab, isSignUp && styles.activeTab]} onPress={() => setIsSignUp(true)}>
+                                <Text style={[styles.tabText, isSignUp && styles.activeTabText]}>{(t as any)['auth.signupTab'] || "Sign Up"}</Text>
                             </TouchableOpacity>
                         </View>
 
                         <View style={styles.inputs}>
                             <View style={styles.inputGroup}>
                                 <Text style={styles.label}>{(t as any)['auth.emailLabel'] || "Email"}</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="name@example.com"
-                                    value={email}
-                                    onChangeText={setEmail}
-                                    autoCapitalize="none"
-                                    keyboardType="email-address"
-                                />
+                                <TextInput style={styles.input} placeholder="name@example.com" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
                             </View>
-
                             <View style={styles.inputGroup}>
                                 <Text style={styles.label}>{(t as any)['auth.passwordLabel'] || "Password"}</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="••••••"
-                                    value={password}
-                                    onChangeText={setPassword}
-                                    secureTextEntry
-                                />
+                                <TextInput style={styles.input} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
                             </View>
-
                             {isSignUp && (
                                 <View style={styles.inputGroup}>
                                     <Text style={styles.label}>{(t as any)['auth.confirmPasswordLabel'] || "Confirm Password"}</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="••••••"
-                                        value={confirmPassword}
-                                        onChangeText={setConfirmPassword}
-                                        secureTextEntry
-                                    />
+                                    <TextInput style={styles.input} placeholder="••••••" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
                                 </View>
                             )}
                         </View>
 
-                        <TouchableOpacity
-                            style={[styles.mainBtn, loading && styles.disabledBtn]}
-                            onPress={handleAuth}
-                            disabled={loading}
-                        >
-                            {loading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <Text style={styles.mainBtnText}>
-                                    {isSignUp ? ((t as any)['auth.signupAction'] || "Create Account") : ((t as any)['auth.loginAction'] || "Log In")}
-                                </Text>
-                            )}
+                        <TouchableOpacity style={[styles.mainBtn, loading && styles.disabledBtn]} onPress={handleAuth} disabled={loading}>
+                            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.mainBtnText}>{isSignUp ? ((t as any)['auth.signupAction'] || "Create Account") : ((t as any)['auth.loginAction'] || "Log In")}</Text>}
                         </TouchableOpacity>
 
-                        <View style={styles.dividerRow}>
-                            <View style={styles.line} />
-                            <Text style={styles.dividerText}>OR</Text>
-                            <View style={styles.line} />
-                        </View>
+                        <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
 
-                        <TouchableOpacity
-                            style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]}
-                            onPress={() => promptAsync()}
-                            disabled={isSigningIn || !isReady}
-                        >
-                            {isSigningIn ? (
-                                <ActivityIndicator color="#000" />
-                            ) : (
+                        <TouchableOpacity style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]} onPress={() => promptAsync()} disabled={isSigningIn || !isReady}>
+                            {isSigningIn ? <ActivityIndicator color="#000" /> :
                                 <View style={styles.socialBtnContent}>
-                                    <Image
-                                        source={require('../assets/google_logo.png')}
-                                        style={styles.socialIcon}
-                                        resizeMode="contain"
-                                    />
-                                    <Text style={styles.socialBtnText}>
-                                        {(t as any)['signUpGoogle'] || "Continue with Google"}
-                                    </Text>
-                                </View>
-                            )}
+                                    <Image source={require('../assets/google_logo.png')} style={styles.socialIcon} resizeMode="contain" />
+                                    <Text style={styles.socialBtnText}>{(t as any)['signUpGoogle'] || "Continue with Google"}</Text>
+                                </View>}
                         </TouchableOpacity>
 
                         {!isSignUp && (
                             <View style={styles.extraActions}>
-                                <TouchableOpacity onPress={handleForgotPassword}>
-                                    <Text style={styles.secondaryBtnText}>{(t as any)['auth.forgotPassword'] || "Forgot password?"}</Text>
-                                </TouchableOpacity>
-
+                                <TouchableOpacity onPress={handleForgotPassword}><Text style={styles.secondaryBtnText}>{(t as any)['auth.forgotPassword'] || "Forgot password?"}</Text></TouchableOpacity>
                                 {auth.currentUser && !auth.currentUser.emailVerified && (
                                     <TouchableOpacity style={styles.refreshBtn} onPress={handleRefreshVerification}>
                                         <Ionicons name="refresh" size={16} color="#007AFF" />
@@ -332,7 +242,6 @@ export default function AuthEmailScreen() {
                                 )}
                             </View>
                         )}
-
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -347,24 +256,21 @@ const styles = StyleSheet.create({
     headerTitle: { flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 16 },
     content: { flexGrow: 1, padding: 24, paddingTop: 40, justifyContent: 'flex-start' },
     formContainer: { maxWidth: 400, width: '100%', alignSelf: 'center' },
-
     tabContainer: { flexDirection: 'row', marginBottom: 24, backgroundColor: '#f3f4f6', borderRadius: 12, padding: 4 },
     tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-    activeTab: { backgroundColor: '#fff', shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+    activeTab: { backgroundColor: '#fff', elevation: 2 },
     tabText: { fontWeight: '600', color: '#666', fontSize: 14 },
     activeTabText: { color: '#000' },
-
     inputs: { gap: 16, marginBottom: 24 },
     inputGroup: { gap: 8 },
     label: { fontSize: 14, fontWeight: '600', color: '#333' },
     input: { height: 50, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: '#f9fafb' },
-
-    mainBtn: { height: 52, backgroundColor: colors?.ink || '#000', borderRadius: 26, alignItems: 'center', justifyContent: 'center', shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 2 },
+    mainBtn: { height: 52, backgroundColor: '#111', borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
     disabledBtn: { opacity: 0.7 },
     mainBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     extraActions: { marginTop: 20, alignItems: 'center', gap: 16 },
     secondaryBtnText: { color: '#666', fontSize: 14, textDecorationLine: 'underline' },
-    refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
+    refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     refreshBtnText: { color: '#007AFF', fontWeight: '600', fontSize: 14 },
     dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 24 },
     line: { flex: 1, height: 1, backgroundColor: '#e5e7eb' },
