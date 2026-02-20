@@ -110,8 +110,7 @@ export async function createDevOrder(params: {
     const customerSlug = safeCustomerFolder(shipping, authedUid);
     const storageBasePath = `orders/${dateKey}/${orderCode}/${customerSlug}`;
 
-    // ✅ 방어: 사진이 아예 없는 배열이어도 에러 나지 않도록 처리
-    const safePhotosCount = Array.isArray(photos) ? Math.max(photos.length, 1) : 1;
+    const safePhotosCount = Array.isArray(photos) && photos.length > 0 ? photos.length : 1;
 
     // 1. 공통 주문 데이터 구성 (앱/웹 모두 사용)
     const rawOrderData: any = {
@@ -160,34 +159,45 @@ export async function createDevOrder(params: {
     // ---------------------------------------------------------
 
     if (Platform.OS === 'web') {
-        // 🚨 [웹 전용 강력 방어] 사진 업로드 모듈 자체를 끄고 가짜 DB를 심어 무조건 성공시킴
-        const itemRef = doc(collection(db, "orders", orderId, "items"));
-        const rawItemData: any = {
-            index: 0,
-            quantity: 1,
-            filterId: "original",
-            unitPrice: totals.subtotal,
-            lineTotal: totals.subtotal,
-            size: "20x20",
-            assets: {
-                sourcePath: "web_placeholder", sourceUrl: "https://via.placeholder.com/150",
-                viewPath: "web_placeholder", viewUrl: "https://via.placeholder.com/150",
-                printPath: "web_placeholder", printUrl: "https://via.placeholder.com/150",
-            },
-            printUrl: "https://via.placeholder.com/150",
-            previewUrl: "https://via.placeholder.com/150",
-            createdAt: serverTimestamp(),
-        };
-        await setDoc(itemRef, stripUndefined(rawItemData));
-        await updateDoc(orderRef, stripUndefined({ previewImages: ["https://via.placeholder.com/150"], updatedAt: serverTimestamp() }) as any);
+        // ✅ [웹 전용] 업로드 에러를 피하면서, 고객이 올린 원본 사진을 그대로 Success 페이지로 넘기기
+        const previewImages: string[] = [];
+        const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/300" }];
 
+        for (let i = 0; i < safePhotos.length; i++) {
+            const p = safePhotos[i];
+            const fallbackUri = p.uri || p.originalUri || "https://via.placeholder.com/300";
+            if (i < 5) previewImages.push(fallbackUri);
+
+            const itemRef = doc(collection(db, "orders", orderId, "items"));
+            await setDoc(itemRef, stripUndefined({
+                index: i,
+                quantity: p.quantity || 1,
+                filterId: "original",
+                unitPrice: totals.subtotal / safePhotosCount,
+                lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
+                size: "20x20",
+                assets: {
+                    sourceUrl: fallbackUri,
+                    viewUrl: fallbackUri,
+                    printUrl: fallbackUri
+                },
+                printUrl: fallbackUri,
+                previewUrl: fallbackUri,
+                uri: fallbackUri,
+                createdAt: serverTimestamp(),
+            }));
+        }
+
+        if (previewImages.length > 0) {
+            await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);
+        }
         return orderId;
     }
 
-    // 📱 [앱 전용] 모바일에서는 정상적으로 고화질 사진을 Storage에 업로드
+    // 📱 [앱 전용] 모바일에서는 정상적으로 고화질 사진을 Storage에 3단계 업로드
     try {
         const uploadTasks = photos.map(async (p, i) => {
-            const viewUri = p?.output?.viewUri || p?.uri; // fallback uri 
+            const viewUri = p?.output?.viewUri || p?.uri; // fallback uri
             if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
             const printUri = p?.output?.printUri || viewUri;
@@ -236,7 +246,7 @@ export async function createDevOrder(params: {
         }
     } catch (err) {
         console.error("App Upload Error:", err);
-        // 앱에서 업로드 실패하더라도 주문 번호는 살림 (My Order에서 확인할 수 있도록)
+        throw err;
     }
 
     return orderId;

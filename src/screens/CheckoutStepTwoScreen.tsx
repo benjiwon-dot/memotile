@@ -1,5 +1,5 @@
 // src/screens/CheckoutStepTwoScreen.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
     View,
     Text,
@@ -38,6 +38,9 @@ const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
 
+    // ✅ [추가] 에러 시 상단 스크롤을 위한 Ref
+    const scrollViewRef = useRef<ScrollView>(null);
+
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
 
@@ -53,7 +56,6 @@ export default function CheckoutStepTwoScreen() {
         instagram: "",
     });
 
-    // ✅ 에러 상태 관리를 위한 state 추가 (빨간 테두리 표시용)
     const [errors, setErrors] = useState({
         fullName: false,
         addressLine1: false,
@@ -65,7 +67,6 @@ export default function CheckoutStepTwoScreen() {
         emailFormat: false,
     });
 
-    // 폼 전체 에러 메시지 (상단에 띄울 용도)
     const [formErrorMsg, setFormErrorMsg] = useState<string | null>(null);
 
     const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
@@ -106,7 +107,6 @@ export default function CheckoutStepTwoScreen() {
 
     const handleInputChange = (field: keyof typeof formData, value: string) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
-        // 입력 시 해당 필드의 에러 상태를 해제
         if (errors[field as keyof typeof errors]) {
             setErrors((prev) => ({ ...prev, [field]: false }));
             setFormErrorMsg(null);
@@ -191,7 +191,6 @@ export default function CheckoutStepTwoScreen() {
         return re.test(email);
     };
 
-    // ✅ 강화된 Validation (빨간 박스 표시 로직)
     const validateShipping = () => {
         if (!currentUser) {
             Alert.alert("Login", "Please login to place an order.");
@@ -227,7 +226,9 @@ export default function CheckoutStepTwoScreen() {
 
             setFormErrorMsg(msg);
 
-            // 앱일 때만 알림창 띄우기 (웹은 화면의 붉은 글씨로 안내)
+            // ✅ [추가] 에러 시 화면 맨 위(빨간 박스)로 부드럽게 스크롤
+            scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+
             if (Platform.OS !== 'web') {
                 Alert.alert("Required Fields", msg);
             }
@@ -327,12 +328,13 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </View>
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
+            {/* ✅ ScrollView에 ref 연결 */}
+            <ScrollView ref={scrollViewRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
                 <View style={styles.stepContainer}>
                     <View style={styles.formSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
 
-                        {/* ✅ 웹 화면용 폼 전체 에러 메시지 */}
+                        {/* ✅ 에러 메시지 박스 */}
                         {formErrorMsg && (
                             <View style={styles.errorBox}>
                                 <Ionicons name="warning" size={16} color="#B91C1C" />
@@ -340,7 +342,6 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         )}
 
-                        {/* ✅ 필드별 에러 테두리 (styles.inputError) 적용 */}
                         <TextInput
                             placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
                             style={[styles.input, errors.fullName && styles.inputError]}
@@ -544,7 +545,7 @@ const styles = StyleSheet.create({
     formSection: { marginBottom: 32 },
     sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
 
-    // ✅ 에러 UI 스타일 추가
+    // ✅ 에러 UI 스타일
     errorBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEE2E2", padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: "#FCA5A5" },
     errorBoxText: { color: "#B91C1C", fontSize: 13, fontWeight: "600", marginLeft: 8, flex: 1 },
     input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
