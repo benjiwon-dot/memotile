@@ -20,6 +20,7 @@ import { Platform } from "react-native";
 
 import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
+// ✅ 기존 앱 기능 복원: Storage 업로드 모듈 유지
 import { uploadFileUriToStorage } from "./storageUpload";
 import { stripUndefined } from "../utils/firestore";
 
@@ -30,6 +31,7 @@ function yyyymmdd(d = new Date()): string {
     return `${y}${m}${day}`;
 }
 
+// ✅ 기존 앱 기능 복원: 폴더명 생성 로직 유지
 function slugifyCustomer(input?: string): string {
     const s = (input || "").trim().toLowerCase();
     if (!s) return "customer";
@@ -56,48 +58,34 @@ function getSourceUri(p: any): string | null {
     return typeof u === "string" && u.length > 0 ? u : null;
 }
 
-/** auth ready + token refresh */
 async function ensureAuthed(): Promise<string> {
     if (auth.currentUser?.uid) {
         await auth.currentUser.getIdToken(true);
         return auth.currentUser.uid;
     }
-
-    const user = await new Promise<typeof auth.currentUser>((resolve) => {
+    const user = await new Promise<any>((resolve) => {
         const unsub = onAuthStateChanged(auth, (u) => {
             unsub();
             resolve(u);
         });
     });
-
     if (!user?.uid) throw new Error("Not signed in");
     await user.getIdToken(true);
     return user.uid;
 }
 
 async function reserveOrderCode(dateKey: string): Promise<string> {
-    if (!/^\d{8}$/.test(dateKey)) throw new Error("dateKey must be YYYYMMDD");
-
-    await ensureAuthed();
-
     const counterRef = doc(db, "orderCounters", dateKey);
-
     const { seq } = await runTransaction(db, async (tx) => {
         const snap = await tx.get(counterRef);
-
         if (!snap.exists()) {
             tx.set(counterRef, { nextSeq: 2 });
             return { seq: 1 };
         }
-
-        const data = snap.data() as any;
-        const nextSeq = Number(data?.nextSeq ?? 1);
-        const seq = Number.isFinite(nextSeq) && nextSeq >= 1 ? nextSeq : 1;
-
-        tx.update(counterRef, { nextSeq: seq + 1 });
-        return { seq };
+        const nextSeq = Number((snap.data() as any)?.nextSeq ?? 1);
+        tx.update(counterRef, { nextSeq: nextSeq + 1 });
+        return { seq: nextSeq };
     });
-
     return `${dateKey}-${String(seq).padStart(4, "0")}`;
 }
 
@@ -118,17 +106,17 @@ export async function createDevOrder(params: {
 
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
     const orderId = orderRef.id;
-
     const dateKey = yyyymmdd();
     const orderCode = await reserveOrderCode(dateKey);
 
     const customerSlug = safeCustomerFolder(shipping, authedUid);
     const storageBasePath = `orders/${dateKey}/${orderCode}/${customerSlug}`;
 
+    // 1. 공통 주문 데이터 구성 (앱/웹 모두 사용)
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
-        itemsCount: photos.length,
+        itemsCount: photos.length || 1, // 웹을 위해 기본값 1 보장
         storageBasePath,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -140,21 +128,26 @@ export async function createDevOrder(params: {
         total: totals.total,
         customer: { email: shipping.email, fullName: shipping.fullName, phone: shipping.phone },
         shipping,
-        payment: { provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE", transactionId: `SIM_${orderCode}`, method: "FREE", paidAt: serverTimestamp() },
+        payment: {
+            provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE",
+            transactionId: `SIM_${orderCode}`,
+            method: "FREE",
+            paidAt: serverTimestamp()
+        },
         paymentMethod: "FREE",
         locale,
-        promoCode: promoCode?.code,
         instagram,
     };
 
     if (promoCode) rawOrderData.promo = promoCode;
 
+    // ✅ 주문 기본 정보는 가장 먼저 DB에 꽂아 넣습니다. (My Order에 무조건 표시되게 함)
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
+    // 유저 프로필 업데이트
     const userProfileRef = doc(db, "users", authedUid);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}. ${String(today.getMonth() + 1).padStart(2, '0')}. ${String(today.getDate()).padStart(2, '0')}`;
-
     await setDoc(userProfileRef, {
         defaultAddress: shipping,
         instagram: instagram || "",
@@ -162,8 +155,12 @@ export async function createDevOrder(params: {
         updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // ✅ [방어 핵심] 웹에서는 사진 업로드를 생략하고 더미(가짜) URL만 저장하여 속도를 높이고 에러를 방지합니다.
+    // ---------------------------------------------------------
+    // 2. 플랫폼 분기: 웹(Paymentwall 심사) vs 앱(정상 서비스)
+    // ---------------------------------------------------------
+
     if (Platform.OS === 'web') {
+        // 🚨 [웹 전용] 사진 업로드 생략, 더미 데이터로 DB만 채우고 끝냄
         const itemRef = doc(collection(db, "orders", orderId, "items"));
         const rawItemData: any = {
             index: 0,
@@ -183,12 +180,13 @@ export async function createDevOrder(params: {
         };
         await setDoc(itemRef, stripUndefined(rawItemData));
         await updateDoc(orderRef, stripUndefined({ previewImages: ["https://via.placeholder.com/150"], updatedAt: serverTimestamp() }) as any);
-        return orderId;
+
+        return orderId; // 웹은 여기서 즉시 종료 (Success 페이지로 이동)
     }
 
-    // 📱 [앱용 로직] 모바일에서는 정상적으로 고화질 이미지를 Firebase Storage에 업로드합니다.
+    // 📱 [앱 전용] 사장님의 원본 로직: 고화질 사진 3종 세트 Storage 업로드
     const uploadTasks = photos.map(async (p, i) => {
-        let viewUri = p?.output?.viewUri;
+        const viewUri = p?.output?.viewUri;
         if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
         const printUri = p?.output?.printUri || viewUri;
@@ -267,7 +265,6 @@ export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | nul
         if (!itemsSnap.empty) {
             order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
         }
-
         onUpdate(order);
     });
 }
