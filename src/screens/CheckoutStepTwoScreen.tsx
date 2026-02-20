@@ -36,8 +36,10 @@ const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
-    const { photos, clearDraft, clearPhotos } = usePhoto();
-    const { t, locale } = useLanguage();
+
+    // ✅ [방어 1] 데이터가 찰나의 순간에 없어도 앱이 뻗지 않도록 기본값([]) 설정
+    const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
+    const { t, locale } = useLanguage() || {};
 
     const [formData, setFormData] = useState({
         fullName: "",
@@ -51,7 +53,7 @@ export default function CheckoutStepTwoScreen() {
         instagram: "",
     });
 
-    const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
+    const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
     useEffect(() => {
@@ -93,7 +95,8 @@ export default function CheckoutStepTwoScreen() {
     };
 
     const fillAddressFromGoogle = (details: any) => {
-        if (!details) return;
+        // ✅ [방어 2] 구글 API 응답이 불안정해도 죽지 않도록 옵셔널 체이닝(?.) 적용
+        if (!details || !details.address_components) return;
 
         let streetNumber = "";
         let route = "";
@@ -103,7 +106,7 @@ export default function CheckoutStepTwoScreen() {
         let postalCode = "";
 
         details.address_components.forEach((component: any) => {
-            const types = component.types;
+            const types = component?.types || [];
             if (types.includes("street_number")) streetNumber = component.long_name;
             if (types.includes("route")) route = component.long_name;
             if (types.includes("sublocality") || types.includes("sublocality_level_1")) subLocality = component.long_name;
@@ -114,7 +117,7 @@ export default function CheckoutStepTwoScreen() {
 
         setFormData(prev => ({
             ...prev,
-            addressLine1: `${streetNumber} ${route}`.trim() || details.formatted_address,
+            addressLine1: `${streetNumber} ${route}`.trim() || details.formatted_address || "",
             addressLine2: subLocality,
             city: locality,
             state: adminArea,
@@ -132,13 +135,15 @@ export default function CheckoutStepTwoScreen() {
     const [showTrueMoney, setShowTrueMoney] = useState(false);
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
-    const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
-    const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
+    const safeLocale = locale || "EN";
+    const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
+    const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
 
-    const subtotal = photos.length * PRICE_PER_TILE;
+    // ✅ [방어 3] NaN 에러 방지 계산식 강화
+    const subtotal = (photos || []).length * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
     const shippingFee = 0;
-    const total = Math.max(0, subtotal - discount + shippingFee);
+    const total = Math.max(0, (subtotal || 0) - (discount || 0) + shippingFee);
 
     const handleApplyPromo = async () => {
         if (!promoCode) return;
@@ -148,7 +153,7 @@ export default function CheckoutStepTwoScreen() {
             const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotal);
             setPromoResult(res);
             if (!res.success) {
-                Alert.alert("Promo", (t as any)[res.error || "promoInvalid"] || res.error || "Invalid promo.");
+                Alert.alert("Promo", (t as any)?.[res.error || "promoInvalid"] || res.error || "Invalid promo.");
             }
         } catch (e) {
             Alert.alert("Promo", "Failed to validate promo.");
@@ -180,7 +185,7 @@ export default function CheckoutStepTwoScreen() {
             return false;
         }
         if (!formData.fullName || !formData.addressLine1 || !formData.city || !formData.phone || !formData.email) {
-            Alert.alert("Shipping", (t as any)["alertFillShipping"] || "Please fill in all required shipping fields.");
+            Alert.alert("Shipping", (t as any)?.["alertFillShipping"] || "Please fill in all required shipping fields.");
             return false;
         }
         if (!validateEmail(formData.email)) {
@@ -219,10 +224,8 @@ export default function CheckoutStepTwoScreen() {
         setIsCreatingOrder(true);
 
         try {
-            // ✅ [수정됨] 웹(Vercel) 환경에서는 에디터를 건너뛰었으므로 사진 렌더링(viewUri) 검사를 생략합니다.
-            // 앱(모바일) 환경에서는 기존처럼 검사를 수행합니다.
             if (Platform.OS !== 'web') {
-                const missing = photos
+                const missing = (photos || [])
                     .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
                     .filter((x) => !x.viewUri);
 
@@ -273,15 +276,15 @@ export default function CheckoutStepTwoScreen() {
 
     const handleApplePay = () => {
         if (!validateShipping()) return;
-        Alert.alert((t as any)["comingSoon"] || "Soon", (t as any)["applePaySoon"] || "Apple Pay is coming soon.");
+        Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["applePaySoon"] || "Apple Pay is coming soon.");
     };
 
     const handleGooglePay = () => {
         if (!validateShipping()) return;
-        Alert.alert((t as any)["comingSoon"] || "Soon", (t as any)["googlePaySoon"] || "Google Pay is coming soon.");
+        Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["googlePaySoon"] || "Google Pay is coming soon.");
     };
 
-    const instaPlaceholder = locale === "TH"
+    const instaPlaceholder = safeLocale === "TH"
         ? "Instagram ID (รับคูปองส่วนลดพิเศษ!)"
         : "Instagram ID (Get Free Coupons!)";
 
@@ -291,9 +294,9 @@ export default function CheckoutStepTwoScreen() {
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color="black" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{(t as any)["checkoutTitle"] || "Checkout"}</Text>
+                <Text style={styles.headerTitle}>{(t as any)?.["checkoutTitle"] || "Checkout"}</Text>
                 <View style={{ width: 40 }}>
-                    {isLoadingAddress && <ActivityIndicator size="small" color={colors.ink} />}
+                    {isLoadingAddress && <ActivityIndicator size="small" color={colors?.ink || "#000"} />}
                 </View>
             </View>
 
@@ -304,10 +307,10 @@ export default function CheckoutStepTwoScreen() {
             >
                 <View style={styles.stepContainer}>
                     <View style={styles.formSection}>
-                        <Text style={styles.sectionTitle}>{(t as any)["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
 
                         <TextInput
-                            placeholder={`${(t as any)["fullName"] || "Full Name"} *`}
+                            placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
                             style={styles.input}
                             value={formData.fullName}
                             onChangeText={(v) => handleInputChange("fullName", v)}
@@ -315,19 +318,19 @@ export default function CheckoutStepTwoScreen() {
 
                         <View style={{ marginBottom: 12, zIndex: 5000 }}>
                             <GooglePlacesAutocomplete
-                                placeholder={(t as any)["streetAddress"] || "Search Address *"}
+                                placeholder={(t as any)?.["streetAddress"] || "Search Address *"}
                                 fetchDetails={true}
                                 onPress={(data, details = null) => {
                                     fillAddressFromGoogle(details);
                                 }}
                                 query={{
                                     key: GOOGLE_PLACES_API_KEY,
-                                    language: locale === 'TH' ? 'th' : 'en',
+                                    language: safeLocale === 'TH' ? 'th' : 'en',
                                 }}
                                 disableScroll={true}
                                 listProps={{ scrollEnabled: false }}
                                 textInputProps={{
-                                    value: formData.addressLine1,
+                                    value: formData.addressLine1 || "",
                                     onChangeText: (text) => handleInputChange("addressLine1", text),
                                     placeholderTextColor: "#C7C7CD"
                                 }}
@@ -341,15 +344,8 @@ export default function CheckoutStepTwoScreen() {
                                         position: 'absolute', top: 55, width: '100%', backgroundColor: 'white',
                                         borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB',
                                     },
-                                    row: {
-                                        padding: 13,
-                                        height: 48,
-                                        flexDirection: 'row',
-                                    },
-                                    separator: {
-                                        height: 0.5,
-                                        backgroundColor: '#E5E7EB',
-                                    },
+                                    row: { padding: 13, height: 48, flexDirection: 'row' },
+                                    separator: { height: 0.5, backgroundColor: '#E5E7EB' },
                                 }}
                                 enablePoweredByContainer={false}
                                 fields={['address_components', 'formatted_address', 'geometry']}
@@ -357,7 +353,7 @@ export default function CheckoutStepTwoScreen() {
                         </View>
 
                         <TextInput
-                            placeholder={`${(t as any)["address2"] || "Apartment, suite, etc."} ${(t as any)["optionalSuffix"] || "(optional)"}`}
+                            placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
                             style={styles.input}
                             value={formData.addressLine2}
                             onChangeText={(v) => handleInputChange("addressLine2", v)}
@@ -365,13 +361,13 @@ export default function CheckoutStepTwoScreen() {
 
                         <View style={styles.row}>
                             <TextInput
-                                placeholder={`${(t as any)["city"] || "City"} *`}
+                                placeholder={`${(t as any)?.["city"] || "City"} *`}
                                 style={[styles.input, { flex: 1, marginRight: 8 }]}
                                 value={formData.city}
                                 onChangeText={(v) => handleInputChange("city", v)}
                             />
                             <TextInput
-                                placeholder={`${(t as any)["stateProv"] || "State"} *`}
+                                placeholder={`${(t as any)?.["stateProv"] || "State"} *`}
                                 style={[styles.input, { flex: 1 }]}
                                 value={formData.state}
                                 onChangeText={(v) => handleInputChange("state", v)}
@@ -380,26 +376,26 @@ export default function CheckoutStepTwoScreen() {
 
                         <View style={styles.row}>
                             <TextInput
-                                placeholder={`${(t as any)["zipCode"] || "Zip Code"} *`}
+                                placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`}
                                 style={[styles.input, { flex: 1, marginRight: 8 }]}
                                 value={formData.postalCode}
                                 keyboardType="numeric"
                                 onChangeText={(v) => handleInputChange("postalCode", v)}
                             />
                             <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}>
-                                <Text style={{ color: "#666" }}>{(t as any)["thailand"] || "Thailand"}</Text>
+                                <Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text>
                             </View>
                         </View>
 
                         <TextInput
-                            placeholder={`${(t as any)["phoneNumber"] || "Phone"} *`}
+                            placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`}
                             style={styles.input}
                             value={formData.phone}
                             keyboardType="phone-pad"
                             onChangeText={(v) => handleInputChange("phone", v)}
                         />
                         <TextInput
-                            placeholder={`${(t as any)["emailAddress"] || "Email"} *`}
+                            placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`}
                             style={styles.input}
                             value={formData.email}
                             keyboardType="email-address"
@@ -420,16 +416,16 @@ export default function CheckoutStepTwoScreen() {
                             />
                         </View>
                         <Text style={styles.marketingHint}>
-                            {locale === 'TH' ? '🎁 ติดตามเราเพื่อรับรางวัลและส่วนลดพิเศษ' : '🎁 Follow us for exclusive rewards & discounts'}
+                            {safeLocale === 'TH' ? '🎁 ติดตามเราเพื่อรับรางวัลและส่วนลดพิเศษ' : '🎁 Follow us for exclusive rewards & discounts'}
                         </Text>
                     </View>
 
                     <View style={styles.promoSection}>
-                        <Text style={styles.sectionTitle}>{(t as any)["promoHaveCode"] || "PROMO CODE"}</Text>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["promoHaveCode"] || "PROMO CODE"}</Text>
                         <View style={styles.promoInputRow}>
                             <TextInput
                                 style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                placeholder={(t as any)["promoEnterCode"]}
+                                placeholder={(t as any)?.["promoEnterCode"]}
                                 value={promoCode}
                                 onChangeText={setPromoCode}
                                 autoCapitalize="characters"
@@ -442,20 +438,20 @@ export default function CheckoutStepTwoScreen() {
                                 {isApplyingPromo ? (
                                     <ActivityIndicator color="#fff" size="small" />
                                 ) : (
-                                    <Text style={styles.promoApplyText}>{(t as any)["promoApply"]}</Text>
+                                    <Text style={styles.promoApplyText}>{(t as any)?.["promoApply"]}</Text>
                                 )}
                             </TouchableOpacity>
                         </View>
                         {promoResult?.success && (
                             <Text style={styles.promoSuccessText}>
-                                {(t as any)["promoApplied"]}: {promoResult.promoCode}
+                                {(t as any)?.["promoApplied"]}: {promoResult.promoCode}
                             </Text>
                         )}
                     </View>
 
                     <View style={styles.summarySection}>
                         <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>{(t as any)["subtotalLabel"] || "Subtotal"}</Text>
+                            <Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text>
                             <Text style={styles.summaryValue}>
                                 {CURRENCY_SYMBOL}
                                 {subtotal.toFixed(2)}
@@ -463,15 +459,15 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                         {discount > 0 && (
                             <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: colors.primary }]}>{(t as any)["discountLabel"] || "Discount"}</Text>
-                                <Text style={[styles.summaryValue, { color: colors.primary }]}>
+                                <Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Discount"}</Text>
+                                <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>
                                     -{CURRENCY_SYMBOL}
                                     {discount.toFixed(2)}
                                 </Text>
                             </View>
                         )}
                         <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6" }]}>
-                            <Text style={styles.totalLabel}>{(t as any)["totalLabel"] || "Total"}</Text>
+                            <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
                             <Text style={styles.totalValue}>
                                 {CURRENCY_SYMBOL}
                                 {total.toFixed(2)}
@@ -483,21 +479,21 @@ export default function CheckoutStepTwoScreen() {
                         {currentUser ? (
                             <View style={styles.loggedInBox}>
                                 <Text style={styles.loggedInText}>
-                                    {(t as any)["loggedInAs"] || "Logged in as"} {currentUser.email}
+                                    {(t as any)?.["loggedInAs"] || "Logged in as"} {currentUser.email}
                                 </Text>
                             </View>
                         ) : (
                             <View style={styles.loggedOutBox}>
-                                <Text style={styles.loggedOutText}>{(t as any)["signInToContinue"] || "Please sign in to continue."}</Text>
+                                <Text style={styles.loggedOutText}>{(t as any)?.["signInToContinue"] || "Please sign in to continue."}</Text>
                                 <TouchableOpacity style={styles.signInBtn} onPress={() => router.push("/auth/email")}>
-                                    <Text style={styles.signInBtnText}>{(t as any)["signIn"] || "Sign In"}</Text>
+                                    <Text style={styles.signInBtnText}>{(t as any)?.["signIn"] || "Sign In"}</Text>
                                 </TouchableOpacity>
                             </View>
                         )}
                     </View>
 
                     <View style={styles.paymentSection}>
-                        <Text style={styles.sectionTitle}>{(t as any)["paymentMethodLabel"] || "Payment Method"}</Text>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
 
                         {total <= 0 ? (
                             <TouchableOpacity
@@ -511,10 +507,10 @@ export default function CheckoutStepTwoScreen() {
                                     </View>
                                     <View>
                                         <Text style={[styles.paymentItemText, { color: "#065F46" }]}>
-                                            {(t as any)["completeFreeOrder"] || "Complete Free Order"}
+                                            {(t as any)?.["completeFreeOrder"] || "Complete Free Order"}
                                         </Text>
                                         <Text style={{ fontSize: 12, color: "#047857" }}>
-                                            {(t as any)["promoAppliedText"] || "Promotion applied (100% off)"}
+                                            {(t as any)?.["promoAppliedText"] || "Promotion applied (100% off)"}
                                         </Text>
                                     </View>
                                 </View>
@@ -533,7 +529,7 @@ export default function CheckoutStepTwoScreen() {
                                 >
                                     <View style={styles.paymentItemLeft}>
                                         <Image source={require("../assets/promptpay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                        <Text style={styles.paymentItemText}>{(t as any)["payPromptPay"] || "PromptPay"}</Text>
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payPromptPay"] || "PromptPay"}</Text>
                                     </View>
                                     <Ionicons name="chevron-forward" size={20} color="#ccc" />
                                 </TouchableOpacity>
@@ -545,7 +541,7 @@ export default function CheckoutStepTwoScreen() {
                                 >
                                     <View style={styles.paymentItemLeft}>
                                         <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                        <Text style={styles.paymentItemText}>{(t as any)["payTrueMoney"] || "TrueMoney"}</Text>
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney"}</Text>
                                     </View>
                                     <Ionicons name="chevron-forward" size={20} color="#ccc" />
                                 </TouchableOpacity>
@@ -559,7 +555,7 @@ export default function CheckoutStepTwoScreen() {
                                         <View style={[styles.paymentIconBase, { backgroundColor: "#F3F4F6" }]}>
                                             <Ionicons name="logo-google" size={20} color="#111" />
                                         </View>
-                                        <Text style={styles.paymentItemText}>{(t as any)["payGooglePay"] || "Google Pay"}</Text>
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payGooglePay"] || "Google Pay"}</Text>
                                     </View>
                                     <Text style={styles.soonBadge}>Soon</Text>
                                 </TouchableOpacity>
@@ -574,7 +570,7 @@ export default function CheckoutStepTwoScreen() {
                                             <View style={[styles.paymentIconBase, { backgroundColor: "#F3F4F6" }]}>
                                                 <Ionicons name="logo-apple" size={20} color="#111" />
                                             </View>
-                                            <Text style={styles.paymentItemText}>{(t as any)["payApplePay"] || "Apple Pay"}</Text>
+                                            <Text style={styles.paymentItemText}>{(t as any)?.["payApplePay"] || "Apple Pay"}</Text>
                                         </View>
                                         <Text style={styles.soonBadge}>Soon</Text>
                                     </TouchableOpacity>
@@ -582,14 +578,14 @@ export default function CheckoutStepTwoScreen() {
 
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#6366F1" }]}
-                                    onPress={() => Alert.alert((t as any)["comingSoon"] || "Soon", (t as any)["cardPaymentSoon"] || "Credit card payment is coming soon.")}
+                                    onPress={() => Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["cardPaymentSoon"] || "Credit card payment is coming soon.")}
                                     disabled={isCreatingOrder}
                                 >
                                     <View style={styles.paymentItemLeft}>
                                         <View style={[styles.paymentIconBase, { backgroundColor: "#EEF2FF" }]}>
                                             <Ionicons name="card-outline" size={22} color="#6366F1" />
                                         </View>
-                                        <Text style={styles.paymentItemText}>{(t as any)["payCard"] || "Credit/Debit Card"}</Text>
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card"}</Text>
                                     </View>
                                     <Text style={styles.soonBadge}>Soon</Text>
                                 </TouchableOpacity>
@@ -617,8 +613,9 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
-            <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />
-            <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />
+            {/* ✅ [방어 4] 웹 환경 첫 로드 시 Modal 모듈이 충돌을 일으키지 않도록 '보여질 때만' 렌더링하도록 조건부 처리 */}
+            {showPromptPay && <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />}
+            {showTrueMoney && <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />}
         </SafeAreaView>
     );
 }
@@ -642,7 +639,7 @@ const styles = StyleSheet.create({
     promoInputRow: { flexDirection: "row", alignItems: "center" },
     promoApplyBtn: { height: 50, backgroundColor: "#000", borderRadius: 12, marginLeft: 8, paddingHorizontal: 20, justifyContent: "center" },
     promoApplyText: { color: "#fff", fontWeight: "700" },
-    promoSuccessText: { color: colors.primary, fontSize: 13, marginTop: 8, fontWeight: "600" },
+    promoSuccessText: { color: colors?.primary || "#E4405F", fontSize: 13, marginTop: 8, fontWeight: "600" },
     summarySection: { marginBottom: 32, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
     summaryLabel: { color: "#666", fontSize: 14 },
@@ -657,7 +654,9 @@ const styles = StyleSheet.create({
     signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
     signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
     paymentSection: { marginBottom: 32 },
-    paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...shadows.sm },
+
+    // ✅ [방어 5] shadows 객체가 웹에서 지연 로딩되어도 안전하게 작동하도록 ...(shadows?.sm || {}) 처리
+    paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
     paymentLogo: { width: 32, height: 32, marginRight: 12 },
     paymentIconBase: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
