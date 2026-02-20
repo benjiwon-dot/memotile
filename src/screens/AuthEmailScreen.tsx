@@ -1,3 +1,4 @@
+// app/auth/email.tsx (또는 해당 파일의 경로)
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -9,7 +10,8 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
-    ScrollView
+    ScrollView,
+    Image
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,12 +23,22 @@ import {
     signInWithEmailAndPassword,
     sendEmailVerification,
     reload,
+    sendPasswordResetEmail // 추가됨
 } from "firebase/auth";
-import { auth } from "../lib/firebase";
-import { resetPassword } from "../lib/firebaseAuth";
 
+import { auth } from "../lib/firebase";
+
+// ✅ 경로 통일: 구글 로그인 훅 가져오기
 import { useGoogleAuthRequest } from '../utils/firebaseAuth';
-import { Image } from 'react-native';
+
+// ✅ [핵심 추가] 웹(Web) 환경에서 Alert가 무시되는 현상 방지 헬퍼 함수
+const showAlert = (title: string, message?: string) => {
+    if (Platform.OS === 'web') {
+        window.alert(`${title}\n\n${message || ""}`);
+    } else {
+        Alert.alert(title, message);
+    }
+};
 
 export default function AuthEmailScreen() {
     const router = useRouter();
@@ -40,12 +52,12 @@ export default function AuthEmailScreen() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
-    // Google Auth Hook (Auto-handles Firebase sign-in)
+    // Google Auth Hook
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
     useEffect(() => {
         if (authError) {
-            Alert.alert("Login Error", authError);
+            showAlert("Login Error", authError);
         }
     }, [authError]);
 
@@ -62,54 +74,61 @@ export default function AuthEmailScreen() {
         const passwordTrim = password ?? "";
 
         if (!emailTrim || !passwordTrim) {
-            Alert.alert("Error", t['auth.invalidEmail'] || "Please enter email and password.");
+            showAlert("Error", (t as any)['auth.invalidEmail'] || "Please enter email and password.");
             return;
         }
 
         if (isSignUp && password !== confirmPassword) {
-            Alert.alert("Error", t['auth.passwordMismatch'] || "Passwords do not match");
+            showAlert("Error", (t as any)['auth.passwordMismatch'] || "Passwords do not match.");
             return;
         }
 
         setLoading(true);
         try {
             if (isSignUp) {
+                // 1. 회원가입
                 const cred = await createUserWithEmailAndPassword(auth, emailTrim, passwordTrim);
+
+                // 2. 인증 메일 발송
                 await sendEmailVerification(cred.user);
 
-                Alert.alert(
-                    t['auth.verificationSentTitle'] || "Verification email sent",
-                    t['auth.verificationSentBody'] || "Please check your inbox and verify your email."
+                // 3. 성공 알림 (웹에서도 무조건 보이게 처리)
+                showAlert(
+                    (t as any)['auth.verificationSentTitle'] || "Verification email sent",
+                    (t as any)['auth.verificationSentBody'] || "Please check your inbox and verify your email."
                 );
-                setIsSignUp(false); // Switch to login tab
+
+                // 4. 상태 초기화 후 로그인 탭으로 전환
+                setIsSignUp(false);
+                setPassword('');
+                setConfirmPassword('');
             } else {
+                // 로그인 시도
                 const { user } = await signInWithEmailAndPassword(auth, emailTrim, passwordTrim);
 
                 if (!user.emailVerified) {
-                    // Check Cooldown
                     if (cooldown > 0) {
-                        Alert.alert(
-                            t['auth.verifyCheckInboxTitle'] || "Verify your email",
-                            (t['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                        showAlert(
+                            (t as any)['auth.verifyCheckInboxTitle'] || "Verify your email",
+                            ((t as any)['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + ((t as any)['auth.verifySpamTip'] || "")
                         );
                         return;
                     }
 
                     try {
                         await sendEmailVerification(user);
-                        setCooldown(30); // 30s cooldown
-                        Alert.alert(
-                            t['auth.verificationRequiredTitle'] || "Email verification required",
-                            (t['auth.verificationRequiredBody'] || "Please verify.") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                        setCooldown(30);
+                        showAlert(
+                            (t as any)['auth.verificationRequiredTitle'] || "Email verification required",
+                            ((t as any)['auth.verificationRequiredBody'] || "Please verify.") + "\n\n" + ((t as any)['auth.verifySpamTip'] || "")
                         );
                     } catch (verifyErr: any) {
                         if (verifyErr.code === 'auth/too-many-requests') {
-                            // Suppress error, just show guidance
-                            Alert.alert(
-                                t['auth.verifyCheckInboxTitle'] || "Verify your email",
-                                (t['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + (t['auth.verifySpamTip'] || "")
+                            showAlert(
+                                (t as any)['auth.verifyCheckInboxTitle'] || "Verify your email",
+                                ((t as any)['auth.verifyCheckInboxBody'] || "Check inbox") + "\n\n" + ((t as any)['auth.verifySpamTip'] || "")
                             );
-                            setCooldown(30); // Enforce cooldown on error too
+                            setCooldown(30);
                         } else {
                             throw verifyErr;
                         }
@@ -135,11 +154,10 @@ export default function AuthEmailScreen() {
             } else if (code === "auth/network-request-failed") {
                 msg = "เครือข่ายขัดข้อง โปรดตรวจสอบอินเทอร์เน็ต";
             } else if (code === "auth/too-many-requests") {
-                // Handle top-level too many requests (rare for login, but possible)
                 msg = "กรุณารอสักครู่ก่อนทำรายการใหม่";
             }
 
-            Alert.alert(t['failedTitle'] || "Failed", msg);
+            showAlert((t as any)['failedTitle'] || "Failed", msg);
         } finally {
             setLoading(false);
         }
@@ -148,7 +166,7 @@ export default function AuthEmailScreen() {
     const handleRefreshVerification = async () => {
         try {
             if (!auth.currentUser) {
-                Alert.alert(t['auth.refresh'] || "Refresh", t['auth.notLoggedIn'] || "Not logged in.");
+                showAlert((t as any)['auth.refresh'] || "Refresh", (t as any)['auth.notLoggedIn'] || "Not logged in.");
                 return;
             }
 
@@ -156,13 +174,13 @@ export default function AuthEmailScreen() {
             await reload(auth.currentUser);
 
             if (auth.currentUser.emailVerified) {
-                Alert.alert(t['auth.verifiedSuccess'] || "Verified ✅", t['auth.verifiedSuccessBody'] || "Verified.");
+                showAlert((t as any)['auth.verifiedSuccess'] || "Verified ✅", (t as any)['auth.verifiedSuccessBody'] || "Verified.");
                 router.back();
             } else {
-                Alert.alert(t['auth.notVerifiedYet'] || "Not verified", t['auth.notVerifiedYetBody'] || "Not verified.");
+                showAlert((t as any)['auth.notVerifiedYet'] || "Not verified", (t as any)['auth.notVerifiedYetBody'] || "Not verified.");
             }
         } catch (e) {
-            Alert.alert(t['auth.refresh'] || "Refresh", t['auth.refreshFailed'] || "Failed.");
+            showAlert((t as any)['auth.refresh'] || "Refresh", (t as any)['auth.refreshFailed'] || "Failed.");
         } finally {
             setLoading(false);
         }
@@ -172,25 +190,25 @@ export default function AuthEmailScreen() {
         try {
             const emailTrim = (email ?? "").trim();
             if (!emailTrim) {
-                Alert.alert("Error", t['auth.enterEmailFirst'] || "Please enter your email address first.");
+                showAlert("Error", (t as any)['auth.enterEmailFirst'] || "Please enter your email address first.");
                 return;
             }
-            await resetPassword(emailTrim);
-            Alert.alert(t['auth.resetSentTitle'] || "Password reset email sent", t['auth.resetSentBody'] || "Please check your inbox for instructions to reset your password.");
+            // ✅ 파일 임포트 충돌 방지를 위해 직접 Firebase 함수 호출
+            await sendPasswordResetEmail(auth, emailTrim);
+            showAlert((t as any)['auth.resetSentTitle'] || "Password reset email sent", (t as any)['auth.resetSentBody'] || "Please check your inbox for instructions to reset your password.");
         } catch (e: any) {
-            Alert.alert(t['auth.resetFailed'] || "Reset failed", t['auth.resetFailed'] || "Failed to reset password.");
+            showAlert((t as any)['auth.resetFailed'] || "Reset failed", (t as any)['auth.resetFailed'] || "Failed to reset password.");
         }
     };
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-            {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color="black" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>
-                    {isSignUp ? (t['auth.signupTab'] || "Sign Up") : (t['auth.loginTab'] || "Log In")}
+                    {isSignUp ? ((t as any)['auth.signupTab'] || "Sign Up") : ((t as any)['auth.loginTab'] || "Log In")}
                 </Text>
                 <View style={{ width: 40 }} />
             </View>
@@ -202,14 +220,13 @@ export default function AuthEmailScreen() {
                 <ScrollView contentContainerStyle={styles.content}>
                     <View style={styles.formContainer}>
 
-                        {/* Tab Switcher */}
                         <View style={styles.tabContainer}>
                             <TouchableOpacity
                                 style={[styles.tab, !isSignUp && styles.activeTab]}
                                 onPress={() => setIsSignUp(false)}
                             >
                                 <Text style={[styles.tabText, !isSignUp && styles.activeTabText]}>
-                                    {t['auth.loginTab'] || "Log In"}
+                                    {(t as any)['auth.loginTab'] || "Log In"}
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -217,15 +234,14 @@ export default function AuthEmailScreen() {
                                 onPress={() => setIsSignUp(true)}
                             >
                                 <Text style={[styles.tabText, isSignUp && styles.activeTabText]}>
-                                    {t['auth.signupTab'] || "Sign Up"}
+                                    {(t as any)['auth.signupTab'] || "Sign Up"}
                                 </Text>
                             </TouchableOpacity>
                         </View>
 
-                        {/* Form Inputs */}
                         <View style={styles.inputs}>
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>{t['auth.emailLabel'] || "Email"}</Text>
+                                <Text style={styles.label}>{(t as any)['auth.emailLabel'] || "Email"}</Text>
                                 <TextInput
                                     style={styles.input}
                                     placeholder="name@example.com"
@@ -237,7 +253,7 @@ export default function AuthEmailScreen() {
                             </View>
 
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>{t['auth.passwordLabel'] || "Password"}</Text>
+                                <Text style={styles.label}>{(t as any)['auth.passwordLabel'] || "Password"}</Text>
                                 <TextInput
                                     style={styles.input}
                                     placeholder="••••••"
@@ -249,7 +265,7 @@ export default function AuthEmailScreen() {
 
                             {isSignUp && (
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>{t['auth.confirmPasswordLabel'] || "Confirm Password"}</Text>
+                                    <Text style={styles.label}>{(t as any)['auth.confirmPasswordLabel'] || "Confirm Password"}</Text>
                                     <TextInput
                                         style={styles.input}
                                         placeholder="••••••"
@@ -261,7 +277,6 @@ export default function AuthEmailScreen() {
                             )}
                         </View>
 
-                        {/* Action Button */}
                         <TouchableOpacity
                             style={[styles.mainBtn, loading && styles.disabledBtn]}
                             onPress={handleAuth}
@@ -271,19 +286,17 @@ export default function AuthEmailScreen() {
                                 <ActivityIndicator color="#fff" />
                             ) : (
                                 <Text style={styles.mainBtnText}>
-                                    {isSignUp ? (t['auth.signupAction'] || "Create Account") : (t['auth.loginAction'] || "Log In")}
+                                    {isSignUp ? ((t as any)['auth.signupAction'] || "Create Account") : ((t as any)['auth.loginAction'] || "Log In")}
                                 </Text>
                             )}
                         </TouchableOpacity>
 
-                        {/* Divider */}
                         <View style={styles.dividerRow}>
                             <View style={styles.line} />
                             <Text style={styles.dividerText}>OR</Text>
                             <View style={styles.line} />
                         </View>
 
-                        {/* Google Login Button */}
                         <TouchableOpacity
                             style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]}
                             onPress={() => promptAsync()}
@@ -299,23 +312,22 @@ export default function AuthEmailScreen() {
                                         resizeMode="contain"
                                     />
                                     <Text style={styles.socialBtnText}>
-                                        {t['signUpGoogle'] || "Continue with Google"}
+                                        {(t as any)['signUpGoogle'] || "Continue with Google"}
                                     </Text>
                                 </View>
                             )}
                         </TouchableOpacity>
 
-                        {/* Extra Actions */}
                         {!isSignUp && (
                             <View style={styles.extraActions}>
                                 <TouchableOpacity onPress={handleForgotPassword}>
-                                    <Text style={styles.secondaryBtnText}>{t['auth.forgotPassword'] || "Forgot password?"}</Text>
+                                    <Text style={styles.secondaryBtnText}>{(t as any)['auth.forgotPassword'] || "Forgot password?"}</Text>
                                 </TouchableOpacity>
 
                                 {auth.currentUser && !auth.currentUser.emailVerified && (
                                     <TouchableOpacity style={styles.refreshBtn} onPress={handleRefreshVerification}>
                                         <Ionicons name="refresh" size={16} color="#007AFF" />
-                                        <Text style={styles.refreshBtnText}>{t['auth.refreshBtn'] || "I verified my email (Refresh)"}</Text>
+                                        <Text style={styles.refreshBtnText}>{(t as any)['auth.refreshBtn'] || "I verified my email (Refresh)"}</Text>
                                     </TouchableOpacity>
                                 )}
                             </View>
@@ -330,74 +342,24 @@ export default function AuthEmailScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fff' },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f3f4f6'
-    },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
     backBtn: { padding: 4 },
     headerTitle: { flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 16 },
     content: { flexGrow: 1, padding: 24, paddingTop: 40, justifyContent: 'flex-start' },
     formContainer: { maxWidth: 400, width: '100%', alignSelf: 'center' },
 
-    tabContainer: {
-        flexDirection: 'row',
-        marginBottom: 24,
-        backgroundColor: '#f3f4f6',
-        borderRadius: 12,
-        padding: 4,
-    },
-    tab: {
-        flex: 1,
-        paddingVertical: 10,
-        alignItems: 'center',
-        borderRadius: 8,
-    },
-    activeTab: {
-        backgroundColor: '#fff',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    tabText: {
-        fontWeight: '600',
-        color: '#666',
-        fontSize: 14,
-    },
-    activeTabText: {
-        color: '#000',
-    },
+    tabContainer: { flexDirection: 'row', marginBottom: 24, backgroundColor: '#f3f4f6', borderRadius: 12, padding: 4 },
+    tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
+    activeTab: { backgroundColor: '#fff', shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+    tabText: { fontWeight: '600', color: '#666', fontSize: 14 },
+    activeTabText: { color: '#000' },
 
     inputs: { gap: 16, marginBottom: 24 },
     inputGroup: { gap: 8 },
     label: { fontSize: 14, fontWeight: '600', color: '#333' },
-    input: {
-        height: 50,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        fontSize: 16,
-        backgroundColor: '#f9fafb'
-    },
+    input: { height: 50, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: '#f9fafb' },
 
-    mainBtn: {
-        height: 52,
-        backgroundColor: colors.ink || '#000',
-        borderRadius: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 2,
-    },
+    mainBtn: { height: 52, backgroundColor: colors?.ink || '#000', borderRadius: 26, alignItems: 'center', justifyContent: 'center', shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 2 },
     disabledBtn: { opacity: 0.7 },
     mainBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     extraActions: { marginTop: 20, alignItems: 'center', gap: 16 },
@@ -407,15 +369,7 @@ const styles = StyleSheet.create({
     dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 24 },
     line: { flex: 1, height: 1, backgroundColor: '#e5e7eb' },
     dividerText: { marginHorizontal: 16, color: '#9ca3af', fontSize: 12, fontWeight: '600' },
-    socialBtn: {
-        height: 52,
-        borderRadius: 26,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        backgroundColor: '#fff',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
+    socialBtn: { height: 52, borderRadius: 26, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
     socialBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     socialIcon: { width: 18, height: 18 },
     socialBtnText: { color: '#333', fontSize: 16, fontWeight: '600' },
