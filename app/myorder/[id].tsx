@@ -26,9 +26,9 @@ const { width } = Dimensions.get("window");
 const GRID_SPACING = 12;
 const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
-// 주문 생성 직후 “아직 없음” 상태를 기다려주는 시간
 const NOT_FOUND_GRACE_MS = 12000;
 
+// ✅ [방어 코드 추가] 웹에서는 크랍 이미지가 없으므로, 모든 가능한 URI를 찾아서 보여주도록 강화
 function pickCustomerPreviewUri(it: any): string | null {
     const uri =
         it?.assets?.previewUrl ||
@@ -38,6 +38,8 @@ function pickCustomerPreviewUri(it: any): string | null {
         it?.assets?.viewUri ||
         it?.output?.previewUri ||
         it?.output?.viewUri ||
+        it?.uri || // <-- 원본 이미지라도 보여주기 위해 추가
+        it?.originalUri ||
         null;
 
     if (typeof uri === "string" && /print/i.test(uri)) {
@@ -49,6 +51,7 @@ function pickCustomerPreviewUri(it: any): string | null {
             it?.assets?.viewUri ||
             it?.output?.previewUri ||
             it?.output?.viewUri ||
+            it?.uri || // <-- 여기도 추가
             null
         );
     }
@@ -220,18 +223,15 @@ export default function OrderDetailScreen() {
 
                         return (
                             <View style={styles.section}>
-                                {/* ✅ 배송 알림 배너 (다국어 적용) */}
                                 {isShipped && (
                                     <View style={styles.shippingBanner}>
                                         <Ionicons name="gift-outline" size={24} color="#fff" />
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.shippingBannerTitle}>
-                                                {/* 태국어: พัสดุของคุณถูกจัดส่งแล้ว! */}
                                                 {(t as any).packageSent || "Your package is on the way!"}
                                             </Text>
                                             {trackingNumber && (
                                                 <Text style={styles.shippingBannerText}>
-                                                    {/* 태국어: หมายเลขพัสดุ: ... */}
                                                     {(t as any).trackingLabel || "Tracking"}: {trackingNumber}
                                                 </Text>
                                             )}
@@ -288,11 +288,9 @@ export default function OrderDetailScreen() {
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>{(t as any).shippingAddressTitle || "Shipping Address"}</Text>
                                 <View style={styles.detailsCard}>
-                                    {/* ✅ 송장 번호 표시 (다국어 적용) */}
                                     {(order as any).trackingNumber ? (
                                         <View style={styles.trackingRow}>
                                             <Text style={styles.trackingLabel}>
-                                                {/* 태국어: หมายเลขพัสดุ */}
                                                 📦 {(t as any).trackingNumberLabel || "TRACKING NUMBER"}
                                             </Text>
                                             <Text style={styles.trackingValue} selectable>
@@ -366,31 +364,14 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: "#F7F7F8" },
     content: { padding: 20 },
-    header: {
-        height: 52,
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 16,
-        backgroundColor: "#fff",
-        borderBottomWidth: 1,
-        borderBottomColor: "#f0f0f0",
-    },
+    header: { height: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
     backBtn: { padding: 4, width: 44 },
     headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", color: "#111", textAlign: "center" },
     scrollContent: { padding: 20, paddingBottom: 60 },
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
     section: { marginBottom: 24 },
     sectionTitle: { fontSize: 13, fontWeight: "800", marginBottom: 12, color: "#999", textTransform: "uppercase" },
-    orderSummary: {
-        backgroundColor: "#fff",
-        padding: 20,
-        borderRadius: 20,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 15,
-        elevation: 2,
-    },
+    orderSummary: { backgroundColor: "#fff", padding: 20, borderRadius: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 15, elevation: 2 },
     summaryRowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
     summaryRowBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
     orderMeta: { gap: 4 },
@@ -399,15 +380,7 @@ const styles = StyleSheet.create({
     orderDate: { fontSize: 14, color: "#666", fontWeight: "600" },
     orderTotal: { fontSize: 22, fontWeight: "800", color: "#111" },
     itemGrid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_SPACING },
-    itemCard: {
-        width: ITEM_WIDTH,
-        height: ITEM_WIDTH,
-        borderRadius: 12,
-        overflow: "hidden",
-        backgroundColor: "#fff",
-        borderWidth: 1,
-        borderColor: "#eee",
-    },
+    itemCard: { width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: 12, overflow: "hidden", backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee" },
     itemImg: { width: "100%", height: "100%" },
     detailsCard: { backgroundColor: "#fff", padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "#eee" },
     detailRow: { marginBottom: 12 },
@@ -418,26 +391,9 @@ const styles = StyleSheet.create({
     promoText: { color: "#10B981", fontWeight: "700", fontSize: 14 },
     notFoundTitle: { fontSize: 20, fontWeight: "800", marginBottom: 8, textAlign: "center", marginTop: 40 },
     notFoundDesc: { fontSize: 14, color: "#666", textAlign: "center" },
-
-    // ✅ 배송 배너 스타일
-    shippingBanner: {
-        backgroundColor: "#10B981",
-        borderRadius: 16,
-        padding: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        marginBottom: 20,
-        shadowColor: "#10B981",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 6,
-    },
+    shippingBanner: { backgroundColor: "#10B981", borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20, shadowColor: "#10B981", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
     shippingBannerTitle: { color: "#fff", fontSize: 16, fontWeight: "800", marginBottom: 2 },
     shippingBannerText: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "600", fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
-
-    // ✅ 송장 번호 행 스타일
     trackingRow: { borderBottomWidth: 1, borderBottomColor: '#eee', paddingBottom: 12, marginBottom: 12 },
     trackingLabel: { fontSize: 11, fontWeight: "700", color: '#10B981', textTransform: "uppercase", marginBottom: 2 },
     trackingValue: { fontSize: 18, color: '#10B981', fontWeight: "700" },
