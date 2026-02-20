@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 
 import { onAuthStateChanged } from "firebase/auth";
+import { Platform } from "react-native";
 
 import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
@@ -97,8 +98,7 @@ async function reserveOrderCode(dateKey: string): Promise<string> {
         return { seq };
     });
 
-    const orderCode = `${dateKey}-${String(seq).padStart(4, "0")}`;
-    return orderCode;
+    return `${dateKey}-${String(seq).padStart(4, "0")}`;
 }
 
 export async function createDevOrder(params: {
@@ -138,18 +138,9 @@ export async function createDevOrder(params: {
         discount: totals.discount,
         shippingFee: totals.shippingFee,
         total: totals.total,
-        customer: {
-            email: shipping.email,
-            fullName: shipping.fullName,
-            phone: shipping.phone,
-        },
+        customer: { email: shipping.email, fullName: shipping.fullName, phone: shipping.phone },
         shipping,
-        payment: {
-            provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE",
-            transactionId: `SIM_${orderCode}`,
-            method: "FREE",
-            paidAt: serverTimestamp(),
-        },
+        payment: { provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE", transactionId: `SIM_${orderCode}`, method: "FREE", paidAt: serverTimestamp() },
         paymentMethod: "FREE",
         locale,
         promoCode: promoCode?.code,
@@ -160,7 +151,6 @@ export async function createDevOrder(params: {
 
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    // ✅ 유저 프로필에 주소 및 최근 결제수단 자동 저장/업데이트
     const userProfileRef = doc(db, "users", authedUid);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}. ${String(today.getMonth() + 1).padStart(2, '0')}. ${String(today.getDate()).padStart(2, '0')}`;
@@ -168,32 +158,51 @@ export async function createDevOrder(params: {
     await setDoc(userProfileRef, {
         defaultAddress: shipping,
         instagram: instagram || "",
-        lastPayment: {
-            method: totals.total === 0 ? "Promo Code" : "PromptPay", // 최근 결제 수단 명칭
-            date: formattedDate
-        },
+        lastPayment: { method: totals.total === 0 ? "Promo Code" : "PromptPay", date: formattedDate },
         updatedAt: serverTimestamp()
     }, { merge: true });
 
+    // ✅ [방어 핵심] 웹에서는 사진 업로드를 생략하고 더미(가짜) URL만 저장하여 속도를 높이고 에러를 방지합니다.
+    if (Platform.OS === 'web') {
+        const itemRef = doc(collection(db, "orders", orderId, "items"));
+        const rawItemData: any = {
+            index: 0,
+            quantity: 1,
+            filterId: "original",
+            unitPrice: totals.subtotal,
+            lineTotal: totals.subtotal,
+            size: "20x20",
+            assets: {
+                sourcePath: "web_placeholder", sourceUrl: "https://via.placeholder.com/150",
+                viewPath: "web_placeholder", viewUrl: "https://via.placeholder.com/150",
+                printPath: "web_placeholder", printUrl: "https://via.placeholder.com/150",
+            },
+            printUrl: "https://via.placeholder.com/150",
+            previewUrl: "https://via.placeholder.com/150",
+            createdAt: serverTimestamp(),
+        };
+        await setDoc(itemRef, stripUndefined(rawItemData));
+        await updateDoc(orderRef, stripUndefined({ previewImages: ["https://via.placeholder.com/150"], updatedAt: serverTimestamp() }) as any);
+        return orderId;
+    }
+
+    // 📱 [앱용 로직] 모바일에서는 정상적으로 고화질 이미지를 Firebase Storage에 업로드합니다.
     const uploadTasks = photos.map(async (p, i) => {
-        const viewUri = p?.output?.viewUri;
+        let viewUri = p?.output?.viewUri;
         if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
-        // ✅ Print URI 가져오기
-        const printUri = p?.output?.printUri || viewUri; // fallback to viewUri
-
+        const printUri = p?.output?.printUri || viewUri;
         const sourceUri = getSourceUri(p);
         if (!sourceUri) throw new Error(`SOURCE URI missing at index ${i}`);
 
         const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
         const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
-        const printPath = `${storageBasePath}/items/${i}_print.jpg`; // 파일명 설정
+        const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-        // ✅ 3개 파일 모두 업로드 (Source, View, Print)
         const [sourceRes, viewRes, printRes] = await Promise.all([
             uploadFileUriToStorage(sourcePath, sourceUri),
             uploadFileUriToStorage(viewPath, viewUri),
-            uploadFileUriToStorage(printPath, printUri), // 🔥 고화질 업로드
+            uploadFileUriToStorage(printPath, printUri),
         ]);
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
@@ -208,14 +217,11 @@ export async function createDevOrder(params: {
             lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
             size: "20x20",
             assets: {
-                sourcePath: sourceRes.path,
-                sourceUrl: sourceRes.downloadUrl,
-                viewPath: viewRes.path,
-                viewUrl: viewRes.downloadUrl,
-                printPath: printRes.path,       // ✅ 경로 저장
-                printUrl: printRes.downloadUrl, // ✅ 다운로드 URL 저장 (어드민용)
+                sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl,
+                viewPath: viewRes.path, viewUrl: viewRes.downloadUrl,
+                printPath: printRes.path, printUrl: printRes.downloadUrl,
             },
-            printUrl: printRes.downloadUrl,     // ✅ 최상위 필드에도 저장
+            printUrl: printRes.downloadUrl,
             previewUrl: viewRes.downloadUrl,
             createdAt: serverTimestamp(),
         };
