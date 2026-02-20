@@ -17,7 +17,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-// ✅ 구글 검색 라이브러리
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 
 import { usePhoto } from "../context/PhotoContext";
@@ -33,7 +32,6 @@ import { validatePromo, PromoResult } from "../services/promo";
 import PromptPayModal from "../components/payments/PromptPayModal";
 import TrueMoneyModal from "../components/payments/TrueMoneyModal";
 
-// ✅ 구글 API 키
 const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 
 export default function CheckoutStepTwoScreen() {
@@ -41,7 +39,6 @@ export default function CheckoutStepTwoScreen() {
     const { photos, clearDraft, clearPhotos } = usePhoto();
     const { t, locale } = useLanguage();
 
-    // 폼 데이터 상태
     const [formData, setFormData] = useState({
         fullName: "",
         addressLine1: "",
@@ -57,7 +54,6 @@ export default function CheckoutStepTwoScreen() {
     const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
-    // 초기 로딩 시 사용자 주소 정보 가져오기
     useEffect(() => {
         const unsub = auth.onAuthStateChanged((user) => {
             setCurrentUser(user);
@@ -96,7 +92,6 @@ export default function CheckoutStepTwoScreen() {
         setFormData((prev) => ({ ...prev, [field]: value }));
     };
 
-    // 구글 주소 데이터 파싱
     const fillAddressFromGoogle = (details: any) => {
         if (!details) return;
 
@@ -129,7 +124,6 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    // 프로모션 코드 및 결제 상태
     const [promoCode, setPromoCode] = useState("");
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
@@ -225,12 +219,15 @@ export default function CheckoutStepTwoScreen() {
         setIsCreatingOrder(true);
 
         try {
-            const missing = photos
-                .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
-                .filter((x) => !x.viewUri);
+            // ✅ 웹에서는 사진 렌더링 검사를 건너뜀 (앱에서만 작동)
+            if (Platform.OS !== 'web') {
+                const missing = photos
+                    .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
+                    .filter((x) => !x.viewUri);
 
-            if (missing.length > 0) {
-                throw new Error("Photos are still being prepared. Please go back and try again in a moment.");
+                if (missing.length > 0) {
+                    throw new Error("Photos are still being prepared. Please go back and try again in a moment.");
+                }
             }
 
             await ensureTokenReady(user!);
@@ -299,7 +296,6 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </View>
 
-            {/* ✅ 메인 스크롤뷰: 키보드 탭 처리 및 중첩 스크롤 허용 */}
             <ScrollView
                 contentContainerStyle={styles.content}
                 keyboardShouldPersistTaps="handled"
@@ -316,7 +312,6 @@ export default function CheckoutStepTwoScreen() {
                             onChangeText={(v) => handleInputChange("fullName", v)}
                         />
 
-                        {/* ✅ [수정됨] VirtualizedLists 에러 해결을 위한 GooglePlacesAutocomplete 설정 */}
                         <View style={{ marginBottom: 12, zIndex: 5000 }}>
                             <GooglePlacesAutocomplete
                                 placeholder={(t as any)["streetAddress"] || "Search Address *"}
@@ -329,7 +324,7 @@ export default function CheckoutStepTwoScreen() {
                                     language: locale === 'TH' ? 'th' : 'en',
                                 }}
                                 disableScroll={true}
-                                listProps={{ scrollEnabled: false }} // ✅ 에러 해결의 핵심
+                                listProps={{ scrollEnabled: false }}
                                 textInputProps={{
                                     value: formData.addressLine1,
                                     onChangeText: (text) => handleInputChange("addressLine1", text),
@@ -428,7 +423,6 @@ export default function CheckoutStepTwoScreen() {
                         </Text>
                     </View>
 
-                    {/* Promo Code Section */}
                     <View style={styles.promoSection}>
                         <Text style={styles.sectionTitle}>{(t as any)["promoHaveCode"] || "PROMO CODE"}</Text>
                         <View style={styles.promoInputRow}>
@@ -458,7 +452,6 @@ export default function CheckoutStepTwoScreen() {
                         )}
                     </View>
 
-                    {/* Summary Section */}
                     <View style={styles.summarySection}>
                         <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>{(t as any)["subtotalLabel"] || "Subtotal"}</Text>
@@ -485,7 +478,6 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     </View>
 
-                    {/* Authentication Check */}
                     <View style={styles.authBlockContainer}>
                         {currentUser ? (
                             <View style={styles.loggedInBox}>
@@ -503,11 +495,9 @@ export default function CheckoutStepTwoScreen() {
                         )}
                     </View>
 
-                    {/* Payment Methods */}
                     <View style={styles.paymentSection}>
                         <Text style={styles.sectionTitle}>{(t as any)["paymentMethodLabel"] || "Payment Method"}</Text>
 
-                        {/* 무료 주문(Total <= 0) 처리 */}
                         {total <= 0 ? (
                             <TouchableOpacity
                                 style={[styles.paymentItem, { borderColor: "#10B981", backgroundColor: "#ECFDF5" }]}
@@ -535,7 +525,6 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         ) : (
                             <>
-                                {/* 1. PromptPay */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#003a70" }, !currentUser && { opacity: 0.5 }]}
                                     onPress={() => handlePlaceOrder("PROMPT_PAY")}
@@ -548,7 +537,6 @@ export default function CheckoutStepTwoScreen() {
                                     <Ionicons name="chevron-forward" size={20} color="#ccc" />
                                 </TouchableOpacity>
 
-                                {/* 2. TrueMoney */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#FF6F00" }, !currentUser && { opacity: 0.5 }]}
                                     onPress={() => handlePlaceOrder("TRUEMONEY")}
@@ -561,7 +549,6 @@ export default function CheckoutStepTwoScreen() {
                                     <Ionicons name="chevron-forward" size={20} color="#ccc" />
                                 </TouchableOpacity>
 
-                                {/* 3. Google Pay */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#111" }, !currentUser && { opacity: 0.5 }]}
                                     onPress={handleGooglePay}
@@ -576,7 +563,6 @@ export default function CheckoutStepTwoScreen() {
                                     <Text style={styles.soonBadge}>Soon</Text>
                                 </TouchableOpacity>
 
-                                {/* 4. Apple Pay */}
                                 {Platform.OS === "ios" && (
                                     <TouchableOpacity
                                         style={[styles.paymentItem, { borderColor: "#111" }, !currentUser && { opacity: 0.5 }]}
@@ -593,7 +579,6 @@ export default function CheckoutStepTwoScreen() {
                                     </TouchableOpacity>
                                 )}
 
-                                {/* 5. Credit Card */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#6366F1" }]}
                                     onPress={() => Alert.alert((t as any)["comingSoon"] || "Soon", (t as any)["cardPaymentSoon"] || "Credit card payment is coming soon.")}
@@ -608,7 +593,6 @@ export default function CheckoutStepTwoScreen() {
                                     <Text style={styles.soonBadge}>Soon</Text>
                                 </TouchableOpacity>
 
-                                {/* DEV: Test Free Order */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]}
                                     onPress={() => handlePlaceOrder("DEV_FREE")}
@@ -638,233 +622,44 @@ export default function CheckoutStepTwoScreen() {
     );
 }
 
-// 스타일 정의
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: "#fff",
-    },
-    header: {
-        flexDirection: "row",
-        alignItems: "center",
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: "#f3f4f6",
-    },
-    backBtn: {
-        padding: 4,
-    },
-    headerTitle: {
-        flex: 1,
-        textAlign: "center",
-        fontWeight: "700",
-        fontSize: 16,
-    },
-    content: {
-        padding: 20,
-    },
-    stepContainer: {
-        maxWidth: 500,
-        alignSelf: "center",
-        width: "100%",
-    },
-
-    // Form Section
-    formSection: {
-        marginBottom: 32,
-    },
-    sectionTitle: {
-        fontSize: 13,
-        color: "#999",
-        fontWeight: "700",
-        marginBottom: 15,
-        textTransform: "uppercase",
-    },
-    input: {
-        width: "100%",
-        height: 50,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: "#E5E7EB",
-        paddingHorizontal: 16,
-        marginBottom: 12,
-        fontSize: 15,
-        backgroundColor: "#fff",
-    },
-
-    // Instagram Input
-    instagramInputContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        width: "100%",
-        height: 50,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: "#E5E7EB",
-        backgroundColor: "#fff",
-        overflow: "hidden",
-    },
-    instagramIconBox: {
-        paddingLeft: 14,
-        paddingRight: 8,
-        height: "100%",
-        justifyContent: "center",
-    },
-    marketingHint: {
-        fontSize: 10,
-        color: "#6366F1",
-        fontWeight: "bold",
-        marginLeft: 4,
-        marginTop: 4,
-        marginBottom: 16,
-    },
-    readOnlyInput: {
-        backgroundColor: "#f9fafb",
-        justifyContent: "center",
-    },
-    row: {
-        flexDirection: "row",
-    },
-
-    // Promo Section
-    promoSection: {
-        marginBottom: 24,
-    },
-    promoInputRow: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    promoApplyBtn: {
-        height: 50,
-        backgroundColor: "#000",
-        borderRadius: 12,
-        marginLeft: 8,
-        paddingHorizontal: 20,
-        justifyContent: "center",
-    },
-    promoApplyText: {
-        color: "#fff",
-        fontWeight: "700",
-    },
-    promoSuccessText: {
-        color: colors.primary,
-        fontSize: 13,
-        marginTop: 8,
-        fontWeight: "600",
-    },
-
-    // Summary Section
-    summarySection: {
-        marginBottom: 32,
-        padding: 16,
-        backgroundColor: "#f9fafb",
-        borderRadius: 16,
-    },
-    summaryRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        marginBottom: 8,
-    },
-    summaryLabel: {
-        color: "#666",
-        fontSize: 14,
-    },
-    summaryValue: {
-        fontWeight: "600",
-        fontSize: 14,
-    },
-    totalLabel: {
-        fontWeight: "700",
-        fontSize: 16,
-    },
-    totalValue: {
-        fontWeight: "800",
-        fontSize: 18,
-    },
-
-    // Auth Block
-    authBlockContainer: {
-        marginBottom: 32,
-    },
-    loggedInBox: {
-        backgroundColor: "#D9ECFF",
-        padding: 16,
-        borderRadius: 14,
-        alignItems: "center",
-    },
-    loggedInText: {
-        fontSize: 15,
-        fontWeight: "600",
-        color: "#003a70",
-    },
-    loggedOutBox: {
-        backgroundColor: "#FFF3CD",
-        padding: 16,
-        borderRadius: 14,
-        alignItems: "center",
-    },
-    loggedOutText: {
-        fontSize: 14,
-        color: "#856404",
-        opacity: 0.8,
-        marginBottom: 12,
-    },
-    signInBtn: {
-        backgroundColor: "#111",
-        paddingHorizontal: 24,
-        paddingVertical: 10,
-        borderRadius: 12,
-    },
-    signInBtnText: {
-        color: "#fff",
-        fontWeight: "700",
-        fontSize: 14,
-    },
-
-    // Payment Section
-    paymentSection: {
-        marginBottom: 32,
-    },
-    paymentItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: 16,
-        backgroundColor: "#fff",
-        borderRadius: 16,
-        borderWidth: 1.5,
-        marginBottom: 12,
-        ...shadows.sm,
-    },
-    paymentItemLeft: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    paymentLogo: {
-        width: 32,
-        height: 32,
-        marginRight: 12,
-    },
-    paymentIconBase: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        alignItems: "center",
-        justifyContent: "center",
-        marginRight: 12,
-    },
-    paymentItemText: {
-        fontSize: 16,
-        fontWeight: "600",
-        color: "#111",
-    },
-    soonBadge: {
-        fontSize: 12,
-        fontWeight: "700",
-        color: "#9CA3AF",
-        backgroundColor: "#F3F4F6",
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-    },
+    container: { flex: 1, backgroundColor: "#fff" },
+    header: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
+    backBtn: { padding: 4 },
+    headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
+    content: { padding: 20 },
+    stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
+    formSection: { marginBottom: 32 },
+    sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
+    input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
+    instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff", overflow: "hidden" },
+    instagramIconBox: { paddingLeft: 14, paddingRight: 8, height: "100%", justifyContent: "center" },
+    marketingHint: { fontSize: 10, color: "#6366F1", fontWeight: "bold", marginLeft: 4, marginTop: 4, marginBottom: 16 },
+    readOnlyInput: { backgroundColor: "#f9fafb", justifyContent: "center" },
+    row: { flexDirection: "row" },
+    promoSection: { marginBottom: 24 },
+    promoInputRow: { flexDirection: "row", alignItems: "center" },
+    promoApplyBtn: { height: 50, backgroundColor: "#000", borderRadius: 12, marginLeft: 8, paddingHorizontal: 20, justifyContent: "center" },
+    promoApplyText: { color: "#fff", fontWeight: "700" },
+    promoSuccessText: { color: colors.primary, fontSize: 13, marginTop: 8, fontWeight: "600" },
+    summarySection: { marginBottom: 32, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
+    summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+    summaryLabel: { color: "#666", fontSize: 14 },
+    summaryValue: { fontWeight: "600", fontSize: 14 },
+    totalLabel: { fontWeight: "700", fontSize: 16 },
+    totalValue: { fontWeight: "800", fontSize: 18 },
+    authBlockContainer: { marginBottom: 32 },
+    loggedInBox: { backgroundColor: "#D9ECFF", padding: 16, borderRadius: 14, alignItems: "center" },
+    loggedInText: { fontSize: 15, fontWeight: "600", color: "#003a70" },
+    loggedOutBox: { backgroundColor: "#FFF3CD", padding: 16, borderRadius: 14, alignItems: "center" },
+    loggedOutText: { fontSize: 14, color: "#856404", opacity: 0.8, marginBottom: 12 },
+    signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
+    signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+    paymentSection: { marginBottom: 32 },
+    paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...shadows.sm },
+    paymentItemLeft: { flexDirection: "row", alignItems: "center" },
+    paymentLogo: { width: 32, height: 32, marginRight: 12 },
+    paymentIconBase: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
+    paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
+    soonBadge: { fontSize: 12, fontWeight: "700", color: "#9CA3AF", backgroundColor: "#F3F4F6", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
 });

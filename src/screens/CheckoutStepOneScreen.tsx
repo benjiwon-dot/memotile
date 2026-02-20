@@ -21,7 +21,8 @@ import { colors } from "../theme/colors";
 
 // Firebase / Auth
 import { auth } from "../lib/firebase";
-import { User, GoogleAuthProvider, signInWithCredential } from "firebase/auth"; // ✅ 인증 함수 추가
+// ✅ [핵심 추가] setPersistence와 browserLocalPersistence를 가져옵니다.
+import { User, GoogleAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
 
 const LoginButton = ({
@@ -52,7 +53,7 @@ const LoginButton = ({
     </TouchableOpacity>
 );
 
-// 5000px(print) 기다리지 않고 previewUri(2000px)만 체크
+// 앱(모바일)에서 고화질 출력을 위해 기다리는 함수
 async function waitForPreviewUrisSnapshot(photosRef: () => any[], timeoutMs = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -79,20 +80,21 @@ export default function CheckoutStepOneScreen() {
 
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [previewUri, setPreviewUri] = useState<string | null>(null);
+    const [isWebLoggingIn, setIsWebLoggingIn] = useState(false);
 
     const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
 
-    // ✅ response 객체 추가
+    // ✅ 앱(모바일) 전용 구글 인증 훅
     const { promptAsync, isReady, isSigningIn, error: authError, response } = useGoogleAuthRequest();
 
     useEffect(() => {
         if (authError) Alert.alert("Login Error", authError);
     }, [authError]);
 
-    // ✅ [핵심 추가] 구글 로그인 응답 처리 (Firebase 연동)
+    // ✅ [앱 전용] 구글 로그인 리다이렉트 응답 처리
     useEffect(() => {
-        if (response?.type === "success") {
+        if (Platform.OS !== 'web' && response?.type === "success") {
             const { id_token } = response.params;
             const credential = GoogleAuthProvider.credential(id_token);
             signInWithCredential(auth, credential)
@@ -101,22 +103,57 @@ export default function CheckoutStepOneScreen() {
                 })
                 .catch((error) => {
                     console.error("Firebase Sign-In Error", error);
-                    Alert.alert("Login Failed", error.message || "Failed to sign in with Google.");
+                    Alert.alert("Login Failed", error.message);
                 });
         }
     }, [response]);
 
     useEffect(() => {
-        const unsub = auth.onAuthStateChanged((user) => setCurrentUser(user));
+        const unsub = auth.onAuthStateChanged((user) => {
+            setCurrentUser(user);
+
+            // ✅ [웹 전용 방어 코드] 만약 사용자가 에러 페이지에 갇혀있다면 즉시 구출
+            if (user && Platform.OS === 'web' && window.location.href.includes('oauthredirect')) {
+                console.log("Cleaning up invalid oauthredirect route...");
+                router.replace("/create/checkout");
+            }
+        });
         return unsub;
     }, []);
 
     const subtotal = useMemo(() => photos.length * PRICE_PER_TILE, [photos.length, locale]);
     const total = subtotal;
 
-    const handleGoogleLogin = () => {
-        if (isSigningIn) return;
-        promptAsync();
+    // ✅ [핵심 강화] 웹 환경에서 팝업창을 강제하고 세션을 명확히 유지
+    const handleGoogleLogin = async () => {
+        if (Platform.OS === 'web') {
+            setIsWebLoggingIn(true);
+            try {
+                const provider = new GoogleAuthProvider();
+
+                // 계정 선택 창을 항상 띄우도록 설정 (선택 사항이지만 팝업 안정성에 도움)
+                provider.setCustomParameters({ prompt: 'select_account' });
+
+                // 브라우저의 로컬 스토리지에 로그인 세션을 유지하도록 명시적 설정
+                await setPersistence(auth, browserLocalPersistence);
+
+                // 팝업창을 통해 로그인 진행 (리다이렉트 원천 차단)
+                await signInWithPopup(auth, provider);
+                console.log("Web Google Login Success via Popup");
+
+            } catch (error: any) {
+                console.error("Firebase Web Login Error", error);
+                if (error.code !== 'auth/popup-closed-by-user') {
+                    Alert.alert("Login Failed", error.message || "Please check your browser popup settings and try again.");
+                }
+            } finally {
+                setIsWebLoggingIn(false);
+            }
+        } else {
+            // ✅ 앱 환경에서는 기존 훅을 그대로 사용
+            if (isSigningIn) return;
+            promptAsync();
+        }
     };
 
     const handleAppleLogin = () => {
@@ -132,19 +169,22 @@ export default function CheckoutStepOneScreen() {
         try {
             setIsPreparing(true);
 
-            const ok = await waitForPreviewUrisSnapshot(() => photosRef.current, 8000);
+            // ✅ [앱 UX 유지] 앱에서만 사진 렌더링 완료를 기다림
+            if (Platform.OS !== 'web') {
+                const ok = await waitForPreviewUrisSnapshot(() => photosRef.current, 8000);
 
-            const latest = photosRef.current || [];
-            const missing = latest
-                .map((p: any, idx: number) => ({ idx, previewUri: p?.output?.previewUri }))
-                .filter((x: any) => !x.previewUri);
+                const latest = photosRef.current || [];
+                const missing = latest
+                    .map((p: any, idx: number) => ({ idx, previewUri: p?.output?.previewUri }))
+                    .filter((x: any) => !x.previewUri);
 
-            if (!ok || missing.length > 0) {
-                Alert.alert(
-                    "Preparing photos…",
-                    `Still rendering preview files.\nMissing: ${missing.map((m: any) => m.idx + 1).join(", ")}\n\nPlease wait a moment and try again.`
-                );
-                return;
+                if (!ok || missing.length > 0) {
+                    Alert.alert(
+                        "Preparing photos…",
+                        `Still rendering preview files.\nMissing: ${missing.map((m: any) => m.idx + 1).join(", ")}\n\nPlease wait a moment and try again.`
+                    );
+                    return;
+                }
             }
 
             router.push("/create/checkout/payment");
@@ -160,6 +200,7 @@ export default function CheckoutStepOneScreen() {
         <Image source={require("../assets/google_logo.png")} style={{ width: 18, height: 18 }} resizeMode="contain" />
     );
 
+    // ✅ [UX 유지] 크랍된 이미지가 있으면 보여주고, 없으면 원본을 보여줌
     const pickDisplayUri = (item: any) => {
         return item?.output?.previewUri || item?.output?.viewUri || item?.uri;
     };
@@ -182,6 +223,7 @@ export default function CheckoutStepOneScreen() {
 
             <ScrollView contentContainerStyle={styles.content}>
                 <View style={styles.stepContainer}>
+                    {/* ✅ 선택한 사진 리스트 (크랍된 미리보기 유지) */}
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
@@ -190,7 +232,6 @@ export default function CheckoutStepOneScreen() {
                     >
                         {photos.map((item: any, idx: number) => {
                             const sourceUri = pickDisplayUri(item);
-                            // ✅ URI가 없으면 렌더링 방지 (에러 방지)
                             if (!sourceUri) return null;
 
                             return (
@@ -244,8 +285,8 @@ export default function CheckoutStepOneScreen() {
                                     text={(t as any)["signUpGoogle"] || "Sign up with Google"}
                                     onPress={handleGoogleLogin}
                                     style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
-                                    disabled={!isReady || isSigningIn}
-                                    icon={isSigningIn ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
+                                    disabled={isWebLoggingIn || (!isReady && Platform.OS !== 'web') || isSigningIn}
+                                    icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
 
                                 {Platform.OS === "ios" && (
@@ -313,7 +354,7 @@ const styles = StyleSheet.create({
 
     // ✅ ScrollView horizontal은 스타일에서 flexDirection: row 불필요
     imageScroll: { marginBottom: 16 },
-    previewImage: { width: 100, height: 100, backgroundColor: "#eee", resizeMode: "cover" },
+    previewImage: { width: 100, height: 100, borderRadius: 8, backgroundColor: "#eee", resizeMode: "cover" },
 
     summaryBlock: {
         backgroundColor: "#fff",
@@ -354,5 +395,5 @@ const styles = StyleSheet.create({
     modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },
     modalBackground: { ...StyleSheet.absoluteFillObject },
     modalCloseBtn: { position: "absolute", top: 60, right: 30, zIndex: 10, padding: 8, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 20 },
-    modalImage: { width: "100%", height: 80 + "%" },
+    modalImage: { width: "100%", height: "80%" },
 });
