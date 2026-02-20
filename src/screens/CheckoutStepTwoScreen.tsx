@@ -219,7 +219,8 @@ export default function CheckoutStepTwoScreen() {
         setIsCreatingOrder(true);
 
         try {
-            // ✅ 웹에서는 사진 렌더링 검사를 건너뜀 (앱에서만 작동)
+            // ✅ [수정됨] 웹(Vercel) 환경에서는 에디터를 건너뛰었으므로 사진 렌더링(viewUri) 검사를 생략합니다.
+            // 앱(모바일) 환경에서는 기존처럼 검사를 수행합니다.
             if (Platform.OS !== 'web') {
                 const missing = photos
                     .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
