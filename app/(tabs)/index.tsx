@@ -40,7 +40,7 @@ const ASSETS = {
     dog: require("../../src/assets/hero_1_dog.png") as ImageSource,
     family: require("../../src/assets/hero_2_family.png") as ImageSource,
     couple: require("../../src/assets/hero_3_couple.png") as ImageSource,
-    travel: require("../../src/assets/hero_4_travel.jpg") as ImageSource,
+    travel: require("../../src/assets/hero_4_travel.png") as ImageSource,
 };
 
 const slideshowImages: ImageSource[] = [heroNew1, heroNew2, heroNew3, heroNew4];
@@ -83,11 +83,11 @@ export default function Index() {
     useEffect(() => {
         const slideshowTimer = setInterval(() => {
             setSlideshowIndex((prev) => (prev + 1) % slideshowImages.length);
-        }, 2000);
+        }, 2500);
 
         const billboardTimer = setInterval(() => {
             setBillboardIndex((prev) => (prev + 1) % 4);
-        }, 2000);
+        }, 3000);
 
         return () => {
             clearInterval(slideshowTimer);
