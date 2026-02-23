@@ -1,5 +1,5 @@
 // src/screens/CheckoutStepTwoScreen.tsx
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
     View,
     Text,
@@ -12,6 +12,7 @@ import {
     ActivityIndicator,
     Platform,
     Keyboard,
+    Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -37,12 +38,21 @@ const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
-
-    // ✅ [추가] 에러 시 상단 스크롤을 위한 Ref
     const scrollViewRef = useRef<ScrollView>(null);
 
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
+
+    // ✅ [추가] 웹 테스트 환경을 위한 더미 데이터 주입
+    const safePhotos = useMemo(() => {
+        if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
+            return [{
+                uri: "https://via.placeholder.com/300?text=Paymentwall+Test",
+                quantity: 1
+            }];
+        }
+        return photos || [];
+    }, [photos]);
 
     const [formData, setFormData] = useState({
         fullName: "",
@@ -153,7 +163,8 @@ export default function CheckoutStepTwoScreen() {
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
 
-    const safePhotosCount = Array.isArray(photos) ? photos.length : 0;
+    // ✅ [수정] safePhotos 기준으로 계산
+    const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
     const subtotal = safePhotosCount * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
     const shippingFee = 0;
@@ -225,8 +236,6 @@ export default function CheckoutStepTwoScreen() {
             else if (newErrors.phone && formData.phone.length > 0 && formData.phone.length < 9) msg = "Please enter a valid phone number (min 9 digits).";
 
             setFormErrorMsg(msg);
-
-            // ✅ [추가] 에러 시 화면 맨 위(빨간 박스)로 부드럽게 스크롤
             scrollViewRef.current?.scrollTo({ y: 0, animated: true });
 
             if (Platform.OS !== 'web') {
@@ -278,7 +287,8 @@ export default function CheckoutStepTwoScreen() {
                     email: formData.email,
                 },
                 totals: { subtotal, discount, shippingFee, total },
-                photos: Array.isArray(photos) ? photos : [],
+                // ✅ [수정] DB에 넘길 때도 safePhotos 사용
+                photos: Array.isArray(safePhotos) ? safePhotos : [],
                 promoCode: promoResult?.success
                     ? {
                         code: promoResult.promoCode!,
@@ -328,13 +338,11 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </View>
 
-            {/* ✅ ScrollView에 ref 연결 */}
             <ScrollView ref={scrollViewRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
                 <View style={styles.stepContainer}>
                     <View style={styles.formSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
 
-                        {/* ✅ 에러 메시지 박스 */}
                         {formErrorMsg && (
                             <View style={styles.errorBox}>
                                 <Ionicons name="warning" size={16} color="#B91C1C" />
@@ -529,6 +537,16 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
+            {/* ✅ [추가] 화면 한가운데에 뜨는 명확한 전체 로딩 모달 */}
+            <Modal visible={isCreatingOrder} transparent animationType="fade">
+                <View style={styles.fullScreenLoading}>
+                    <View style={styles.loadingBox}>
+                        <ActivityIndicator size="large" color="#111" />
+                        <Text style={styles.loadingText}>Processing...</Text>
+                    </View>
+                </View>
+            </Modal>
+
             {Platform.OS !== 'web' && showPromptPay && <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />}
             {Platform.OS !== 'web' && showTrueMoney && <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />}
         </SafeAreaView>
@@ -545,7 +563,6 @@ const styles = StyleSheet.create({
     formSection: { marginBottom: 32 },
     sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
 
-    // ✅ 에러 UI 스타일
     errorBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEE2E2", padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: "#FCA5A5" },
     errorBoxText: { color: "#B91C1C", fontSize: 13, fontWeight: "600", marginLeft: 8, flex: 1 },
     input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
@@ -581,4 +598,31 @@ const styles = StyleSheet.create({
     paymentIconBase: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
     soonBadge: { fontSize: 12, fontWeight: "700", color: "#9CA3AF", backgroundColor: "#F3F4F6", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+
+    // ✅ [추가] 전체 화면 로딩 스타일
+    fullScreenLoading: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: "rgba(0,0,0,0.4)",
+        zIndex: 9999,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    loadingBox: {
+        backgroundColor: "#fff",
+        padding: 30,
+        borderRadius: 20,
+        alignItems: "center",
+        justifyContent: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 15,
+        elevation: 8,
+    },
+    loadingText: {
+        marginTop: 16,
+        fontSize: 16,
+        fontWeight: "700",
+        color: "#333",
+    },
 });
