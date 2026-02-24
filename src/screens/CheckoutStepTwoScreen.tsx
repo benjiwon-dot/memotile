@@ -273,6 +273,9 @@ export default function CheckoutStepTwoScreen() {
         try {
             await ensureTokenReady(user!);
 
+            // 수정 후 ✅
+            const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD"; // 통화 코드 추가
+
             const orderId = await createDevOrder({
                 uid: user!.uid,
                 shipping: {
@@ -287,7 +290,6 @@ export default function CheckoutStepTwoScreen() {
                     email: formData.email,
                 },
                 totals: { subtotal, discount, shippingFee, total },
-                // ✅ [수정] DB에 넘길 때도 safePhotos 사용
                 photos: Array.isArray(safePhotos) ? safePhotos : [],
                 promoCode: promoResult?.success
                     ? {
@@ -297,6 +299,7 @@ export default function CheckoutStepTwoScreen() {
                     }
                     : undefined,
                 locale,
+                currency: CURRENCY_CODE, // 👈 DB로 넘길 통화 데이터 추가!
                 instagram: formData.instagram,
             });
 

@@ -94,9 +94,10 @@ export async function createDevOrder(params: {
     totals: { subtotal: number; discount: number; shippingFee: number; total: number };
     promoCode?: { code: string; discountType: string; discountValue: number };
     locale?: string;
+    currency?: string; // ✅ 추가
     instagram?: string;
 }): Promise<string> {
-    const { uid, shipping, photos, totals, promoCode, locale = "EN", instagram } = params;
+    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params; // ✅ 변수 받기 추가
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
@@ -121,7 +122,7 @@ export async function createDevOrder(params: {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         status: "paid",
-        currency: "THB",
+        currency: currency, // ✅ 하드코딩 제거 완료!
         subtotal: totals.subtotal,
         discount: totals.discount,
         shippingFee: totals.shippingFee,
@@ -159,7 +160,6 @@ export async function createDevOrder(params: {
     // ---------------------------------------------------------
 
     if (Platform.OS === 'web') {
-        // ✅ [웹 전용] 업로드 에러를 피하면서, 고객이 올린 원본 사진을 그대로 Success 페이지로 넘기기
         const previewImages: string[] = [];
         const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/300" }];
 
@@ -194,14 +194,13 @@ export async function createDevOrder(params: {
         return orderId;
     }
 
-    // 📱 [앱 전용] 모바일에서는 정상적으로 고화질 사진을 Storage에 3단계 업로드
     try {
         const uploadTasks = photos.map(async (p, i) => {
-            const viewUri = p?.output?.viewUri || p?.uri; // fallback uri
+            const viewUri = p?.output?.viewUri || p?.uri;
             if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
             const printUri = p?.output?.printUri || viewUri;
-            const sourceUri = getSourceUri(p) || viewUri; // fallback uri
+            const sourceUri = getSourceUri(p) || viewUri;
 
             const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
             const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;

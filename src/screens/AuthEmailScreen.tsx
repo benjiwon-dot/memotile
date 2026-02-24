@@ -1,4 +1,4 @@
-// app/auth/email.tsx (또는 해당 파일의 경로)
+// app/auth/email.tsx
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -11,7 +11,8 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
-    Image
+    Image,
+    Modal // ✅ Modal 추가
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,16 +28,12 @@ import {
 // ✅ Firebase 공통 인스턴스
 import { auth } from "../lib/firebase";
 
-// ✅ [경로 수정] 사장님이 주신 utils/firebaseAuth.ts의 함수들 사용
 import {
     useGoogleAuthRequest,
     signUpWithEmail,
     signInWithEmail
 } from '../utils/firebaseAuth';
 
-/**
- * ✅ showAlert: 웹 브라우저가 알림창(Alert.alert)을 무시하지 못하게 하는 안전장치
- */
 const showAlert = (title: string, message?: string) => {
     if (Platform.OS === 'web') {
         window.alert(`${title}\n\n${message || ""}`);
@@ -64,7 +61,6 @@ export default function AuthEmailScreen() {
         if (authError) showAlert("Login Error", authError);
     }, [authError]);
 
-    // Cooldown Timer
     useEffect(() => {
         if (cooldown > 0) {
             const timer = setTimeout(() => setCooldown(c => c - 1), 1000);
@@ -89,21 +85,17 @@ export default function AuthEmailScreen() {
         setLoading(true);
         try {
             if (isSignUp) {
-                // 1. 회원가입 (utils의 헬퍼 함수 사용)
                 const cred = await signUpWithEmail(emailTrim, passwordTrim);
-                // 2. 인증 메일 발송
                 await sendEmailVerification(cred.user);
 
                 showAlert(
                     (t as any)['auth.verificationSentTitle'] || "Verification email sent",
                     (t as any)['auth.verificationSentBody'] || "Please check your inbox and verify your email."
                 );
-                setIsSignUp(false); // 로그인 탭으로 전환
+                setIsSignUp(false);
             } else {
-                // 1. 로그인 시도
                 const { user } = await signInWithEmail(emailTrim, passwordTrim);
 
-                // 2. 이메일 인증 여부 확인
                 if (!user.emailVerified) {
                     if (cooldown > 0) {
                         showAlert(
@@ -130,7 +122,6 @@ export default function AuthEmailScreen() {
                     }
                     return;
                 }
-                // 인증 성공 시 이전 화면으로
                 router.back();
             }
         } catch (error: any) {
@@ -245,6 +236,16 @@ export default function AuthEmailScreen() {
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            {/* ✅ [추가됨] 화면 멈춤(5초 지연) 시 연타 방지용 전체 화면 모달 */}
+            <Modal visible={isSigningIn || loading} transparent animationType="fade">
+                <View style={styles.overlayContainer}>
+                    <View style={styles.loadingBox}>
+                        <ActivityIndicator size="large" color="#111" />
+                        <Text style={styles.loadingText}>Processing...</Text>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -279,4 +280,9 @@ const styles = StyleSheet.create({
     socialBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     socialIcon: { width: 18, height: 18 },
     socialBtnText: { color: '#333', fontSize: 16, fontWeight: '600' },
+
+    // ✅ 연타 방지 모달 스타일
+    overlayContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+    loadingBox: { backgroundColor: '#fff', padding: 24, borderRadius: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4 },
+    loadingText: { marginTop: 12, fontSize: 15, fontWeight: '600', color: '#333' }
 });

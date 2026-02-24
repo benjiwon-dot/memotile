@@ -16,6 +16,9 @@ export default function OrderCardRN({ order, onPress }: Props) {
     const { t } = useLanguage();
     const dateStr = formatDate(order.createdAt);
 
+    // ✅ DB에 저장된 currency 값에 따라 기호 결정 (과거 데이터 등 값이 없으면 기본 바트)
+    const currencySymbol = order.currency === 'USD' ? '$' : '฿';
+
     // ✅ Prefer order-level previewImages (fast, no subcollection required)
     const previewImages: string[] =
         (order as any)?.previewImages?.filter(Boolean) ??
@@ -88,7 +91,8 @@ export default function OrderCardRN({ order, onPress }: Props) {
                     <Text style={styles.itemCount}>
                         {(order.itemsCount || order.items?.length || 0)} {t.items}
                     </Text>
-                    <Text style={styles.totalPrice}>฿{order.total.toFixed(2)}</Text>
+                    {/* ✅ 하드코딩된 ฿를 currencySymbol 변수로 교체 */}
+                    <Text style={styles.totalPrice}>{currencySymbol}{order.total.toFixed(2)}</Text>
                 </View>
             </View>
             <ChevronRight size={20} color="#ccc" />
