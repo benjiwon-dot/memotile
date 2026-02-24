@@ -28,7 +28,6 @@ const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
 const NOT_FOUND_GRACE_MS = 12000;
 
-// ✅ [방어 코드 추가] 웹에서는 크랍 이미지가 없으므로, 모든 가능한 URI를 찾아서 보여주도록 강화
 function pickCustomerPreviewUri(it: any): string | null {
     const uri =
         it?.assets?.previewUrl ||
@@ -38,7 +37,7 @@ function pickCustomerPreviewUri(it: any): string | null {
         it?.assets?.viewUri ||
         it?.output?.previewUri ||
         it?.output?.viewUri ||
-        it?.uri || // <-- 원본 이미지라도 보여주기 위해 추가
+        it?.uri ||
         it?.originalUri ||
         null;
 
@@ -51,7 +50,7 @@ function pickCustomerPreviewUri(it: any): string | null {
             it?.assets?.viewUri ||
             it?.output?.previewUri ||
             it?.output?.viewUri ||
-            it?.uri || // <-- 여기도 추가
+            it?.uri ||
             null
         );
     }
@@ -204,6 +203,9 @@ export default function OrderDetailScreen() {
         );
     }
 
+    // ✅ 통화 기호 동적 설정 (결제 시 DB에 저장된 currency 값 기준)
+    const currencySymbol = (order as any).currency === "USD" ? "$" : "฿";
+
     const sections = [{ type: "summary" }, { type: "items" }, { type: "shipping" }, { type: "payment" }];
 
     return (
@@ -252,7 +254,10 @@ export default function OrderDetailScreen() {
 
                                     <View style={styles.summaryRowBottom}>
                                         <Text style={styles.orderDate}>{formatDate((order as any).createdAt)}</Text>
-                                        <Text style={styles.orderTotal}>฿{Number((order as any).total || 0).toFixed(2)}</Text>
+                                        {/* ✅ 총 결제 금액 기호 동적 변경 */}
+                                        <Text style={styles.orderTotal}>
+                                            {currencySymbol}{Number((order as any).total || 0).toFixed(2)}
+                                        </Text>
                                     </View>
                                 </View>
                             </View>
@@ -329,7 +334,8 @@ export default function OrderDetailScreen() {
                                             <Ionicons name="pricetag-outline" size={12} color="#10B981" />
                                             <Text style={styles.promoText}>
                                                 {" "}
-                                                {(order as any).promo?.code} (-฿{Number((order as any).discount || 0).toFixed(2)})
+                                                {/* ✅ 할인 금액 기호 동적 변경 */}
+                                                {(order as any).promo?.code} (-{currencySymbol}{Number((order as any).discount || 0).toFixed(2)})
                                             </Text>
                                         </View>
                                     ) : null}
