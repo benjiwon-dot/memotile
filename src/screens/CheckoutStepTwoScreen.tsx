@@ -20,8 +20,8 @@ import { Ionicons } from "@expo/vector-icons";
 
 // ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
-import PromptPayModal from "../components/payments/PromptPayModal";
 import TrueMoneyModal from "../components/payments/TrueMoneyModal";
+import RabbitLinePayModal from "../components/payments/RabbitLinePayModal";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -43,7 +43,6 @@ export default function CheckoutStepTwoScreen() {
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
 
-    // ✅ [추가] 웹 테스트 환경을 위한 더미 데이터 주입
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
             return [{
@@ -155,15 +154,14 @@ export default function CheckoutStepTwoScreen() {
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
-    const [showPromptPay, setShowPromptPay] = useState(false);
     const [showTrueMoney, setShowTrueMoney] = useState(false);
+    const [showRabbitLinePay, setShowRabbitLinePay] = useState(false);
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
     const safeLocale = locale || "EN";
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
 
-    // ✅ [수정] safePhotos 기준으로 계산
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
     const subtotal = safePhotosCount * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
@@ -204,7 +202,7 @@ export default function CheckoutStepTwoScreen() {
 
     const validateShipping = () => {
         if (!currentUser) {
-            Alert.alert("Login", "Please login to place an order.");
+            Alert.alert("Login", (t as any)?.["auth.loginRequired"] || "Please login to place an order.");
             router.push("/auth/email");
             return false;
         }
@@ -232,7 +230,7 @@ export default function CheckoutStepTwoScreen() {
 
         if (!isValid) {
             let msg = (t as any)?.["alertFillShipping"] || "Please fill in all required shipping fields marked with *.";
-            if (newErrors.emailFormat) msg = "Please enter a valid email address format.";
+            if (newErrors.emailFormat) msg = (t as any)?.["auth.invalidEmail"] || "Please enter a valid email address format.";
             else if (newErrors.phone && formData.phone.length > 0 && formData.phone.length < 9) msg = "Please enter a valid phone number (min 9 digits).";
 
             setFormErrorMsg(msg);
@@ -248,7 +246,7 @@ export default function CheckoutStepTwoScreen() {
         return true;
     };
 
-    const handlePlaceOrder = async (provider: "DEV_FREE" | "PROMPT_PAY" | "TRUEMONEY" | "PROMO_FREE") => {
+    const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE") => {
         const user = currentUser;
 
         if (!validateShipping()) return;
@@ -259,8 +257,8 @@ export default function CheckoutStepTwoScreen() {
             return;
         }
 
-        if (provider === "PROMPT_PAY") {
-            setShowPromptPay(true);
+        if (provider === "RABBIT_LINE_PAY") {
+            setShowRabbitLinePay(true);
             return;
         } else if (provider === "TRUEMONEY") {
             setShowTrueMoney(true);
@@ -273,8 +271,7 @@ export default function CheckoutStepTwoScreen() {
         try {
             await ensureTokenReady(user!);
 
-            // 수정 후 ✅
-            const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD"; // 통화 코드 추가
+            const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
             const orderId = await createDevOrder({
                 uid: user!.uid,
@@ -299,7 +296,7 @@ export default function CheckoutStepTwoScreen() {
                     }
                     : undefined,
                 locale,
-                currency: CURRENCY_CODE, // 👈 DB로 넘길 통화 데이터 추가!
+                currency: CURRENCY_CODE,
                 instagram: formData.instagram,
             });
 
@@ -315,19 +312,7 @@ export default function CheckoutStepTwoScreen() {
         }
     };
 
-    const handleApplePay = () => {
-        if (!validateShipping()) return;
-        Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["applePaySoon"] || "Apple Pay is coming soon.");
-    };
-
-    const handleGooglePay = () => {
-        if (!validateShipping()) return;
-        Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["googlePaySoon"] || "Google Pay is coming soon.");
-    };
-
-    const instaPlaceholder = safeLocale === "TH"
-        ? "Instagram ID (รับคูปองส่วนลดพิเศษ!)"
-        : "Instagram ID (Get Free Coupons!)";
+    const instaPlaceholder = (t as any)?.["instaPlaceholder"] || "Instagram ID (Get free coupons!)";
 
     return (
         <SafeAreaView style={styles.container}>
@@ -447,7 +432,6 @@ export default function CheckoutStepTwoScreen() {
                             <View style={styles.instagramIconBox}><Ionicons name="logo-instagram" size={22} color="#E4405F" /></View>
                             <TextInput placeholder={instaPlaceholder} style={[styles.input, { flex: 1, marginBottom: 0, borderWidth: 0 }]} value={formData.instagram} autoCapitalize="none" onChangeText={(v) => handleInputChange("instagram", v)} />
                         </View>
-                        <Text style={styles.marketingHint}>{safeLocale === 'TH' ? '🎁 ติดตามเราเพื่อรับรางวัลและส่วนลดพิเศษ' : '🎁 Follow us for exclusive rewards & discounts'}</Text>
                     </View>
 
                     <View style={styles.promoSection}>
@@ -464,7 +448,17 @@ export default function CheckoutStepTwoScreen() {
                     <View style={styles.summarySection}>
                         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text><Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{subtotal.toFixed(2)}</Text></View>
                         {discount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Discount"}</Text><Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{discount.toFixed(2)}</Text></View>}
-                        <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6" }]}><Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text><Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text></View>
+                        <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
+                            <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
+                            <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
+                        </View>
+
+                        {/* ✅ [수정] 다국어 연동된 깔끔한 환율 문구 노출 */}
+                        {safeLocale === 'TH' && (
+                            <Text style={styles.exchangeRateNotice}>
+                                {(t as any)?.["exchangeRateNotice"]}
+                            </Text>
+                        )}
                     </View>
 
                     <View style={styles.authBlockContainer}>
@@ -481,58 +475,38 @@ export default function CheckoutStepTwoScreen() {
                     <View style={styles.paymentSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
 
-                        {/* PromptPay */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#003a70" }, !currentUser && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("PROMPT_PAY")} disabled={!currentUser || isCreatingOrder}>
-                            <View style={styles.paymentItemLeft}>
-                                <Image source={require("../assets/promptpay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payPromptPay"] || "PromptPay"}</Text>
-                            </View>
-                            {Platform.OS === 'web' ? <Text style={styles.soonBadge}>Soon</Text> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                        </TouchableOpacity>
-
-                        {/* TrueMoney */}
+                        {/* ✅ 1. TrueMoney */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, !currentUser && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney"}</Text>
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
                             </View>
-                            {Platform.OS === 'web' ? <Text style={styles.soonBadge}>Soon</Text> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                            {Platform.OS === 'web' ? <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                         </TouchableOpacity>
 
-                        {/* Google Pay */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#111" }, !currentUser && { opacity: 0.5 }]} onPress={handleGooglePay} disabled={!currentUser || isCreatingOrder}>
+                        {/* ✅ 2. Rabbit LINE Pay */}
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, !currentUser && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
-                                <View style={[styles.paymentIconBase, { backgroundColor: "#F3F4F6" }]}><Ionicons name="logo-google" size={20} color="#111" /></View>
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payGooglePay"] || "Google Pay"}</Text>
+                                <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
                             </View>
-                            <Text style={styles.soonBadge}>Soon</Text>
+                            {Platform.OS === 'web' ? <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                         </TouchableOpacity>
 
-                        {/* Apple Pay */}
-                        {(Platform.OS === "ios" || Platform.OS === "web") && (
-                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#111" }, !currentUser && { opacity: 0.5 }]} onPress={handleApplePay} disabled={!currentUser || isCreatingOrder}>
-                                <View style={styles.paymentItemLeft}>
-                                    <View style={[styles.paymentIconBase, { backgroundColor: "#F3F4F6" }]}><Ionicons name="logo-apple" size={20} color="#111" /></View>
-                                    <Text style={styles.paymentItemText}>{(t as any)?.["payApplePay"] || "Apple Pay"}</Text>
-                                </View>
-                                <Text style={styles.soonBadge}>Soon</Text>
-                            </TouchableOpacity>
-                        )}
-
-                        {/* Credit Card */}
+                        {/* ✅ 3. Credit Card (Visa, Master) */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }]} onPress={() => Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["cardPaymentSoon"] || "Credit card payment is coming soon.")} disabled={isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#EEF2FF" }]}><Ionicons name="card-outline" size={22} color="#6366F1" /></View>
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card"}</Text>
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card (Visa, Master)"}</Text>
                             </View>
-                            <Text style={styles.soonBadge}>Soon</Text>
+                            <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text>
                         </TouchableOpacity>
 
-                        {/* ✅ Test Free Order 버튼 */}
+                        {/* ✅ 4. Test Free Order 버튼 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
-                                <Text style={[styles.paymentItemText, { color: "#059669" }]}>[Dev] Test Free Order</Text>
+                                <Text style={[styles.paymentItemText, { color: "#059669" }]}>{(t as any)?.["payFreeDev"] || "[Dev] Test Free Order"}</Text>
                             </View>
                             {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
                         </TouchableOpacity>
@@ -540,7 +514,6 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
-            {/* ✅ [추가] 화면 한가운데에 뜨는 명확한 전체 로딩 모달 */}
             <Modal visible={isCreatingOrder} transparent animationType="fade">
                 <View style={styles.fullScreenLoading}>
                     <View style={styles.loadingBox}>
@@ -550,8 +523,8 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </Modal>
 
-            {Platform.OS !== 'web' && showPromptPay && <PromptPayModal visible={showPromptPay} onClose={() => setShowPromptPay(false)} />}
             {Platform.OS !== 'web' && showTrueMoney && <TrueMoneyModal visible={showTrueMoney} onClose={() => setShowTrueMoney(false)} />}
+            {Platform.OS !== 'web' && showRabbitLinePay && <RabbitLinePayModal visible={showRabbitLinePay} onClose={() => setShowRabbitLinePay(false)} />}
         </SafeAreaView>
     );
 }
@@ -573,7 +546,6 @@ const styles = StyleSheet.create({
 
     instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff", overflow: "hidden" },
     instagramIconBox: { paddingLeft: 14, paddingRight: 8, height: "100%", justifyContent: "center" },
-    marketingHint: { fontSize: 10, color: "#6366F1", fontWeight: "bold", marginLeft: 4, marginTop: 4, marginBottom: 16 },
     readOnlyInput: { backgroundColor: "#f9fafb", justifyContent: "center" },
     row: { flexDirection: "row" },
     promoSection: { marginBottom: 24 },
@@ -587,6 +559,14 @@ const styles = StyleSheet.create({
     summaryValue: { fontWeight: "600", fontSize: 14 },
     totalLabel: { fontWeight: "700", fontSize: 16 },
     totalValue: { fontWeight: "800", fontSize: 18 },
+
+    exchangeRateNotice: {
+        fontSize: 11,
+        color: "#9CA3AF",
+        textAlign: "right",
+        marginTop: 6,
+    },
+
     authBlockContainer: { marginBottom: 32 },
     loggedInBox: { backgroundColor: "#D9ECFF", padding: 16, borderRadius: 14, alignItems: "center" },
     loggedInText: { fontSize: 15, fontWeight: "600", color: "#003a70" },
@@ -602,7 +582,6 @@ const styles = StyleSheet.create({
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
     soonBadge: { fontSize: 12, fontWeight: "700", color: "#9CA3AF", backgroundColor: "#F3F4F6", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
 
-    // ✅ [추가] 전체 화면 로딩 스타일
     fullScreenLoading: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: "rgba(0,0,0,0.4)",

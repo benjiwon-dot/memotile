@@ -155,11 +155,11 @@ export const STRINGS = {
         terms_sec6_title: "6. Order Status",
         terms_sec6_text: "Status updates are for informational purposes and may have slight delays.",
         terms_sec7_title: "7. Payments",
-        terms_sec7_text: "Prices are displayed before checkout. Taxes/duties are user responsibility. We do not directly store your credit card information. All transactions are processed through Paymentwall's secure payment gateway to ensure the highest level of security.",
+        terms_sec7_text: "Prices are displayed before checkout. Taxes/duties are user responsibility. We do not directly store your credit card information. All transactions are processed through secure payment gateways.",
         terms_sec8_title: "8. Shipping",
-        terms_sec8_text: "Shipping Methods: DHL, Flash Express, J&T Express, KEX Express. Timeline: Production takes 1-3 business days. Delivery within 5 business days. Areas: Thailand and South Korea. (Additional fees may apply for remote island areas.)",
+        terms_sec8_text: "Timeline: Production takes 1-3 business days. Delivery within 5 business days.",
         terms_sec9_title: "9. Returns",
-        terms_sec9_text: "No returns for change of mind. Refunds or reprints are available only for defective products. You must contact official@memotile.com with photos of the product within 7 days of receipt.",
+        terms_sec9_text: "No returns for change of mind. Refunds or reprints are available only for defective products. Contact support within 7 days.",
         terms_sec10_title: "10. IP Rights",
         terms_sec10_text: "MEMOTILE brand and UI belong to us.",
         terms_sec11_title: "11. Governing Law",
@@ -226,7 +226,7 @@ export const STRINGS = {
 
         // Payment & Auth
         promptpay: "PromptPay QR",
-        truemoney: "TrueMoney (App)",
+        truemoney: "TrueMoney Wallet",
         signUpGoogle: "Sign up with Google",
         createAccount: "Create account",
         scanQrCode: "Scan this QR code to pay.",
@@ -339,28 +339,27 @@ export const STRINGS = {
         signInToContinue: "Please sign in to continue.",
         signIn: "Log In",
         "auth.refresh": "Refresh",
+
+        // Payments & Checkout
         "paymentMethodLabel": "Payment Method",
-        "payCard": "Credit/Debit Card",
+        "payCard": "Credit/Debit Card (Visa, Master)",
+        "payTrueMoney": "TrueMoney Wallet",
+        "payRabbitLinePay": "Rabbit LINE Pay",
         "cardPaymentSoon": "Credit card payment is coming soon.",
         "comingSoon": "Soon",
-
-        // Checkout refined
         "checkout.previewClose": "Close",
+        "exchangeRateNotice": "", // English doesn't need this notice
 
         // Common / Error
         cropInvalidTitle: "Invalid Crop",
         cropInvalidBody: "Please ensure the image is within the crop area.",
         failedTitle: "Upload Failed",
         failedBody: "Something went wrong while saving your photo.",
-
-        // Order Management Unified
         statusFailed: "FAILED",
         statusRefunded: "REFUNDED",
         goHome: "Go Home",
         supportEmail: "official@memotile.com",
         payFreeDev: "Free (Dev Order)",
-        payPromptPay: "PromptPay (QR)",
-        payTrueMoney: "TrueMoney Wallet",
         promptpayGuide: "PromptPay is a QR payment method.",
         truemoneyGuide: "TrueMoney payment flow involves authentication.",
         "auth.verifyCheckInboxTitle": "Verify your email",
@@ -522,11 +521,11 @@ export const STRINGS = {
         terms_sec6_title: "6. สถานะคำสั่งซื้อ",
         terms_sec6_text: "สถานะคำสั่งซื้ออาจมีความล่าช้าจากเวลาจริงเล็กน้อย",
         terms_sec7_title: "7. การชำระเงิน",
-        terms_sec7_text: "ราคาแสดงก่อนชำระเงิน ภาษีเป็นความรับผิดชอบของผู้ใช้ เราไม่ได้เก็บข้อมูลบัตรเครดิตของคุณโดยตรง ข้อมูลการทำธุรกรรมทั้งหมดจะถูกประมวลผลผ่านช่องทางการชำระเงินที่ปลอดภัยของ Paymentwall เพื่อความปลอดภัยสูงสุด",
+        terms_sec7_text: "ราคาแสดงก่อนชำระเงิน ภาษีเป็นความรับผิดชอบของผู้ใช้ เราไม่ได้เก็บข้อมูลบัตรเครดิตของคุณโดยตรง ข้อมูลการทำธุรกรรมทั้งหมดจะถูกประมวลผลผ่านช่องทางการชำระเงินที่ปลอดภัย",
         terms_sec8_title: "8. การจัดส่ง",
-        terms_sec8_text: "วิธีการจัดส่ง: DHL, Flash Express, J&T Express, KEX Express ระยะเวลา: ผลิต 1-3 วันทำการ และจัดส่งภายใน 5 วันทำการ พื้นที่ให้บริการ: ไทย และ เกาหลีใต้ (อาจมีค่าธรรมเนียมเพิ่มเติมสำหรับพื้นที่เกาะหรือพื้นที่ห่างไกล)",
+        terms_sec8_text: "ระยะเวลา: ผลิต 1-3 วันทำการ และจัดส่งภายใน 5 วันทำการ",
         terms_sec9_title: "9. การคืนสินค้า",
-        terms_sec9_text: "ไม่รับคืนสินค้าในกรณีเปลี่ยนใจ การคืนเงินหรือการพิมพ์ใหม่จะทำได้เฉพาะกรณีสินค้ามีตำหนิเท่านั้น โดยต้องติดต่อ official@memotile.com พร้อมแนบรูปถ่ายสินค้าภายใน 7 วันหลังจากได้รับสินค้า",
+        terms_sec9_text: "ไม่รับคืนสินค้าในกรณีเปลี่ยนใจ การคืนเงินหรือการพิมพ์ใหม่จะทำได้เฉพาะกรณีสินค้ามีตำหนิเท่านั้น โปรดติดต่อฝ่ายสนับสนุนภายใน 7 วัน",
         terms_sec10_title: "10. ทรัพย์สินทางปัญญา",
         terms_sec10_text: "แบรนด์และระบบเป็นของ MEMOTILE",
         terms_sec11_title: "11. กฎหมายที่ใช้บังคับ",
@@ -704,10 +703,16 @@ export const STRINGS = {
         signInToContinue: "เข้าสู่ระบบเพื่อดำเนินการต่อ",
         signIn: "เข้าสู่ระบบ",
         "auth.refresh": "รีเฟรช",
+
+        // Payments & Checkout
         "paymentMethodLabel": "วิธีการชำระเงิน",
-        "payCard": "บัตรเครดิต/เดบิต",
+        "payCard": "Credit/Debit Card (Visa, Master)",
+        "payTrueMoney": "ทรูมันนี่ วอลเล็ท",
+        "payRabbitLinePay": "Rabbit LINE Pay",
         "cardPaymentSoon": "เร็วๆ นี้",
         "comingSoon": "เร็วๆ นี้",
+        "checkout.previewClose": "ปิด",
+        "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน", // 직관적이고 납득 가능한 태국어 번역
 
         // Common
         cropInvalidTitle: "การครอปไม่ถูกต้อง",
@@ -717,8 +722,6 @@ export const STRINGS = {
         goHome: "กลับหน้าหลัก",
         supportEmail: "official@memotile.com",
         payFreeDev: "สั่งสินค้าทดลอง (ฟรี)",
-        payPromptPay: "พร้อมเพย์ (QR)",
-        payTrueMoney: "ทรูมันนี่ วอลเล็ท",
         promptpayGuide: "สแกน QR เพื่อชำระเงิน",
         truemoneyGuide: "ชำระผ่านแอป TrueMoney",
         "auth.verifyCheckInboxTitle": "ยืนยันอีเมลของคุณ",
