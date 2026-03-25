@@ -78,6 +78,9 @@ export default function CheckoutStepTwoScreen() {
 
     const [formErrorMsg, setFormErrorMsg] = useState<string | null>(null);
 
+    // ✅ 약관 동의 상태 추가
+    const [isAgreed, setIsAgreed] = useState(false);
+
     const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
@@ -238,6 +241,18 @@ export default function CheckoutStepTwoScreen() {
 
             if (Platform.OS !== 'web') {
                 Alert.alert("Required Fields", msg);
+            }
+            return false;
+        }
+
+        // ✅ 약관 동의 체크 여부 확인 로직
+        if (!isAgreed) {
+            let msg = (t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.";
+            setFormErrorMsg(msg);
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+
+            if (Platform.OS !== 'web') {
+                Alert.alert((t as any)?.["required"] || "Agreement Required", msg);
             }
             return false;
         }
@@ -453,7 +468,7 @@ export default function CheckoutStepTwoScreen() {
                             <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
                         </View>
 
-                        {/* ✅ [수정] 다국어 연동된 깔끔한 환율 문구 노출 */}
+                        {/* ✅ 다국어 연동된 깔끔한 환율 문구 노출 */}
                         {safeLocale === 'TH' && (
                             <Text style={styles.exchangeRateNotice}>
                                 {(t as any)?.["exchangeRateNotice"]}
@@ -475,8 +490,29 @@ export default function CheckoutStepTwoScreen() {
                     <View style={styles.paymentSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
 
+                        {/* ✅ 카드사 심사용 약관 동의 체크박스 (링크 분리 적용) */}
+                        <View style={styles.agreementContainer}>
+                            <TouchableOpacity style={styles.agreementRow} onPress={() => setIsAgreed(!isAgreed)} activeOpacity={0.7}>
+                                <View style={[
+                                    styles.checkbox,
+                                    isAgreed && styles.checkboxChecked,
+                                    !isAgreed && formErrorMsg === ((t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.") && styles.checkboxError
+                                ]}>
+                                    {isAgreed && <Ionicons name="checkmark" size={14} color="#fff" />}
+                                </View>
+                                {/* 텍스트를 3부분으로 나누어 중간(Terms of Service)에만 굵은 글씨와 링크 적용 */}
+                                <Text style={styles.agreementText}>
+                                    {(t as any)?.["agreeTermsStart"] || "I have read and agree to the "}
+                                    <Text style={styles.agreementLink} onPress={(e) => { e.stopPropagation(); router.push("/terms" as any); }}>
+                                        {(t as any)?.["agreeTermsLink"] || "Terms of Service"}
+                                    </Text>
+                                    {(t as any)?.["agreeTermsEnd"] || ", including Cancellation & Refund policies."}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
                         {/* ✅ 1. TrueMoney */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, !currentUser && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
@@ -485,7 +521,7 @@ export default function CheckoutStepTwoScreen() {
                         </TouchableOpacity>
 
                         {/* ✅ 2. Rabbit LINE Pay */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, !currentUser && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
@@ -575,6 +611,17 @@ const styles = StyleSheet.create({
     signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
     signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
     paymentSection: { marginBottom: 32 },
+
+    // ✅ 약관 동의 UI 스타일
+    agreementContainer: { marginBottom: 20, paddingHorizontal: 4 },
+    agreementRow: { flexDirection: "row", alignItems: "flex-start", paddingRight: 10 },
+    checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: "#D1D5DB", alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 2, backgroundColor: "#fff" },
+    checkboxChecked: { backgroundColor: "#111", borderColor: "#111" },
+    checkboxError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2" },
+    agreementText: { fontSize: 13, color: "#4B5563", lineHeight: 20, flex: 1 },
+    // Terms of Service 부분만 굵게
+    agreementLink: { fontWeight: "700", color: "#111" },
+
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
     paymentLogo: { width: 32, height: 32, marginRight: 12 },

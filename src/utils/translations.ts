@@ -37,6 +37,15 @@ export const STRINGS = {
         deliverySub: "From upload to your door.",
         needHelp: "Need help?",
         copyright: "© 2026 MEMOTILE. Premium Photo Tiles.",
+
+        // ✅ [추가] 심사용 필수 정보 (영어)
+        supportPhone: "Customer Support: +82 10 4118 1406",
+        business_info_title: "Business Information",
+        business_name: "Company Name: MEMOTILE",
+        business_representative: "Representative: Jiwon Na",
+        business_address: "Address: 401, 603-dong, 65, Gwacheon-daero 8-gil, Gwacheon-si, Gyeonggi-do, Republic of Korea",
+        business_tax_id: "Business Registration No: 410-60-23000",
+
         benefits: [
             { title: "Frameless, premium look", desc: "Clean square tiles. Minimal, gallery-like." },
             { title: "Move anytime", desc: "Reposition easily. Store flat when needed." },
@@ -173,13 +182,6 @@ export const STRINGS = {
         terms_sec15_title: "15. Contact",
         terms_sec15_text: "Contact support for questions at ",
 
-        // Business Info (New)
-        business_info_title: "Business Information",
-        business_name: "Trade Name: MEMOTILE",
-        business_representative: "Representative: Jiwon Na",
-        business_address: "Address: 401, 603-dong, 65, Gwacheon-daero 8-gil, Gwacheon-si, Gyeonggi-do, Republic of Korea",
-        business_tax_id: "Business Registration No: 410-60-23000",
-
         // Checkout labels
         fullName: "Full Name",
         address1: "Address (House No, Bldg)",
@@ -223,6 +225,12 @@ export const STRINGS = {
         promoAppliedText: "Promotion applied (100% off)",
         cartEmpty: "Your cart is empty. Please add some tiles first.",
         fillRequired: "Please fill in all required shipping fields.",
+
+        // ✅ 약관 동의 관련
+        agreeTermsStart: "I have read and agree to the ",
+        agreeTermsLink: "Terms of Service",
+        agreeTermsEnd: ", including Cancellation & Refund policies.",
+        agreeTermsAlert: "Please agree to the Terms of Service to proceed.",
 
         // Payment & Auth
         promptpay: "PromptPay QR",
@@ -296,6 +304,7 @@ export const STRINGS = {
         printArea: "Print area (20×20)",
         generatingPreview: "We are preparing your photos. Please try again in a few seconds.",
         pleaseWait: "Just a moment",
+        editorHint: "Pinch & Drag to adjust",
 
         // Auth
         "auth.loginTab": "Log In",
@@ -403,6 +412,15 @@ export const STRINGS = {
         deliverySub: "จากมือคุณ สู่หน้าบ้าน",
         needHelp: "สอบถามเพิ่มเติม",
         copyright: "© 2026 MEMOTILE. กรอบรูปพรีเมียม",
+
+        // ✅ [추가] 심사용 필수 정보 (태국어)
+        supportPhone: "ฝ่ายบริการลูกค้า: +82 10 4118 1406",
+        business_info_title: "ข้อมูลธุรกิจ",
+        business_name: "ชื่อบริษัท: MEMOTILE",
+        business_representative: "ผู้แทน: Jiwon Na",
+        business_address: "ที่อยู่: 401, 603-dong, 65, Gwacheon-daero 8-gil, Gwacheon-si, Gyeonggi-do, Republic of Korea",
+        business_tax_id: "เลขทะเบียนนิติบุคคล: 410-60-23000",
+
         benefits: [
             { title: "ดีไซน์ไร้ขอบ เรียบหรู", desc: "กรอบรูปทรงจัตุรัส สไตล์มินิมอล เหมือนแกลเลอรีในบ้าน" },
             { title: "ย้ายที่ได้ทุกเมื่อ", desc: "ลอกออกและติดซ้ำได้ง่าย ไม่ทิ้งรอยบนผนัง" },
@@ -539,13 +557,6 @@ export const STRINGS = {
         terms_sec15_title: "15. การติดต่อ",
         terms_sec15_text: "ติดต่อฝ่ายสนับสนุนที่ ",
 
-        // Business Info (New)
-        business_info_title: "ข้อมูลธุรกิจ",
-        business_name: "ชื่อทางการค้า: MEMOTILE",
-        business_representative: "ผู้แทน: Jiwon Na",
-        business_address: "ที่อยู่: 401, 603-dong, 65, Gwacheon-daero 8-gil, Gwacheon-si, Gyeonggi-do, Republic of Korea",
-        business_tax_id: "เลขทะเบียนนิติบุคคล: 410-60-23000",
-
         // Checkout labels
         fullName: "ชื่อ-นามสกุล",
         address1: "ที่อยู่ (บ้านเลขที่, อาคาร)",
@@ -589,6 +600,12 @@ export const STRINGS = {
         promoAppliedText: "ใช้โค้ดส่วนลดแล้ว (ลด 100%)",
         cartEmpty: "ตะกร้าของคุณว่างเปล่า โปรดเลือกรูปภาพก่อน",
         fillRequired: "โปรดกรอกข้อมูลการจัดส่งให้ครบถ้วน",
+
+        // ✅ 약관 동의 관련
+        agreeTermsStart: "ฉันได้อ่านและยอมรับ ",
+        agreeTermsLink: "เงื่อนไขการใช้บริการ",
+        agreeTermsEnd: " รวมถึงนโยบายการยกเลิกและการคืนเงิน",
+        agreeTermsAlert: "โปรดยอมรับเงื่อนไขการใช้บริการเพื่อดำเนินการต่อ",
 
         // Payment & Auth
         promptpay: "พร้อมเพย์ QR",
@@ -712,7 +729,7 @@ export const STRINGS = {
         "cardPaymentSoon": "เร็วๆ นี้",
         "comingSoon": "เร็วๆ นี้",
         "checkout.previewClose": "ปิด",
-        "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน", // 직관적이고 납득 가능한 태국어 번역
+        "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน",
 
         // Common
         cropInvalidTitle: "การครอปไม่ถูกต้อง",
@@ -729,5 +746,6 @@ export const STRINGS = {
         "auth.verifySpamTip": "หากไม่พบ โปรดดูในโฟลเดอร์สแปม",
         "auth.cooldownWait": "ลองใหม่ใน %s วินาที",
         close: "ปิด",
+        editorHint: "ใช้สองนิ้วซูมและลากเพื่อปรับ",
     }
 };

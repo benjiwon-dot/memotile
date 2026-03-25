@@ -58,7 +58,6 @@ export default function Index() {
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
 
-    // ✅ SNS 연결 핸들러
     const handleLinePress = () => {
         Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
             Alert.alert("Error", "LINE 앱을 열 수 없습니다.");
@@ -163,7 +162,6 @@ export default function Index() {
         pressed && { transform: [{ scale: 0.98 }] },
     ];
 
-    // Benefits 데이터 처리
     const rawBenefits = (t.benefits ?? []) as Benefit[];
     const extraBenefit: Benefit = {
         title: locale === 'TH' ? 'ความคมชัดระดับแกลเลอรี' : 'Gallery-Grade Clarity',
@@ -175,7 +173,6 @@ export default function Index() {
 
     const steps = (t.steps ?? []) as Step[];
 
-    // ✅ [버그 수정 1] 다국어(TH/EN) 연동: translation 파일에서 제대로 데이터를 못 가져올 때를 대비해 기본값 설정
     const billboard = (t.billboard ?? [
         { id: 'couple', label: 'Couple', caption: 'Love, framed by none.' },
         { id: 'pet', label: 'Dog & Cat', caption: 'Your best buddy, always close.' },
@@ -183,7 +180,6 @@ export default function Index() {
         { id: 'family', label: 'Family', caption: 'Home is made of stories.' }
     ]) as BillboardItem[];
 
-    // 현재 인덱스에 해당하는 빌보드 안전 추출
     const currentBillboard = billboard[billboardIndex] || billboard[0];
 
     return (
@@ -344,7 +340,6 @@ export default function Index() {
                             ))}
                         </View>
 
-                        {/* ✅ [버그 수정 2] 화면 꿀렁임 방지: 텍스트 줄 수에 상관없이 영역 높이 고정 */}
                         <View style={styles.billboardInfo}>
                             <View style={styles.billboardLabelContainer}>
                                 <Text style={styles.billboardLabel}>{currentBillboard?.label}</Text>
@@ -387,7 +382,7 @@ export default function Index() {
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
-                {/* ✅ Paymentwall 심사 최적화: Footer 영역에 필수 약관/연락처 링크 추가 */}
+                {/* 푸터 영역 */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
@@ -401,7 +396,7 @@ export default function Index() {
                         </Pressable>
                     </View>
 
-                    {/* 약관 링크 (심사역이 찾기 쉬운 위치) */}
+                    {/* 약관 링크 */}
                     <View style={styles.legalLinksRow}>
                         <Pressable onPress={() => router.push("/privacy" as any)}>
                             <Text style={styles.legalLinkText}>Privacy Policy</Text>
@@ -412,7 +407,19 @@ export default function Index() {
                         </Pressable>
                     </View>
 
-                    <Text style={styles.footerEmail}>Contact: official@memotile.com</Text>
+                    {/* ✅ 해결 완료: 
+                        1. 파이프(|) 기호 전면 삭제 
+                        2. 완벽한 한 줄씩 독립된 구성 (잘림 절대 없음)
+                        3. 일관된 좌측 정렬 
+                    */}
+                    <View style={styles.minimalBizInfo}>
+                        <Text style={styles.bizInfoText}>{t.business_name}</Text>
+                        <Text style={styles.bizInfoText}>{t.business_representative}</Text>
+                        <Text style={styles.bizInfoText}>{t.business_tax_id}</Text>
+                        <Text style={styles.bizInfoText}>{t.business_address}</Text>
+                        <Text style={styles.bizInfoText}>{t.supportPhone}</Text>
+                        <Text style={styles.bizInfoText}>Email: official@memotile.com</Text>
+                    </View>
 
                     <Text style={styles.legal}>{t.copyright}</Text>
                 </View>
@@ -515,7 +522,6 @@ const styles = StyleSheet.create({
     billboardImgWrapper: { width: 280, height: 280, marginBottom: 32, position: "relative", alignItems: "center", justifyContent: "center" },
     billboardImgContainer: { borderRadius: 4, overflow: "hidden", ...shadows.md },
 
-    // ✅ [버그 수정 2 스타일] 꿀렁임 방지 (최소 높이 부여)
     billboardInfo: { paddingHorizontal: 24, alignItems: "center", width: "100%" },
     billboardLabelContainer: { backgroundColor: colors.fill, borderRadius: 20, paddingVertical: 6, paddingHorizontal: 14, marginBottom: 16 },
     billboardLabel: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.55, color: colors.text },
@@ -543,12 +549,24 @@ const styles = StyleSheet.create({
     footerBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 14, paddingHorizontal: 24, borderColor: colors.border, borderWidth: 1, borderRadius: 14, backgroundColor: colors.surface, ...shadows.sm },
     footerBtnText: { fontSize: 15, fontWeight: "700", color: colors.text },
 
-    // ✅ Footer 링크 텍스트 스타일 추가
-    footerEmail: { fontSize: 13, color: colors.textSecondary, marginBottom: 16 },
-    legalLinksRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+    legalLinksRow: { flexDirection: "row", alignItems: "center", marginBottom: 24 },
     legalLinkText: { fontSize: 13, color: colors.ink, textDecorationLine: "underline", fontWeight: "500" },
     legalDot: { fontSize: 13, color: colors.textMuted, marginHorizontal: 8 },
-    legal: { fontSize: 13, color: colors.textSecondary },
+
+    // ✅ 강제 좌측 정렬, 한 줄 띄어쓰기 완벽 반영
+    minimalBizInfo: {
+        width: '100%',
+        alignItems: 'flex-start', // 좌측 정렬 보장
+        marginBottom: 10,
+    },
+    bizInfoText: {
+        fontSize: 11,
+        color: '#9CA3AF',
+        textAlign: 'left', // 텍스트 자체도 좌측 정렬
+        lineHeight: 18,
+        marginBottom: 2, // 줄간 간격 최소화
+    },
+    legal: { fontSize: 12, color: '#9CA3AF', fontWeight: '500', marginTop: 10 },
 
     resumeBanner: { position: 'absolute', left: 16, right: 16, backgroundColor: colors.surface, borderRadius: 16, padding: 10, zIndex: 90, ...shadows.md, borderWidth: 1, borderColor: colors.border },
     resumeContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
