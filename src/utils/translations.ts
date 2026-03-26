@@ -231,6 +231,7 @@ export const STRINGS = {
         agreeTermsLink: "Terms of Service",
         agreeTermsEnd: ", including Cancellation & Refund policies.",
         agreeTermsAlert: "Please agree to the Terms of Service to proceed.",
+        agreeTermsCombined: "I agree to the Terms of Service and the Cancellation/Refund Policy.",
 
         // Payment & Auth
         promptpay: "PromptPay QR",
@@ -358,6 +359,15 @@ export const STRINGS = {
         "comingSoon": "Soon",
         "checkout.previewClose": "Close",
         "exchangeRateNotice": "", // English doesn't need this notice
+        paymentRedirectTitle: "Redirecting to Payment",
+        paymentRedirectMsg: "You will be redirected to a secure payment page. Please do not close the window until the process is complete.",
+        confirm: "OK",
+
+        // 환불/취소 정책 요약
+        policyNoticeTitle: "Cancellation & Refund Policy",
+        policyNoticeBullet1: "Orders can be modified or canceled only before printing starts.",
+        policyNoticeBullet2: "As this is a custom made-to-order product, returns for change of mind are not possible.",
+        policyNoticeBullet3: "For defective products, please contact support within 7 days for a reprint or refund.",
 
         // Common / Error
         cropInvalidTitle: "Invalid Crop",
@@ -606,6 +616,7 @@ export const STRINGS = {
         agreeTermsLink: "เงื่อนไขการใช้บริการ",
         agreeTermsEnd: " รวมถึงนโยบายการยกเลิกและการคืนเงิน",
         agreeTermsAlert: "โปรดยอมรับเงื่อนไขการใช้บริการเพื่อดำเนินการต่อ",
+        agreeTermsCombined: "ฉันยอมรับเงื่อนไขการบริการและนโยบายการยกเลิก/คืนเงิน",
 
         // Payment & Auth
         promptpay: "พร้อมเพย์ QR",
@@ -730,6 +741,15 @@ export const STRINGS = {
         "comingSoon": "เร็วๆ นี้",
         "checkout.previewClose": "ปิด",
         "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน",
+        paymentRedirectTitle: "กำลังเปลี่ยนเส้นทางไปหน้าชำระเงิน",
+        paymentRedirectMsg: "ระบบกำลังนำคุณไปยังหน้าชำระเงินที่ปลอดภัย โปรดอย่าปิดหน้าต่างนี้จนกว่าการชำระเงินจะเสร็จสมบูรณ์",
+        confirm: "ตกลง",
+
+        // 환불/취소 정책 요약
+        policyNoticeTitle: "นโยบายการยกเลิกและการคืนเงิน",
+        policyNoticeBullet1: "สามารถแก้ไขหรือยกเลิกคำสั่งซื้อได้ก่อนเริ่มขั้นตอนการพิมพ์เท่านั้น",
+        policyNoticeBullet2: "เนื่องจากเป็นสินค้าสั่งทำพิเศษ (Made-to-order) ไม่สามารถคืนสินค้าในกรณีเปลี่ยนใจได้",
+        policyNoticeBullet3: "หากสินค้ามีตำหนิ โปรดติดต่อฝ่ายสนับสนุนภายใน 7 วัน เพื่อขอพิมพ์ใหม่หรือคืนเงิน",
 
         // Common
         cropInvalidTitle: "การครอปไม่ถูกต้อง",
