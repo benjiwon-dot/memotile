@@ -14,6 +14,10 @@ import Animated, {
     Extrapolate,
 } from "react-native-reanimated";
 
+// ✅ DropShadow Import 및 Animated 컴포넌트 생성
+import DropShadow from "react-native-drop-shadow";
+const AnimatedDropShadow = Animated.createAnimatedComponent(DropShadow);
+
 import FilteredImageSkia from "./FilteredImageSkia";
 import { ColorMatrix } from "../../utils/colorMatrix";
 import { useLanguage } from "../../context/LanguageContext";
@@ -188,19 +192,18 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
         return { backgroundColor: bgColor };
     });
 
-    // ✅ 타일 입체감(그림자) 애니메이션
+    // ✅ 2. 타일 입체감(고급스러운 soft shadow) 애니메이션
     const animatedShadowStyle = useAnimatedStyle(() => {
-        // 손을 뗐을 때(0)는 두꺼운 그림자, 눌렀을 때(1)는 얇은 그림자
-        const shadowOp = interpolate(isInteracting.value, [0, 1], [0.25, 0.05], Extrapolate.CLAMP);
-        const shadowRadius = interpolate(isInteracting.value, [0, 1], [15, 3], Extrapolate.CLAMP);
+        // 손을 뗐을 때(0)는 soft하고 두꺼운 그림자, 눌렀을 때(1)는 얇은 그림자
+        const shadowOp = interpolate(isInteracting.value, [0, 1], [0.22, 0.06], Extrapolate.CLAMP);
+        const shadowRadius = interpolate(isInteracting.value, [0, 1], [18, 4], Extrapolate.CLAMP);
         const shadowHeight = interpolate(isInteracting.value, [0, 1], [10, 2], Extrapolate.CLAMP);
-        const elevation = interpolate(isInteracting.value, [0, 1], [12, 3], Extrapolate.CLAMP); // Android용
 
         return {
+            shadowColor: "#000",
             shadowOpacity: shadowOp,
             shadowRadius: shadowRadius,
             shadowOffset: { width: 0, height: shadowHeight },
-            elevation: elevation,
         };
     });
 
@@ -210,11 +213,26 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
         <View style={styles.container}>
             <GestureDetector gesture={gesture}>
                 <View style={[styles.previewWrap, { width: PREVIEW_W, height: PREVIEW_H }]}>
+
+                    {/* ✅ 3-1. 그림자 레이어 [AnimatedDropShadow] - Z-index를 위해 이미지 뒤로 배치 */}
+                    <AnimatedDropShadow
+                        style={[
+                            styles.tileDropShadowWrap,
+                            { width: CROP_SIZE, height: CROP_SIZE, left: MARGIN_X, top: MARGIN_Y },
+                            animatedShadowStyle
+                        ]}
+                    >
+                        {/* 이 뷰가 그림자를 Cast하는 엘리먼트입니다. 하얀색 배경으로 물리적인 질감을 표현합니다. */}
+                        <Animated.View style={styles.dropShadowElement} />
+                    </AnimatedDropShadow>
+
+                    {/* ✅ 3-2. 이미지 레이어 [Image, GestureDetector] */}
                     <Animated.View style={[styles.imageAnchor, animatedImageStyle]}>
                         <FilteredImageSkia uri={imageSrc} width={base.w} height={base.h} matrix={matrix}
                             overlayColor={props.overlayColor} overlayOpacity={props.overlayOpacity} />
                     </Animated.View>
 
+                    {/* ✅ 3-3. 마스크 레이어 및 타일 윤곽선 */}
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
                         {/* 캔버스 마스크 (터치 시 반투명) */}
                         <Animated.View style={[styles.maskBase, { top: 0, left: 0, right: 0, height: MARGIN_Y }, animatedMaskStyle]} />
@@ -222,11 +240,10 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
                         <Animated.View style={[styles.maskBase, { top: MARGIN_Y, bottom: MARGIN_Y, left: 0, width: MARGIN_X }, animatedMaskStyle]} />
                         <Animated.View style={[styles.maskBase, { top: MARGIN_Y, bottom: MARGIN_Y, right: 0, width: MARGIN_X }, animatedMaskStyle]} />
 
-                        {/* ✅ 타일 테두리 및 입체적인 그림자 적용 */}
+                        {/* ✅ 타일 테두리 (Shadow 없이 미세한 윤곽선만 표시) */}
                         <Animated.View style={[
-                            styles.tileShadowFrame,
-                            { width: CROP_SIZE, height: CROP_SIZE, left: MARGIN_X, top: MARGIN_Y },
-                            animatedShadowStyle
+                            styles.tileBorderFrame,
+                            { width: CROP_SIZE, height: CROP_SIZE, left: MARGIN_X, top: MARGIN_Y }
                         ]} />
                     </View>
                 </View>
@@ -246,14 +263,28 @@ const styles = StyleSheet.create({
     imageAnchor: { position: "absolute" },
     maskBase: { position: "absolute" },
 
-    // ✅ 타일 그림자 기본 스타일 설정
-    tileShadowFrame: {
+    // ✅ 타일 그림자 감싸는 Wrap 스타일
+    tileDropShadowWrap: {
         position: "absolute",
-        borderWidth: Platform.OS === 'android' ? 0.5 : 0, // 안드로이드의 elevation 렌더링 보완을 위한 아주 얇은 선
-        borderColor: "rgba(0,0,0,0.05)",
-        backgroundColor: 'transparent',
-        shadowColor: "#000",
     },
+    // ✅ 그림자를 Cast하는 엘리먼트 (물리적인 흰색 질감 표현)
+    dropShadowElement: {
+        flex: 1,
+        backgroundColor: 'white',
+        // 안드로이드의 경우, 아주 미세한 윤곽선을 추가하여 elevation 렌더링을 보완합니다.
+        borderWidth: Platform.OS === 'android' ? 0.5 : 0,
+        borderColor: "rgba(0,0,0,0.025)",
+    },
+
+    // ✅ 타일 테두리 스타일 설정 (Shadow 제거, Border만 표시)
+    tileBorderFrame: {
+        position: "absolute",
+        // 미세한 테두리만 남겨 타일의 형태를 명확히 합니다.
+        borderWidth: 0.5,
+        borderColor: "rgba(0,0,0,0.06)",
+        backgroundColor: 'transparent',
+    },
+
     labelArea: { marginTop: 16, height: 24, justifyContent: 'center' },
     labelText: { color: "rgba(0,0,0,0.45)", fontSize: 13, fontWeight: "700", letterSpacing: 0.5 },
 });

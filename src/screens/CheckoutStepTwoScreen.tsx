@@ -14,7 +14,6 @@ import {
     Keyboard,
     Modal,
     Linking,
-    TouchableWithoutFeedback, // ✅ 빈 공간 터치 시 키보드 숨김을 위해 추가
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -401,212 +400,210 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </View>
 
-            {/* ✅ keyboardShouldPersistTaps="handled" 로 설정하여 빈 화면 터치시 키보드가 내려가도록 함 */}
-            <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-                <ScrollView
-                    ref={scrollViewRef}
-                    contentContainerStyle={styles.content}
-                    keyboardShouldPersistTaps="handled"
-                    nestedScrollEnabled={true}
-                    onScrollBeginDrag={() => Keyboard.dismiss()} // ✅ 스크롤 시작 시 키보드 숨김
-                >
-                    <View style={styles.stepContainer}>
-                        <View style={styles.formSection}>
-                            <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
+            {/* ✅ TouchableWithoutFeedback 제거하고 ScrollView만 남김 */}
+            <ScrollView
+                ref={scrollViewRef}
+                contentContainerStyle={styles.content}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled={true}
+                onScrollBeginDrag={() => Keyboard.dismiss()} // 스크롤 시작 시 키보드 숨김
+            >
+                <View style={styles.stepContainer}>
+                    <View style={styles.formSection}>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
 
-                            {formErrorMsg && (
-                                <View style={styles.errorBox}>
-                                    <Ionicons name="warning" size={16} color="#B91C1C" />
-                                    <Text style={styles.errorBoxText}>{formErrorMsg}</Text>
-                                </View>
-                            )}
+                        {formErrorMsg && (
+                            <View style={styles.errorBox}>
+                                <Ionicons name="warning" size={16} color="#B91C1C" />
+                                <Text style={styles.errorBoxText}>{formErrorMsg}</Text>
+                            </View>
+                        )}
 
+                        <TextInput
+                            placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
+                            style={[styles.input, errors.fullName && styles.inputError]}
+                            value={formData.fullName}
+                            onChangeText={(v) => handleInputChange("fullName", v)}
+                        />
+
+                        {Platform.OS === 'web' ? (
                             <TextInput
-                                placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
-                                style={[styles.input, errors.fullName && styles.inputError]}
-                                value={formData.fullName}
-                                onChangeText={(v) => handleInputChange("fullName", v)}
+                                placeholder={(t as any)?.["streetAddress"] || "Street Address *"}
+                                style={[styles.input, errors.addressLine1 && styles.inputError]}
+                                value={formData.addressLine1}
+                                onChangeText={(v) => handleInputChange("addressLine1", v)}
                             />
-
-                            {Platform.OS === 'web' ? (
-                                <TextInput
-                                    placeholder={(t as any)?.["streetAddress"] || "Street Address *"}
-                                    style={[styles.input, errors.addressLine1 && styles.inputError]}
-                                    value={formData.addressLine1}
-                                    onChangeText={(v) => handleInputChange("addressLine1", v)}
-                                />
-                            ) : (
-                                <View style={{ marginBottom: 12, zIndex: 5000 }}>
-                                    <GooglePlacesAutocomplete
-                                        placeholder={(t as any)?.["streetAddress"] || "Search Address *"}
-                                        fetchDetails={true}
-                                        onPress={(data, details = null) => fillAddressFromGoogle(details)}
-                                        query={{ key: GOOGLE_PLACES_API_KEY, language: safeLocale === 'TH' ? 'th' : 'en' }}
-                                        disableScroll={true} listProps={{ scrollEnabled: false }}
-                                        textInputProps={{
-                                            value: formData.addressLine1 || "",
-                                            onChangeText: (text) => handleInputChange("addressLine1", text),
-                                            placeholderTextColor: "#C7C7CD"
-                                        }}
-                                        styles={{
-                                            textInputContainer: { width: '100%', backgroundColor: 'transparent' },
-                                            textInput: [styles.input, { marginBottom: 0 }, errors.addressLine1 && styles.inputError],
-                                            listView: { position: 'absolute', top: 55, width: '100%', backgroundColor: 'white', borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB' },
-                                            row: { padding: 13, height: 48, flexDirection: 'row' }, separator: { height: 0.5, backgroundColor: '#E5E7EB' },
-                                        }}
-                                        enablePoweredByContainer={false} fields={['address_components', 'formatted_address', 'geometry']}
-                                    />
-                                </View>
-                            )}
-
-                            <TextInput
-                                placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
-                                style={styles.input}
-                                value={formData.addressLine2}
-                                onChangeText={(v) => handleInputChange("addressLine2", v)}
-                            />
-
-                            <View style={styles.row}>
-                                <TextInput
-                                    placeholder={`${(t as any)?.["city"] || "City"} *`}
-                                    style={[styles.input, { flex: 1, marginRight: 8 }, errors.city && styles.inputError]}
-                                    value={formData.city}
-                                    onChangeText={(v) => handleInputChange("city", v)}
-                                />
-                                <TextInput
-                                    placeholder={`${(t as any)?.["stateProv"] || "State"} *`}
-                                    style={[styles.input, { flex: 1 }, errors.state && styles.inputError]}
-                                    value={formData.state}
-                                    onChangeText={(v) => handleInputChange("state", v)}
+                        ) : (
+                            <View style={{ marginBottom: 12, zIndex: 5000 }}>
+                                <GooglePlacesAutocomplete
+                                    placeholder={(t as any)?.["streetAddress"] || "Search Address *"}
+                                    fetchDetails={true}
+                                    onPress={(data, details = null) => fillAddressFromGoogle(details)}
+                                    query={{ key: GOOGLE_PLACES_API_KEY, language: safeLocale === 'TH' ? 'th' : 'en' }}
+                                    disableScroll={true} listProps={{ scrollEnabled: false }}
+                                    textInputProps={{
+                                        value: formData.addressLine1 || "",
+                                        onChangeText: (text) => handleInputChange("addressLine1", text),
+                                        placeholderTextColor: "#C7C7CD"
+                                    }}
+                                    styles={{
+                                        textInputContainer: { width: '100%', backgroundColor: 'transparent' },
+                                        textInput: [styles.input, { marginBottom: 0 }, errors.addressLine1 && styles.inputError],
+                                        listView: { position: 'absolute', top: 55, width: '100%', backgroundColor: 'white', borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB' },
+                                        row: { padding: 13, height: 48, flexDirection: 'row' }, separator: { height: 0.5, backgroundColor: '#E5E7EB' },
+                                    }}
+                                    enablePoweredByContainer={false} fields={['address_components', 'formatted_address', 'geometry']}
                                 />
                             </View>
+                        )}
 
-                            <View style={styles.row}>
-                                <TextInput
-                                    placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`}
-                                    style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]}
-                                    value={formData.postalCode}
-                                    keyboardType="numeric"
-                                    onChangeText={(v) => handleInputChange("postalCode", v)}
-                                />
-                                <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}>
-                                    <Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text>
-                                </View>
-                            </View>
+                        <TextInput
+                            placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
+                            style={styles.input}
+                            value={formData.addressLine2}
+                            onChangeText={(v) => handleInputChange("addressLine2", v)}
+                        />
 
+                        <View style={styles.row}>
                             <TextInput
-                                placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`}
-                                style={[styles.input, errors.phone && styles.inputError]}
-                                value={formData.phone}
-                                keyboardType="phone-pad"
-                                onChangeText={(v) => handleInputChange("phone", v)}
+                                placeholder={`${(t as any)?.["city"] || "City"} *`}
+                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.city && styles.inputError]}
+                                value={formData.city}
+                                onChangeText={(v) => handleInputChange("city", v)}
                             />
-
                             <TextInput
-                                placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`}
-                                style={[styles.input, errors.email && styles.inputError]}
-                                value={formData.email}
-                                keyboardType="email-address"
-                                autoCapitalize="none"
-                                onChangeText={(v) => handleInputChange("email", v)}
+                                placeholder={`${(t as any)?.["stateProv"] || "State"} *`}
+                                style={[styles.input, { flex: 1 }, errors.state && styles.inputError]}
+                                value={formData.state}
+                                onChangeText={(v) => handleInputChange("state", v)}
                             />
+                        </View>
 
-                            <View style={styles.instagramInputContainer}>
-                                <View style={styles.instagramIconBox}><Ionicons name="logo-instagram" size={22} color="#E4405F" /></View>
-                                <TextInput placeholder={instaPlaceholder} style={[styles.input, { flex: 1, marginBottom: 0, borderWidth: 0 }]} value={formData.instagram} autoCapitalize="none" onChangeText={(v) => handleInputChange("instagram", v)} />
+                        <View style={styles.row}>
+                            <TextInput
+                                placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`}
+                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]}
+                                value={formData.postalCode}
+                                keyboardType="numeric"
+                                onChangeText={(v) => handleInputChange("postalCode", v)}
+                            />
+                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}>
+                                <Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text>
                             </View>
                         </View>
 
-                        <View style={styles.promoSection}>
-                            <Text style={styles.sectionTitle}>{(t as any)?.["promoHaveCode"] || "PROMO CODE"}</Text>
-                            <View style={styles.promoInputRow}>
-                                <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={(t as any)?.["promoEnterCode"]} value={promoCode} onChangeText={setPromoCode} autoCapitalize="characters" />
-                                <TouchableOpacity style={[styles.promoApplyBtn, isApplyingPromo && { opacity: 0.7 }]} onPress={handleApplyPromo} disabled={isApplyingPromo}>
-                                    {isApplyingPromo ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.promoApplyText}>{(t as any)?.["promoApply"]}</Text>}
-                                </TouchableOpacity>
-                            </View>
-                            {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
-                        </View>
+                        <TextInput
+                            placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`}
+                            style={[styles.input, errors.phone && styles.inputError]}
+                            value={formData.phone}
+                            keyboardType="phone-pad"
+                            onChangeText={(v) => handleInputChange("phone", v)}
+                        />
 
-                        <View style={styles.summarySection}>
-                            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text><Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{subtotal.toFixed(2)}</Text></View>
-                            {discount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Discount"}</Text><Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{discount.toFixed(2)}</Text></View>}
-                            <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
-                                <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
-                                <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
-                            </View>
+                        <TextInput
+                            placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`}
+                            style={[styles.input, errors.email && styles.inputError]}
+                            value={formData.email}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            onChangeText={(v) => handleInputChange("email", v)}
+                        />
 
-                            {safeLocale === 'TH' && (
-                                <Text style={styles.exchangeRateNotice}>
-                                    {(t as any)?.["exchangeRateNotice"]}
-                                </Text>
-                            )}
-                        </View>
-
-                        <View style={styles.authBlockContainer}>
-                            {currentUser ? (
-                                <View style={styles.loggedInBox}><Text style={styles.loggedInText}>{(t as any)?.["loggedInAs"] || "Logged in as"} {currentUser.email}</Text></View>
-                            ) : (
-                                <View style={styles.loggedOutBox}>
-                                    <Text style={styles.loggedOutText}>{(t as any)?.["signInToContinue"] || "Please sign in to continue."}</Text>
-                                    <TouchableOpacity style={styles.signInBtn} onPress={() => router.push("/auth/email")}><Text style={styles.signInBtnText}>{(t as any)?.["signIn"] || "Sign In"}</Text></TouchableOpacity>
-                                </View>
-                            )}
-                        </View>
-
-                        <View style={styles.paymentSection}>
-                            <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
-
-                            <View style={styles.agreementContainer}>
-                                <TouchableOpacity style={styles.agreementRow} onPress={() => { Keyboard.dismiss(); setIsAgreed(!isAgreed); }} activeOpacity={0.7}>
-                                    <View style={[
-                                        styles.checkbox,
-                                        isAgreed && styles.checkboxChecked,
-                                        !isAgreed && formErrorMsg === ((t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.") && styles.checkboxError
-                                    ]}>
-                                        {isAgreed && <Ionicons name="checkmark" size={14} color="#fff" />}
-                                    </View>
-                                    <Text style={styles.agreementText}>
-                                        {(t as any)?.["agreeTermsCombined"] || "I agree to the Terms of Service and the Cancellation/Refund Policy."}
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
-                                <View style={styles.paymentItemLeft}>
-                                    <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                    <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
-                                </View>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                            </TouchableOpacity>
-
-                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
-                                <View style={styles.paymentItemLeft}>
-                                    <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                    <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
-                                </View>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                            </TouchableOpacity>
-
-                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }]} onPress={() => { Keyboard.dismiss(); Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["cardPaymentSoon"] || "Credit card payment is coming soon."); }} disabled={isCreatingOrder}>
-                                <View style={styles.paymentItemLeft}>
-                                    <View style={[styles.paymentIconBase, { backgroundColor: "#EEF2FF" }]}><Ionicons name="card-outline" size={22} color="#6366F1" /></View>
-                                    <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card (Visa, Master)"}</Text>
-                                </View>
-                                <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
-                                <View style={styles.paymentItemLeft}>
-                                    <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
-                                    <Text style={[styles.paymentItemText, { color: "#059669" }]}>{(t as any)?.["payFreeDev"] || "[Dev] Test Free Order"}</Text>
-                                </View>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
-                            </TouchableOpacity>
+                        <View style={styles.instagramInputContainer}>
+                            <View style={styles.instagramIconBox}><Ionicons name="logo-instagram" size={22} color="#E4405F" /></View>
+                            <TextInput placeholder={instaPlaceholder} style={[styles.input, { flex: 1, marginBottom: 0, borderWidth: 0 }]} value={formData.instagram} autoCapitalize="none" onChangeText={(v) => handleInputChange("instagram", v)} />
                         </View>
                     </View>
-                </ScrollView>
-            </TouchableWithoutFeedback>
+
+                    <View style={styles.promoSection}>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["promoHaveCode"] || "PROMO CODE"}</Text>
+                        <View style={styles.promoInputRow}>
+                            <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={(t as any)?.["promoEnterCode"]} value={promoCode} onChangeText={setPromoCode} autoCapitalize="characters" />
+                            <TouchableOpacity style={[styles.promoApplyBtn, isApplyingPromo && { opacity: 0.7 }]} onPress={handleApplyPromo} disabled={isApplyingPromo}>
+                                {isApplyingPromo ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.promoApplyText}>{(t as any)?.["promoApply"]}</Text>}
+                            </TouchableOpacity>
+                        </View>
+                        {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
+                    </View>
+
+                    <View style={styles.summarySection}>
+                        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text><Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{subtotal.toFixed(2)}</Text></View>
+                        {discount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Discount"}</Text><Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{discount.toFixed(2)}</Text></View>}
+                        <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
+                            <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
+                            <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
+                        </View>
+
+                        {safeLocale === 'TH' && (
+                            <Text style={styles.exchangeRateNotice}>
+                                {(t as any)?.["exchangeRateNotice"]}
+                            </Text>
+                        )}
+                    </View>
+
+                    <View style={styles.authBlockContainer}>
+                        {currentUser ? (
+                            <View style={styles.loggedInBox}><Text style={styles.loggedInText}>{(t as any)?.["loggedInAs"] || "Logged in as"} {currentUser.email}</Text></View>
+                        ) : (
+                            <View style={styles.loggedOutBox}>
+                                <Text style={styles.loggedOutText}>{(t as any)?.["signInToContinue"] || "Please sign in to continue."}</Text>
+                                <TouchableOpacity style={styles.signInBtn} onPress={() => router.push("/auth/email")}><Text style={styles.signInBtnText}>{(t as any)?.["signIn"] || "Sign In"}</Text></TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+
+                    <View style={styles.paymentSection}>
+                        <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
+
+                        <View style={styles.agreementContainer}>
+                            <TouchableOpacity style={styles.agreementRow} onPress={() => { Keyboard.dismiss(); setIsAgreed(!isAgreed); }} activeOpacity={0.7}>
+                                <View style={[
+                                    styles.checkbox,
+                                    isAgreed && styles.checkboxChecked,
+                                    !isAgreed && formErrorMsg === ((t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.") && styles.checkboxError
+                                ]}>
+                                    {isAgreed && <Ionicons name="checkmark" size={14} color="#fff" />}
+                                </View>
+                                <Text style={styles.agreementText}>
+                                    {(t as any)?.["agreeTermsCombined"] || "I agree to the Terms of Service and the Cancellation/Refund Policy."}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
+                            <View style={styles.paymentItemLeft}>
+                                <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
+                            </View>
+                            {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
+                            <View style={styles.paymentItemLeft}>
+                                <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
+                            </View>
+                            {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }]} onPress={() => { Keyboard.dismiss(); Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["cardPaymentSoon"] || "Credit card payment is coming soon."); }} disabled={isCreatingOrder}>
+                            <View style={styles.paymentItemLeft}>
+                                <View style={[styles.paymentIconBase, { backgroundColor: "#EEF2FF" }]}><Ionicons name="card-outline" size={22} color="#6366F1" /></View>
+                                <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card (Visa, Master)"}</Text>
+                            </View>
+                            <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
+                            <View style={styles.paymentItemLeft}>
+                                <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
+                                <Text style={[styles.paymentItemText, { color: "#059669" }]}>{(t as any)?.["payFreeDev"] || "[Dev] Test Free Order"}</Text>
+                            </View>
+                            {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </ScrollView>
 
             <Modal visible={isCreatingOrder} transparent animationType="fade">
                 <View style={styles.fullScreenLoading}>
@@ -626,7 +623,7 @@ const styles = StyleSheet.create({
     header: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
     backBtn: { padding: 4 },
     headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
-    content: { padding: 20, flexGrow: 1 }, // ✅ flexGrow 추가 (Touchable 영역 확장)
+    content: { padding: 20, flexGrow: 1 },
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
     formSection: { marginBottom: 32 },
     sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
