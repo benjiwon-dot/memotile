@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native"; // ✅ Platform 추가
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
-import * as AuthSession from "expo-auth-session";
 import Constants from "expo-constants";
 import { makeRedirectUri } from "expo-auth-session";
 import { Buffer } from "buffer";
@@ -96,7 +96,16 @@ export const useGoogleAuthRequest = () => {
         ? `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`
         : "com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm";
 
+    // ✅ 웹과 앱 환경을 분리하여 리다이렉트 URI 설정
     const redirectUri = useMemo(() => {
+        if (Platform.OS === 'web') {
+            // 웹(Vercel) 환경에서는 /auth 라우트로 리다이렉트
+            return makeRedirectUri({
+                path: "auth",
+            });
+        }
+
+        // 앱 환경
         return makeRedirectUri({
             native: isExpoGo ? undefined : `${googleScheme}:/oauthredirect`,
             path: "oauthredirect",
