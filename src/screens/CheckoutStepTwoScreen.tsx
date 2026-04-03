@@ -13,11 +13,12 @@ import {
     Platform,
     Keyboard,
     Modal,
-    Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+
+import * as WebBrowser from "expo-web-browser";
 
 // ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
@@ -262,7 +263,6 @@ export default function CheckoutStepTwoScreen() {
         const CLIENT_ID = "PL_Merchant";
         const API_KEY = "PL_Merchant";
 
-        // ✅ 현재는 테스트 모드이므로 모든 결제가 신용카드(PLCreditCard)로 호출됩니다.
         let pgcode = "PLCreditCard";
 
         const paymentData = {
@@ -294,7 +294,6 @@ export default function CheckoutStepTwoScreen() {
                 if (Platform.OS === 'web') {
                     window.location.href = paymentUrl;
                 } else {
-                    // ✅ 다국어 지원 Alert 문구 적용 (translations.ts 기반)
                     const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
                     const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
                     const cancelText = (t as any)?.["cancel"] || "Cancel";
@@ -305,7 +304,16 @@ export default function CheckoutStepTwoScreen() {
                         alertMessage,
                         [
                             { text: cancelText, style: "cancel" },
-                            { text: confirmText, onPress: () => Linking.openURL(paymentUrl) }
+                            {
+                                text: confirmText,
+                                onPress: async () => {
+                                    await WebBrowser.openBrowserAsync(paymentUrl);
+
+                                    await clearDraft();
+                                    clearPhotos();
+                                    router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                                }
+                            }
                         ]
                     );
                 }
@@ -321,8 +329,7 @@ export default function CheckoutStepTwoScreen() {
         }
     };
 
-    const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE") => {
-        // ✅ 버튼 클릭 시 즉시 키보드 숨김
+    const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE" | "CREDIT_CARD") => {
         Keyboard.dismiss();
 
         const user = currentUser;
@@ -388,6 +395,11 @@ export default function CheckoutStepTwoScreen() {
 
     const instaPlaceholder = (t as any)?.["instaPlaceholder"] || "Instagram ID (Get free coupons!)";
 
+    const getCleanCardName = () => {
+        const originalName = (t as any)?.["payCard"] || "Credit/Debit Card";
+        return originalName.replace(" (Visa, Master)", "");
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
@@ -400,13 +412,12 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </View>
 
-            {/* ✅ TouchableWithoutFeedback 제거하고 ScrollView만 남김 */}
             <ScrollView
                 ref={scrollViewRef}
                 contentContainerStyle={styles.content}
                 keyboardShouldPersistTaps="handled"
                 nestedScrollEnabled={true}
-                onScrollBeginDrag={() => Keyboard.dismiss()} // 스크롤 시작 시 키보드 숨김
+                onScrollBeginDrag={() => Keyboard.dismiss()}
             >
                 <View style={styles.stepContainer}>
                     <View style={styles.formSection}>
@@ -570,30 +581,48 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         </View>
 
+                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
                             </View>
-                            {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
+                                {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                            </View>
                         </TouchableOpacity>
 
+                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
                             </View>
-                            {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }]} onPress={() => { Keyboard.dismiss(); Alert.alert((t as any)?.["comingSoon"] || "Soon", (t as any)?.["cardPaymentSoon"] || "Credit card payment is coming soon."); }} disabled={isCreatingOrder}>
-                            <View style={styles.paymentItemLeft}>
-                                <View style={[styles.paymentIconBase, { backgroundColor: "#EEF2FF" }]}><Ionicons name="card-outline" size={22} color="#6366F1" /></View>
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payCard"] || "Credit/Debit Card (Visa, Master)"}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
+                                {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                             </View>
-                            <Text style={styles.soonBadge}>{(t as any)?.["comingSoon"] || "Soon"}</Text>
                         </TouchableOpacity>
 
+                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
+                            <View style={styles.paymentItemLeft}>
+                                {/* 💳 준비하신 PNG 이미지를 assets 폴더에 넣고 이름 맞추시면 됩니다 */}
+                                <Image
+                                    source={require("../assets/credit_card_logo.png")}
+                                    style={styles.paymentLogo}
+                                    resizeMode="contain"
+                                />
+                                <Text style={styles.paymentItemText}>{getCleanCardName()}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
+                                {isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                            </View>
+                        </TouchableOpacity>
+
+                        {/* 개발자용 테스트 결제 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
@@ -675,10 +704,30 @@ const styles = StyleSheet.create({
 
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
-    paymentLogo: { width: 32, height: 32, marginRight: 12 },
-    paymentIconBase: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
+
+    // ✅ 로고 이미지 크기 42x42로 시원하게 키움
+    paymentLogo: { width: 42, height: 42, marginRight: 12 },
+    paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
-    soonBadge: { fontSize: 12, fontWeight: "700", color: "#9CA3AF", backgroundColor: "#F3F4F6", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+
+    // ✅ 세련된 라운드 직각 사각형 TEST 뱃지 스타일
+    testBadge: {
+        backgroundColor: "#FFFBEB", // 아주 연한 노란색
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6, // 둥근 직각 사각형
+        borderWidth: 1,
+        borderColor: "#FBBF24", // 깔끔한 금색/노란색 테두리
+        marginRight: 8,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    testBadgeText: {
+        fontSize: 11,
+        fontWeight: "800",
+        color: "#D97706", // 진한 주황색 텍스트
+        letterSpacing: 0.5,
+    },
 
     fullScreenLoading: {
         ...StyleSheet.absoluteFillObject,
