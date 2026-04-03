@@ -96,7 +96,10 @@ export default function AuthEmailScreen() {
             } else {
                 const { user } = await signInWithEmail(emailTrim, passwordTrim);
 
-                if (!user.emailVerified) {
+                // 💡 [수정된 부분] 심사역 테스트 계정은 이메일 인증 절차를 건너뜀
+                const isTestAccount = user.email === "test_user@memotile.com";
+
+                if (!user.emailVerified && !isTestAccount) {
                     if (cooldown > 0) {
                         showAlert(
                             (t as any)['auth.verifyCheckInboxTitle'] || "Verify your email",
