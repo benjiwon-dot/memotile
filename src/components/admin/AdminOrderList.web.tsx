@@ -1,3 +1,4 @@
+// src/lib/admin/adminOrderList.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -6,14 +7,14 @@ import {
     Search,
     ChevronRight,
     RefreshCw,
-    Download,
     CheckSquare,
     Square,
     FileSpreadsheet,
     AlertTriangle,
     Trash2,
+    Link as LinkIcon,
+    Loader2
 } from "lucide-react";
-// ✅ DB 직접 삭제를 위한 import
 import { getFirestore, doc, deleteDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -23,10 +24,6 @@ import StatusBadge from "./StatusBadge";
 import { app } from "@/lib/firebase";
 
 const isWeb = typeof window !== "undefined";
-
-/* -------------------------------------------------------------------------- */
-/* Utility Functions                                                          */
-/* -------------------------------------------------------------------------- */
 
 function norm(s: any) {
     return String(s || "").toLowerCase().trim();
@@ -65,22 +62,6 @@ function downloadTextFile(filename: string, text: string, mime = "text/csv;chars
     URL.revokeObjectURL(url);
 }
 
-function browserDownloadUrl(url: string, filename?: string) {
-    if (!isWeb) return;
-    try {
-        const a = document.createElement("a");
-        a.href = url;
-        if (filename) a.download = filename;
-        a.target = "_blank";
-        a.rel = "noreferrer";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-    } catch {
-        window.open(url, "_blank", "noreferrer");
-    }
-}
-
 function alertCallableError(prefix: string, e: any) {
     const code = e?.code || "unknown";
     const msg = e?.message || String(e);
@@ -95,10 +76,6 @@ function getDeleteChallenge() {
     const day = String(d.getDate()).padStart(2, "0");
     return `delete${y}${m}${day}`;
 }
-
-/* -------------------------------------------------------------------------- */
-/* Main Component                                                             */
-/* -------------------------------------------------------------------------- */
 
 export default function AdminOrderList() {
     const router = useRouter();
@@ -215,37 +192,24 @@ export default function AdminOrderList() {
         const count = selectedIds.size;
         const challenge = getDeleteChallenge();
 
-        const userInput = prompt(
-            `🚨 DANGER: ${count}개의 주문을 영구 삭제합니다.\n삭제하려면 코드를 입력하세요: ${challenge}`
-        );
+        const userInput = prompt(`🚨 DANGER: Delete ${count} orders permanently.\nEnter code: ${challenge}`);
 
         if (userInput !== challenge) {
-            alert("코드가 일치하지 않습니다.");
+            alert("Code mismatch. Cancelled.");
             return;
         }
 
         setBulkLoading(true);
-
-        let successCount = 0;
-        let failCount = 0;
-
+        let successCount = 0; let failCount = 0;
         try {
             const ids = Array.from(selectedIds);
             for (const id of ids) {
-                try {
-                    await deleteDoc(doc(db, "orders", id));
-                    successCount++;
-                } catch (innerE) {
-                    console.error(`Failed to delete ${id}`, innerE);
-                    failCount++;
-                }
+                try { await deleteDoc(doc(db, "orders", id)); successCount++; }
+                catch (innerE) { failCount++; }
             }
             await fetchOrders();
-            if (failCount === 0) {
-                alert(`✅ ${successCount}개의 주문이 DB에서 삭제되었습니다.`);
-            } else {
-                alert(`⚠️ 성공: ${successCount}건 / 실패: ${failCount}건`);
-            }
+            if (failCount === 0) alert(`✅ ${successCount} orders deleted.`);
+            else alert(`⚠️ Success: ${successCount} / Failed: ${failCount}`);
         } catch (e: any) {
             alertCallableError("Bulk delete critical error:", e);
         } finally {
@@ -253,10 +217,10 @@ export default function AdminOrderList() {
         }
     };
 
-    const handleBulkZip = async () => {
+    const handleBulkZipCopy = async () => {
         if (selectedIds.size === 0) return;
         if (selectedIds.size > 50) {
-            alert(`⚠️ ZIP Download limit is 50.`);
+            alert(`⚠️ Max 50 orders per bulk ZIP.`);
             return;
         }
         setBulkLoading(true);
@@ -264,10 +228,12 @@ export default function AdminOrderList() {
             const fn = httpsCallable(functions, "adminExportZipPrints");
             const res = await fn({ orderIds: Array.from(selectedIds), type: "print" });
             const { url } = (res.data as any) || {};
+
             if (url) {
-                browserDownloadUrl(url, `Memotile_Print_${new Date().toISOString().slice(0, 10)}.zip`);
+                await navigator.clipboard.writeText(url);
+                alert(`✅ Bulk ZIP URL copied!\n\nLink:\n${url}`);
             } else {
-                alert("ZIP generation returned no URL.");
+                alert("Failed to generate ZIP link.");
             }
         } catch (e: any) {
             alertCallableError("ZIP export failed:", e);
@@ -276,31 +242,63 @@ export default function AdminOrderList() {
         }
     };
 
-    const handleExportCSV = async () => {
+    // ✅ 주소 분리 및 개별 ZIP URL이 자동 포함된 택배/프린트 업체용 완벽한 CSV 추출
+    const handleExportCleanCSV = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
         if (targets.length === 0) {
             alert("No orders to export.");
             return;
         }
-        const rows = targets.map((o) => ({
-            Date: formatDate(o.createdAt),
-            OrderNo: o.orderCode,
-            OrderId: o.id,
-            Status: o.status,
-            TileCount: o.itemsCount,
-            CustomerName: o.customer?.fullName || o.shipping?.fullName || "Guest",
-            Email: o.customer?.email || o.shipping?.email || "",
-            Phone: o.customer?.phone || o.shipping?.phone || "",
-            Total: o.pricing?.total ?? 0,
-        }));
-        const csv = toCsv(rows);
-        downloadTextFile(`orders.csv`, csv);
+
+        setBulkLoading(true);
+
+        try {
+            const rows = [];
+
+            for (const o of targets) {
+                let zipUrl = "";
+                try {
+                    const fn = httpsCallable(functions, "adminExportZipPrints");
+                    const res = await fn({ orderIds: [o.id], type: "print" });
+                    zipUrl = (res.data as any)?.url || "";
+                } catch (err) {
+                    console.error("Failed to fetch zip for", o.orderCode, err);
+                    zipUrl = "Link Error";
+                }
+
+                // 택배사 송장 출력용으로 주소를 완벽하게 분리 (Postal Code, Address 1, Address 2 등)
+                rows.push({
+                    "Order Number": o.orderCode,
+                    "Date": formatDate(o.createdAt),
+                    "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
+                    "Phone Number": o.shipping?.phone || o.customer?.phone || "",
+
+                    "Postal Code": o.shipping?.postalCode || "",
+                    "Address 1": o.shipping?.address1 || "",
+                    "Address 2": o.shipping?.address2 || "",
+                    "City/State": [o.shipping?.city, o.shipping?.state].filter(Boolean).join(", "),
+                    "Country": o.shipping?.country || "",
+
+                    "Photo Quantity": o.itemsCount,
+                    "Status": o.status,
+                    "Admin Note": (o as any).adminNote || "",
+                    "Print URL": zipUrl,
+                });
+            }
+
+            // UTF-8 BOM (\uFEFF) 적용하여 엑셀에서 열 때 문자 깨짐 방지
+            const csvString = "\uFEFF" + toCsv(rows);
+            downloadTextFile(`Orders_${new Date().toISOString().slice(0, 10)}.csv`, csvString);
+
+        } catch (e: any) {
+            alertCallableError("CSV Export failed:", e);
+        } finally {
+            setBulkLoading(false);
+        }
     };
 
     const handleResetView = () => {
-        setFrom("");
-        setTo("");
-        fetchOrders();
+        setFrom(""); setTo(""); fetchOrders();
     };
 
     useEffect(() => {
@@ -317,8 +315,6 @@ export default function AdminOrderList() {
 
     return (
         <div className="flex flex-col gap-4 w-full pb-32">
-            {/* 상단 필터 / 헤더 영역 */}
-            {/* ✅ sticky, top-0, z-20, bg-white 추가하여 상단 고정 */}
             <div className="shrink-0 flex flex-col gap-4 sticky top-0 z-20 bg-white py-4 -mt-4">
                 <div className="flex gap-2 overflow-x-auto border-b pb-2">
                     {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map((st) => (
@@ -368,11 +364,12 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
-                        <button onClick={handleExportCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
-                            <FileSpreadsheet size={12} /> CSV
+                        <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
+                            {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
+                            Export CSV
                         </button>
-                        <button onClick={handleBulkZip} disabled={bulkLoading || selectedIds.size === 0} className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
-                            <Download size={12} /> ZIP (Max 50)
+                        <button onClick={handleBulkZipCopy} disabled={bulkLoading || selectedIds.size === 0} className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
+                            <LinkIcon size={12} /> Bulk ZIP Link
                         </button>
                         {selectedIds.size > 0 && (
                             <button onClick={handleBulkDelete} disabled={bulkLoading} className="bg-rose-600 text-white hover:bg-rose-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 ml-2 border border-rose-800">
@@ -383,17 +380,8 @@ export default function AdminOrderList() {
                 </div>
             </div>
 
-            {/* ✅ 테이블 컨테이너 */}
-            {/* 고정 높이 제거, overflow 제거 -> 내용만큼 쭉 늘어남 */}
             <div className="w-full bg-white border border-zinc-200 rounded-lg shadow-sm">
                 <table className="w-full relative border-collapse">
-                    {/* ✅ 테이블 헤더의 top 위치를 헤더 높이만큼 내려줘야 함. 
-                       위의 헤더 높이가 가변적일 수 있으므로 일단 top-[200px] 정도로 설정하거나, 
-                       더 깔끔하게는 sticky 헤더와 분리해서 스크롤을 처리할 수도 있습니다.
-                       하지만 간단히 처리하기 위해 여기서는 thead의 sticky를 제거하고(상단 헤더가 sticky이므로),
-                       상단 헤더 아래로 자연스럽게 스크롤되도록 두는 것이 좋습니다.
-                       만약 테이블 헤더(Order, Customer 등)도 고정하고 싶다면 top 값을 상단 헤더 높이만큼 줘야 합니다.
-                    */}
                     <thead className="bg-zinc-50 border-b shadow-sm">
                         <tr>
                             <th className="p-4 w-10 text-center">
@@ -442,7 +430,6 @@ export default function AdminOrderList() {
                     </tbody>
                 </table>
             </div>
-
             {error && <div className="p-4 bg-rose-50 text-rose-600 font-bold rounded-lg border border-rose-200 flex items-center gap-2"><AlertTriangle size={18} />{error}</div>}
         </div>
     );
