@@ -888,11 +888,9 @@ const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
 export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
 
-    // ✨ [핵심 수정] 프론트에서 전달받은 플랫폼(web/ios/android)과 URL 정보를 가져옴
     const { orderId, amount, email, pgcode, platform, webUrl, appScheme } = req.data || {};
     if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
 
-    // ✨ [핵심 수정] Payletter가 결제 완료 후 돌아올 주소에 쿼리 파라미터로 우리의 앱/웹 주소를 박아둠
     const returnQuery = `?platform=${platform || ''}&webUrl=${encodeURIComponent(webUrl || '')}&appScheme=${encodeURIComponent(appScheme || '')}`;
 
     const paymentData = {
@@ -903,7 +901,6 @@ export const payletterRequestPayment = onCall({ region: "us-central1", cors: tru
         amount: Number(amount).toFixed(2),
         payerid: req.auth.uid,
         payeremail: email || "",
-        // ✨ [핵심 수정] 파라미터가 포함된 리턴 URL을 페이레터로 전송
         returnurl: `${BASE_URL}/payletterReturn${returnQuery}`,
         notiurl: `${BASE_URL}/payletterWebhook`
     };
@@ -960,20 +957,17 @@ export const payletterWebhook = onRequest({ region: "us-central1" }, async (req,
     res.status(200).send("<RESULT>OK</RESULT>");
 });
 
-// ✨ [핵심 수정] 결제가 끝나고 돌아오는 화면 분기 처리
+// ✨ 글로벌 환경에 맞게 영문 HTML로 수정
 export const payletterReturn = onRequest({ region: "us-central1" }, async (req, res) => {
-    // URL에 숨겨두었던 쿼리 파라미터 읽기
     const platform = req.query.platform as string;
     const webUrl = req.query.webUrl as string;
     const appScheme = req.query.appScheme as string;
 
-    // 1️⃣ 웹 브라우저(Mac/웹사이트)인 경우: HTML 팝업 대신 즉시 웹 성공 페이지로 이동
     if (platform === 'web' && webUrl) {
         res.redirect(302, webUrl);
         return;
     }
 
-    // 2️⃣ 모바일 앱(Expo Go 또는 스토어 앱)인 경우: 기기에 맞는 딥링크 실행 후 창 닫기
     const fallbackScheme = "memotile://";
     const targetScheme = appScheme || fallbackScheme;
 
@@ -983,22 +977,20 @@ export const payletterReturn = onRequest({ region: "us-central1" }, async (req, 
         <head>
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>결제 처리 중</title>
+            <title>Payment Successful</title>
             <style>
-                body { text-align: center; padding-top: 50px; font-family: sans-serif; background: #fff; }
-                h2 { color: #111; }
-                p { color: #666; margin-bottom: 30px; }
-                .btn { display: inline-block; padding: 12px 24px; background: #111; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; }
+                body { text-align: center; padding-top: 60px; font-family: -apple-system, sans-serif; background: #fff; color: #111; }
+                h2 { color: #10B981; font-size: 24px; margin-bottom: 12px; }
+                p { color: #6B7280; font-size: 15px; margin-bottom: 30px; line-height: 1.5; padding: 0 20px; }
+                .btn { display: inline-block; padding: 14px 28px; background: #111; color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; }
             </style>
         </head>
         <body>
-            <h2>결제가 진행되었습니다.</h2>
-            <p>화면이 자동으로 닫히지 않으면 아래 버튼을 눌러 앱으로 돌아가세요.</p>
-            <a href="${targetScheme}" class="btn">앱으로 돌아가기</a>
+            <h2>Payment Successful!</h2>
+            <p>Your payment has been processed.<br/><br/>If the app doesn't open automatically, please tap <b>"Done"</b> or <b>"Close"</b> in your browser to return.</p>
+            <a href="${targetScheme}" class="btn">Return to App</a>
             <script>
-                // 기기 환경에 맞게 자동으로 앱 열기 시도
                 setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);
-                setTimeout(() => { window.close(); }, 2000);
             </script>
         </body>
         </html>

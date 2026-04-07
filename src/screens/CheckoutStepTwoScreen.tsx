@@ -19,7 +19,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import * as WebBrowser from "expo-web-browser";
-import * as Linking from 'expo-linking'; // ✨ 딥링크 확인용 라이브러리 추가
+import * as Linking from 'expo-linking';
 
 // ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
@@ -268,18 +268,15 @@ export default function CheckoutStepTwoScreen() {
         return true;
     };
 
-    // ✨ 페이레터 결제 요청
     const requestPayletterPayment = async (orderId: string, method: string) => {
         try {
             let pgcode = "PLCreditCard";
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
-            // ✨ [핵심 추가] 내 환경의 주소를 뽑아냄
-            const appScheme = Linking.createURL(''); // 엑스포 고나 정식 앱일 때 쓸 딥링크 추출
+            const appScheme = Linking.createURL('');
             const webUrl = Platform.OS === 'web' ? `${window.location.origin}/myorder/success?id=${orderId}` : '';
 
-            // 서버로 통화, 내 주소 정보를 싹 다 보냄
             const response: any = await requestPayment({
                 orderId,
                 amount: totalInUSD,
@@ -312,20 +309,31 @@ export default function CheckoutStepTwoScreen() {
                         {
                             text: confirmText,
                             onPress: async () => {
-                                const result = await WebBrowser.openBrowserAsync(paymentUrl);
+                                // 브라우저 창 열기
+                                await WebBrowser.openBrowserAsync(paymentUrl);
 
-                                if (result.type === 'cancel' || result.type === 'dismiss') {
+                                // ✨ [핵심 추가] 엑스포 등에서 사용자가 "완료(Done)"를 눌러 수동으로 닫았을 때를 대비하여
+                                // 브라우저가 닫힌 직후 무조건 서버(DB)를 조회해서 결제가 성공했는지 최종 확인합니다.
+                                try {
+                                    const orderSnap = await getDoc(doc(db, "orders", orderId));
+                                    const orderData = orderSnap.data();
+
+                                    if (orderData?.status === 'paid') {
+                                        // 사용자가 수동으로 닫았더라도 결제가 성공했으면 성공 페이지로 이동!
+                                        await clearDraft();
+                                        clearPhotos();
+                                        router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                                    } else {
+                                        // 진짜 결제 취소됨
+                                        setIsCreatingOrder(false);
+                                        Alert.alert(
+                                            (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
+                                            (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
+                                        );
+                                    }
+                                } catch (e) {
                                     setIsCreatingOrder(false);
-                                    Alert.alert(
-                                        (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
-                                        (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
-                                    );
-                                    return;
                                 }
-
-                                await clearDraft();
-                                clearPhotos();
-                                router.replace({ pathname: "/myorder/success", params: { id: orderId } });
                             }
                         }
                     ]
@@ -342,7 +350,6 @@ export default function CheckoutStepTwoScreen() {
     const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE" | "CREDIT_CARD") => {
         Keyboard.dismiss();
 
-        // 심사 방지용 처리
         if (provider === "TRUEMONEY" || provider === "RABBIT_LINE_PAY") {
             const title = (t as any)?.["comingSoon"] || "Coming Soon";
             const msg = provider === "TRUEMONEY"
@@ -642,6 +649,7 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         </TouchableOpacity>
 
+                        {/* 개발자용 테스트 결제 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>

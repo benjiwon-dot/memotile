@@ -94,10 +94,10 @@ export async function createDevOrder(params: {
     totals: { subtotal: number; discount: number; shippingFee: number; total: number };
     promoCode?: { code: string; discountType: string; discountValue: number };
     locale?: string;
-    currency?: string; // ✅ 추가
+    currency?: string;
     instagram?: string;
 }): Promise<string> {
-    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params; // ✅ 변수 받기 추가
+    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
@@ -113,7 +113,7 @@ export async function createDevOrder(params: {
 
     const safePhotosCount = Array.isArray(photos) && photos.length > 0 ? photos.length : 1;
 
-    // 1. 공통 주문 데이터 구성 (앱/웹 모두 사용)
+    // 1. 공통 주문 데이터 구성
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -122,7 +122,7 @@ export async function createDevOrder(params: {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         status: "paid",
-        currency: currency, // ✅ 하드코딩 제거 완료!
+        currency: currency,
         subtotal: totals.subtotal,
         discount: totals.discount,
         shippingFee: totals.shippingFee,
@@ -142,7 +142,7 @@ export async function createDevOrder(params: {
 
     if (promoCode) rawOrderData.promo = promoCode;
 
-    // ⭐️ 주문을 가장 먼저 DB에 박아버립니다 (My Order 리스트 표시 보장)
+    // ⭐️ 주문 생성 (미리 DB에 저장)
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
     const userProfileRef = doc(db, "users", authedUid);
@@ -151,12 +151,12 @@ export async function createDevOrder(params: {
     await setDoc(userProfileRef, {
         defaultAddress: shipping,
         instagram: instagram || "",
-        lastPayment: { method: totals.total === 0 ? "Promo Code" : "PromptPay", date: formattedDate },
+        lastPayment: { method: totals.total === 0 ? "Promo Code" : "CreditCard", date: formattedDate },
         updatedAt: serverTimestamp()
     }, { merge: true });
 
     // ---------------------------------------------------------
-    // 2. 플랫폼 분기: 웹(Paymentwall 심사) vs 앱(정상 서비스)
+    // 2. 플랫폼별 이미지 처리 및 URL 저장
     // ---------------------------------------------------------
 
     if (Platform.OS === 'web') {
@@ -165,6 +165,7 @@ export async function createDevOrder(params: {
 
         for (let i = 0; i < safePhotos.length; i++) {
             const p = safePhotos[i];
+            // 웹은 보안 및 CORS 제약으로 Storage 업로드 대신 임시 URI를 우선 저장
             const fallbackUri = p.uri || p.originalUri || "https://via.placeholder.com/300";
             if (i < 5) previewImages.push(fallbackUri);
 
@@ -194,8 +195,12 @@ export async function createDevOrder(params: {
         return orderId;
     }
 
+    // 💡 [핵심 버그 수정] 앱 환경일 때 사진이 누락되던 괄호 문제 해결!
+    // try 괄호 안에 들어가 있었으나 await 처리 전에 return 되어 업로드가 무시되던 로직을 정상화.
     try {
-        const uploadTasks = photos.map(async (p, i) => {
+        const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [];
+
+        const uploadTasks = safePhotos.map(async (p, i) => {
             const viewUri = p?.output?.viewUri || p?.uri;
             if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
@@ -206,6 +211,7 @@ export async function createDevOrder(params: {
             const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
             const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
+            // Firebase Storage로 이미지 업로드 실행!
             const [sourceRes, viewRes, printRes] = await Promise.all([
                 uploadFileUriToStorage(sourcePath, sourceUri),
                 uploadFileUriToStorage(viewPath, viewUri),
@@ -220,12 +226,12 @@ export async function createDevOrder(params: {
                 filterId: p.edits?.filterId || "original",
                 filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
                 cropPx: p.edits?.committed?.cropPx || null,
-                unitPrice: totals.subtotal / photos.length || 0,
-                lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
+                unitPrice: totals.subtotal / safePhotosCount,
+                lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
                 size: "20x20",
                 assets: {
                     sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl,
-                    viewPath: viewRes.path, viewUrl: viewRes.downloadUrl,
+                    viewPath: viewRes.path, viewUrl: viewRes.downloadUrl, // ✨ 이 값이 DB에 저장되어야 썸네일이 뜹니다.
                     printPath: printRes.path, printUrl: printRes.downloadUrl,
                 },
                 printUrl: printRes.downloadUrl,
@@ -234,12 +240,14 @@ export async function createDevOrder(params: {
             };
 
             await setDoc(itemRef, stripUndefined(rawItemData));
-            return viewRes.downloadUrl;
+            return viewRes.downloadUrl; // 썸네일용 URL 반환
         });
 
+        // ✨ 모든 사진 업로드가 끝날 때까지 여기서 확실히 기다립니다!
         const results = await Promise.all(uploadTasks);
-        const previewImages = results.filter((url) => url !== null).slice(0, 5) as string[];
 
+        // 메인 주문 문서(OrderDoc) 겉표지에 미리보기 이미지 5개 등록
+        const previewImages = results.filter((url) => url !== null).slice(0, 5) as string[];
         if (previewImages.length > 0) {
             await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);
         }
