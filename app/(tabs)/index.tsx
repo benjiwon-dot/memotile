@@ -19,6 +19,10 @@ import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
+// ✨ [수정] 로그인 상태 확인용 auth 임포트
+import { auth } from "../../src/lib/firebase";
+import { User } from "firebase/auth";
+
 // ✅ 테마 및 컨텍스트 경로
 import { colors } from "../../src/theme/colors";
 import { layout } from "../../src/theme/layout";
@@ -58,6 +62,9 @@ export default function Index() {
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
 
+    // ✨ [수정] 현재 로그인 상태 추적
+    const [user, setUser] = useState<User | null>(auth.currentUser);
+
     const handleLinePress = () => {
         Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
             Alert.alert("Error", "LINE 앱을 열 수 없습니다.");
@@ -88,9 +95,13 @@ export default function Index() {
             setBillboardIndex((prev) => (prev + 1) % 4);
         }, 3000);
 
+        // ✨ [수정] 로그인 상태 변경 감지 (로그아웃 시 배너 숨기기 위함)
+        const unsub = auth.onAuthStateChanged((u) => setUser(u));
+
         return () => {
             clearInterval(slideshowTimer);
             clearInterval(billboardTimer);
+            unsub();
         };
     }, []);
 
@@ -184,7 +195,8 @@ export default function Index() {
 
     return (
         <View style={styles.container}>
-            {hasDraft && (
+            {/* ✨ [수정] hasDraft && user(로그인 상태)일 때만 배너 표시 */}
+            {hasDraft && user && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
                     <View style={styles.resumeContent}>
                         <View>
@@ -407,11 +419,6 @@ export default function Index() {
                         </Pressable>
                     </View>
 
-                    {/* ✅ 해결 완료: 
-                        1. 파이프(|) 기호 전면 삭제 
-                        2. 완벽한 한 줄씩 독립된 구성 (잘림 절대 없음)
-                        3. 일관된 좌측 정렬 
-                    */}
                     <View style={styles.minimalBizInfo}>
                         <Text style={styles.bizInfoText}>{t.business_name}</Text>
                         <Text style={styles.bizInfoText}>{t.business_representative}</Text>
@@ -553,18 +560,17 @@ const styles = StyleSheet.create({
     legalLinkText: { fontSize: 13, color: colors.ink, textDecorationLine: "underline", fontWeight: "500" },
     legalDot: { fontSize: 13, color: colors.textMuted, marginHorizontal: 8 },
 
-    // ✅ 강제 좌측 정렬, 한 줄 띄어쓰기 완벽 반영
     minimalBizInfo: {
         width: '100%',
-        alignItems: 'flex-start', // 좌측 정렬 보장
+        alignItems: 'flex-start',
         marginBottom: 10,
     },
     bizInfoText: {
         fontSize: 11,
         color: '#9CA3AF',
-        textAlign: 'left', // 텍스트 자체도 좌측 정렬
+        textAlign: 'left',
         lineHeight: 18,
-        marginBottom: 2, // 줄간 간격 최소화
+        marginBottom: 2,
     },
     legal: { fontSize: 12, color: '#9CA3AF', fontWeight: '500', marginTop: 10 },
 

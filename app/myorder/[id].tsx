@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, onSnapshot, getDocs, collection } from "firebase/firestore";
-import { db, auth } from "../../src/lib/firebase"; // ✨ auth 추가
+import { db, auth } from "../../src/lib/firebase";
 import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import StatusBadgeRN from "../../src/components/orders/StatusBadgeRN";
@@ -28,11 +28,15 @@ const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
 const NOT_FOUND_GRACE_MS = 12000;
 
+// ✨ [수정] 서버에 완전히 업로드된 URL(sourceUrl, downloadUrl 등)을 먼저 찾도록 보강
 function pickCustomerPreviewUri(it: any): string | null {
     const uri =
         it?.assets?.previewUrl ||
         it?.previewUrl ||
         it?.previewUri ||
+        it?.assets?.sourceUrl || // 추가
+        it?.sourceUrl ||         // 추가
+        it?.downloadUrl ||       // 추가
         it?.assets?.viewUrl ||
         it?.assets?.viewUri ||
         it?.output?.previewUri ||
@@ -46,6 +50,8 @@ function pickCustomerPreviewUri(it: any): string | null {
             it?.assets?.previewUrl ||
             it?.previewUrl ||
             it?.previewUri ||
+            it?.assets?.sourceUrl || // 추가
+            it?.sourceUrl ||         // 추가
             it?.assets?.viewUrl ||
             it?.assets?.viewUri ||
             it?.output?.previewUri ||
@@ -60,12 +66,12 @@ function pickCustomerPreviewUri(it: any): string | null {
 export default function OrderDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
-    const { t } = useLanguage();
+    // ✨ [수정] setLocale 추가 확보 (언어 복구용)
+    const { t, setLocale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // ✨ Vercel 로딩 지연 방어용 상태 추가
     const [isAuthLoading, setIsAuthLoading] = useState(true);
     const [user, setUser] = useState<any>(null);
 
@@ -76,8 +82,6 @@ export default function OrderDetailScreen() {
 
     useEffect(() => {
         aliveRef.current = true;
-
-        // ✨ Firebase Auth 상태가 확실히 잡힐 때까지 기다림
         const unsubAuth = auth.onAuthStateChanged((currentUser) => {
             if (!aliveRef.current) return;
             setUser(currentUser);
@@ -91,7 +95,6 @@ export default function OrderDetailScreen() {
     }, []);
 
     useEffect(() => {
-        // ✨ 인증이 아직 진행 중이거나 로그인 안 했으면 DB 조회 요청 자체를 막음
         if (isAuthLoading || !user || !id) return;
 
         setLoading(true);
@@ -117,6 +120,11 @@ export default function OrderDetailScreen() {
                 if (snap.exists()) {
                     const data = snap.data();
                     const newOrder = { id: snap.id, ...data } as OrderDoc;
+
+                    // ✨ [수정] DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
+                    if (newOrder.locale && setLocale) {
+                        setLocale(newOrder.locale);
+                    }
 
                     try {
                         const itemsSnap = await getDocs(collection(db, "orders", snap.id, "items"));
@@ -171,7 +179,6 @@ export default function OrderDetailScreen() {
         return (order as any).paymentMethod || (t as any).paymentTitle || "Payment";
     };
 
-    // ✨ 1. 로딩이 안 끝났으면 무조건 로딩창
     if (isAuthLoading) {
         return (
             <SafeAreaView style={styles.container}>
@@ -183,7 +190,6 @@ export default function OrderDetailScreen() {
         );
     }
 
-    // ✨ 2. 로딩 끝났는데 비회원이면 그때야 튕김 표시 (오류 해결 핵심!)
     if (!user) {
         return (
             <SafeAreaView style={styles.container}>
@@ -250,7 +256,6 @@ export default function OrderDetailScreen() {
     }
 
     const currencySymbol = (order as any).currency === "USD" ? "$" : "฿";
-
     const sections = [{ type: "summary" }, { type: "items" }, { type: "shipping" }, { type: "payment" }];
 
     return (

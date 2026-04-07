@@ -24,7 +24,6 @@ import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import OrderSuccessPreviewStripRN from "../../src/components/orders/OrderSuccessPreviewStripRN";
 
-// ✅ [방어 코드] 웹 환경에서는 햅틱이나 디바이스 정보를 가져오지 않도록 차단
 let Haptics: any = null;
 let Device: any = null;
 if (Platform.OS !== 'web') {
@@ -39,7 +38,9 @@ export default function OrderSuccessScreen() {
     const id = (params?.id as string | undefined) ?? undefined;
 
     const router = useRouter();
-    const { t } = useLanguage();
+
+    // ✨ [수정] 언어 복구용 setLocale 호출
+    const { t, setLocale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
     const [processing, setProcessing] = useState(true);
@@ -97,6 +98,9 @@ export default function OrderSuccessScreen() {
         unsub = subscribeOrder(id, (updated) => {
             if (!aliveRef.current) return;
             if (updated) {
+                // ✨ [수정] DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
+                if (updated.locale && setLocale) setLocale(updated.locale);
+
                 setOrder(updated);
                 setProcessing(false);
                 setGaveUp(false);
@@ -111,6 +115,9 @@ export default function OrderSuccessScreen() {
                 if (!aliveRef.current) return;
 
                 if (data) {
+                    // ✨ [수정] 언어 복구 로직 동일 적용
+                    if (data.locale && setLocale) setLocale(data.locale);
+
                     setOrder(data);
                     setProcessing(false);
                     setGaveUp(false);
@@ -212,7 +219,6 @@ export default function OrderSuccessScreen() {
                         </Text>
                     </Animated.View>
 
-                    {/* ✅ 웹에서는 사진 스트립 렌더링을 유연하게 처리 */}
                     {order?.items?.length ? (
                         <View style={styles.stripContainer}>
                             <OrderSuccessPreviewStripRN items={order.items} />
