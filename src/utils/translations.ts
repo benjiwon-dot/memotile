@@ -359,8 +359,13 @@ export const STRINGS = {
         "comingSoon": "Soon",
         "checkout.previewClose": "Close",
         "exchangeRateNotice": "", // English doesn't need this notice
+
+        // ✨ [수정됨] 페이레터 결제 관련 다국어 메시지 추가
         paymentRedirectTitle: "Redirecting to Payment",
         paymentRedirectMsg: "You will be redirected to a secure payment page. Please do not close the window until the process is complete.",
+        paymentCanceledTitle: "Payment Canceled",
+        paymentCanceledMsg: "Your payment was canceled. Please try again.",
+        paymentError: "Payment Error",
         confirm: "OK",
 
         // 환불/취소 정책 요약
@@ -741,8 +746,13 @@ export const STRINGS = {
         "comingSoon": "เร็วๆ นี้",
         "checkout.previewClose": "ปิด",
         "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน",
+
+        // ✨ [수정됨] 페이레터 결제 관련 다국어 메시지 추가
         paymentRedirectTitle: "กำลังเปลี่ยนเส้นทางไปหน้าชำระเงิน",
         paymentRedirectMsg: "ระบบกำลังนำคุณไปยังหน้าชำระเงินที่ปลอดภัย โปรดอย่าปิดหน้าต่างนี้จนกว่าการชำระเงินจะเสร็จสมบูรณ์",
+        paymentCanceledTitle: "ยกเลิกการชำระเงินแล้ว",
+        paymentCanceledMsg: "การชำระเงินถูกยกเลิก กรุณาลองใหม่อีกครั้ง",
+        paymentError: "ข้อผิดพลาดในการชำระเงิน",
         confirm: "ตกลง",
 
         // 환불/취소 정책 요약

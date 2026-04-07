@@ -36,6 +36,10 @@ import { doc, getDoc } from "firebase/firestore";
 import { createDevOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 
+// ✨ Firebase Functions 연동용 패키지 추가
+import { getApp } from "firebase/app";
+import { getFunctions, httpsCallable } from "firebase/functions";
+
 const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 
 export default function CheckoutStepTwoScreen() {
@@ -258,74 +262,74 @@ export default function CheckoutStepTwoScreen() {
         return true;
     };
 
+    // ✨ 본섭 백엔드에 안전하게 결제를 요청하는 함수 (웹브라우저 취소 처리 및 다국어 보완)
     const requestPayletterPayment = async (orderId: string, method: string) => {
-        const PAYLETTER_API_URL = "https://dev-api.payletter.com/api/payment/request";
-        const CLIENT_ID = "PL_Merchant";
-        const API_KEY = "PL_Merchant";
-
-        let pgcode = "PLCreditCard";
-
-        const paymentData = {
-            pginfo: pgcode,
-            storeid: CLIENT_ID,
-            currency: "USD",
-            storeorderno: orderId,
-            amount: total,
-            payerid: currentUser?.uid || "guest",
-            payeremail: formData.email,
-            returnurl: "https://memotile.com/payment/success",
-            notiurl: "https://memotile.com/api/webhook"
-        };
-
         try {
-            const response = await fetch(PAYLETTER_API_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `GPLKEY ${API_KEY}`,
-                },
-                body: JSON.stringify(paymentData),
+            // 결제 수단에 따라 페이레터 pgcode 매핑
+            let pgcode = "PLCreditCard";
+            if (method === "TRUEMONEY") {
+                pgcode = "MOLTrueMoney";
+            } else if (method === "RABBIT_LINE_PAY") {
+                pgcode = "CodaPayRabbitLINEPay";
+            }
+
+            // 본섭 리전(us-central1)을 명시적으로 선언하여 함수 호출
+            const functions = getFunctions(getApp(), "us-central1");
+            const requestPayment = httpsCallable(functions, "payletterRequestPayment");
+
+            // 1. 백엔드에 결제 URL 요청
+            const response: any = await requestPayment({
+                orderId,
+                amount: total,
+                email: formData.email,
+                pgcode: pgcode,
             });
-            const result = await response.json();
 
-            if (result.mobile_url || result.online_url) {
-                const paymentUrl = result.mobile_url || result.online_url;
+            const paymentUrl = response.data.paymentUrl;
 
-                if (Platform.OS === 'web') {
-                    window.location.href = paymentUrl;
-                } else {
-                    const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
-                    const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
-                    const cancelText = (t as any)?.["cancel"] || "Cancel";
-                    const confirmText = (t as any)?.["confirm"] || "OK";
-
-                    Alert.alert(
-                        alertTitle,
-                        alertMessage,
-                        [
-                            { text: cancelText, style: "cancel" },
-                            {
-                                text: confirmText,
-                                onPress: async () => {
-                                    await WebBrowser.openBrowserAsync(paymentUrl);
-
-                                    await clearDraft();
-                                    clearPhotos();
-                                    router.replace({ pathname: "/myorder/success", params: { id: orderId } });
-                                }
-                            }
-                        ]
-                    );
-                }
+            // 2. 모달/결제창 호출
+            if (Platform.OS === 'web') {
+                window.location.href = paymentUrl;
             } else {
-                console.error("Payletter API Error:", result);
-                const errorTitle = (t as any)?.["paymentError"] || "Payment Error";
-                Alert.alert(errorTitle, `API Error: ${result.error?.message || 'Unknown'}`);
+                // 다국어 처리 (한국어/태국어 등)
+                const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
+                const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
+                const cancelText = (t as any)?.["cancel"] || "Cancel";
+                const confirmText = (t as any)?.["confirm"] || "OK";
+
+                Alert.alert(
+                    alertTitle,
+                    alertMessage,
+                    [
+                        { text: cancelText, style: "cancel" },
+                        {
+                            text: confirmText,
+                            onPress: async () => {
+                                // 인앱 브라우저 오픈 및 결과 기다리기
+                                const result = await WebBrowser.openBrowserAsync(paymentUrl);
+
+                                // result.type이 'cancel'이면 유저가 X버튼으로 강제로 닫은 것
+                                if (result.type === 'cancel') {
+                                    Alert.alert(
+                                        (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
+                                        (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
+                                    );
+                                    return; // ⚠️ 여기서 함수 종료! 성공 페이지로 넘어가지 않음
+                                }
+
+                                // 정상적으로 딥링크를 타고 앱으로 돌아온 경우에만 장바구니 비우고 성공 페이지 이동
+                                await clearDraft();
+                                clearPhotos();
+                                router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                            }
+                        }
+                    ]
+                );
             }
         } catch (error: any) {
             console.error("Payletter request error:", error);
             const errorTitle = (t as any)?.["paymentError"] || "Payment Error";
-            Alert.alert(errorTitle, error.message);
+            Alert.alert(errorTitle, error.message || "An error occurred while preparing the payment.");
         }
     };
 
@@ -581,7 +585,6 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
@@ -593,7 +596,6 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         </TouchableOpacity>
 
-                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
@@ -605,10 +607,8 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         </TouchableOpacity>
 
-                        {/* ✅ 로고 사이즈업 + 세련된 TEST 뱃지 적용 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
-                                {/* 💳 준비하신 PNG 이미지를 assets 폴더에 넣고 이름 맞추시면 됩니다 */}
                                 <Image
                                     source={require("../assets/credit_card_logo.png")}
                                     style={styles.paymentLogo}
@@ -705,19 +705,17 @@ const styles = StyleSheet.create({
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
 
-    // ✅ 로고 이미지 크기 42x42로 시원하게 키움
     paymentLogo: { width: 42, height: 42, marginRight: 12 },
     paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
 
-    // ✅ 세련된 라운드 직각 사각형 TEST 뱃지 스타일
     testBadge: {
-        backgroundColor: "#FFFBEB", // 아주 연한 노란색
+        backgroundColor: "#FFFBEB",
         paddingHorizontal: 8,
         paddingVertical: 3,
-        borderRadius: 6, // 둥근 직각 사각형
+        borderRadius: 6,
         borderWidth: 1,
-        borderColor: "#FBBF24", // 깔끔한 금색/노란색 테두리
+        borderColor: "#FBBF24",
         marginRight: 8,
         justifyContent: "center",
         alignItems: "center",
@@ -725,7 +723,7 @@ const styles = StyleSheet.create({
     testBadgeText: {
         fontSize: 11,
         fontWeight: "800",
-        color: "#D97706", // 진한 주황색 텍스트
+        color: "#D97706",
         letterSpacing: 0.5,
     },
 

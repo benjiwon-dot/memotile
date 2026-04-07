@@ -7,6 +7,8 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 // ✨ 스케줄러 추가
 import { onSchedule } from "firebase-functions/v2/scheduler";
+// ✨ 페이레터 웹훅 및 리턴을 위한 HTTP 요청 처리 추가
+import { onRequest } from "firebase-functions/v2/https";
 
 // ✅ Firebase Admin SDK imports
 import { getStorage } from "firebase-admin/storage";
@@ -14,6 +16,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 // ✅ External Libraries
 import sharp from "sharp";
+const crypto = require("crypto"); // 👈 배포 에러(Crash)를 막기 위해 require로 통일했습니다.
 const archiver = require("archiver");
 const axios = require("axios"); // ✨ 슬랙 전송용 추가
 
@@ -785,9 +788,6 @@ export const onPrintFileFinalized = onObjectFinalized(
 /**
  * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
  */
-/**
- * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
- */
 export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
     const db = getFirestore();
     const now = new Date();
@@ -796,11 +796,10 @@ export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) =>
 
     try {
         // 'paid' 상태인데 생성된 지 24시간이 지난 주문 조회
-        // ⚠️ 주의: Firestore 콘솔에서 (status ASC, createdAt ASC) 복합 인덱스 생성이 필요할 수 있습니다.
         const snapshot = await db.collection("orders")
             .where("status", "==", "paid")
             .where("createdAt", "<=", twentyFourHoursAgo)
-            .orderBy("createdAt", "asc") // 👈 정렬을 명시하여 인덱스 활용 및 안정적 결과 확보
+            .orderBy("createdAt", "asc")
             .get();
 
         if (snapshot.empty) {
@@ -811,7 +810,6 @@ export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) =>
         const count = snapshot.size;
         const orderDetails = snapshot.docs.map(doc => {
             const data = doc.data();
-            // 데이터 누락 방지를 위한 기본값 처리
             const code = data.orderCode || doc.id;
             const name = data.customer?.fullName || data.shipping?.fullName || 'Guest';
             return `• 주문번호: ${code} (고객: ${name})`;
@@ -831,10 +829,10 @@ export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) =>
         await axios.post(SLACK_WEBHOOK_URL, message);
         console.log(`[Scheduler] Slack alert sent for ${count} orders.`);
     } catch (e: any) {
-        // 쿼리 에러(인덱스 미생성 등) 확인을 위해 로그 강화
         console.error("[Scheduler] Alert Failed:", e?.message);
     }
 });
+
 /**
  * 🕒 매일 새벽 3시 실행: 7일 지난 완료/취소 주문 자동 아카이브
  */
@@ -849,7 +847,6 @@ export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
     let totalArchived = 0;
 
     for (const status of statusesToArchive) {
-        // 해당 상태이면서 업데이트된 지 7일이 지난 주문 조회
         const snapshot = await db.collection("orders")
             .where("status", "==", status)
             .where("updatedAt", "<=", sevenDaysAgo)
@@ -912,4 +909,130 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
         if (e instanceof HttpsError) throw e;
         throw new HttpsError("internal", e?.message || "Delete failed");
     }
+});
+
+/* =========================================================================
+   ✨ NEW: PAYLETTER 결제 연동 (1, 2, 3단계)
+   ========================================================================= */
+
+const PAYLETTER_API_KEY = "PL_Merchant"; // ⚠️ 라이브 배포 시 실제 키로 변경하세요.
+const PAYLETTER_CLIENT_ID = "PL_Merchant";
+const PROJECT_REGION = "us-central1";
+const PROJECT_ID = "memotile-app-anti-demo"; // ⚠️ 실제 Firebase 프로젝트 ID (예: memotile-app-anti) 로 꼭 변경하세요!
+const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
+
+// 1단계: 프론트엔드를 대신해서 페이레터 서버로 결제창 URL을 요청하는 함수
+export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
+    if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
+
+    const { orderId, amount, email, pgcode } = req.data || {};
+    if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
+
+    const paymentData = {
+        pginfo: pgcode || "PLCreditCard",
+        storeid: PAYLETTER_CLIENT_ID,
+        currency: "USD",
+        storeorderno: orderId,
+        amount: Number(amount).toFixed(2), // 페이레터 USD 소수점 필수 규칙 적용
+        payerid: req.auth.uid,
+        payeremail: email || "",
+        returnurl: `${BASE_URL}/payletterReturn`, // 결제 후 3단계 함수로 렌더링
+        notiurl: `${BASE_URL}/payletterWebhook`   // 결제 완료 2단계 함수로 웹훅 알림
+    };
+
+    try {
+        const response = await axios.post("https://dev-api.payletter.com/api/payment/request", paymentData, {
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `GPLKEY ${PAYLETTER_API_KEY}`
+            }
+        });
+
+        if (response.data.mobile_url || response.data.online_url) {
+            return {
+                ok: true,
+                paymentUrl: response.data.mobile_url || response.data.online_url
+            };
+        } else {
+            throw new Error(response.data.error?.message || "Failed to receive payment URL.");
+        }
+    } catch (e: any) {
+        console.error("[Payletter Request Error]", e.response?.data || e.message);
+        throw new HttpsError("internal", "Payment server communication failed.");
+    }
+});
+
+// 2단계: 웹훅 (notiurl) - 페이레터가 결제 성공 시 DB 업데이트를 하라고 찔러주는 곳
+export const payletterWebhook = onRequest({ region: "us-central1" }, async (req, res) => {
+    const data = req.body;
+    const {
+        storeid, currency, storeorderno, payamt, payerid,
+        timestamp, hash, notifytype, paytoken, retcode
+    } = data;
+
+    // 1. 위변조 검증 (해시 체크) - 공식 문서 참조
+    const rawString = `${storeid}${currency}${storeorderno}${payamt}${payerid}${timestamp}${PAYLETTER_API_KEY}`;
+    const generatedHash = crypto.createHash('sha256').update(rawString).digest('hex');
+
+    if (hash !== generatedHash) {
+        console.error("[Payletter Webhook] Hash mismatch.", { storeorderno });
+        res.status(400).send("Hash mismatch");
+        return;
+    }
+
+    // 2. 결제 완료 처리 (1: 성공, retcode 0: 정상)
+    if (String(notifytype) === "1" && String(retcode) === "0") {
+        const db = getFirestore();
+        try {
+            await db.collection("orders").doc(storeorderno).update({
+                status: "paid", // 주문 상태를 결제 완료로 업데이트
+                payToken: paytoken,
+                paidAt: FieldValue.serverTimestamp(),
+            });
+            console.log(`[Payletter Webhook] Order ${storeorderno} paid successfully.`);
+
+            // ⭐ 페이레터의 요구사항: HTML이나 공백 없이 딱 이 문자열만 보내야 함
+            res.status(200).send("<RESULT>OK</RESULT>");
+            return;
+        } catch (error) {
+            console.error(`[Payletter Webhook] DB Update Failed for ${storeorderno}`, error);
+            res.status(500).send("DB Error");
+            return;
+        }
+    }
+
+    // 결제 취소/부분 취소 등의 다른 타입도 일단 OK를 내려서 페이레터의 불필요한 재전송 방지
+    res.status(200).send("<RESULT>OK</RESULT>");
+});
+
+// 3단계: 리턴 URL (returnurl) - 결제 창을 닫고 다시 앱으로 딥링크를 태우는 역할
+export const payletterReturn = onRequest({ region: "us-central1" }, async (req, res) => {
+    // app.json에 설정된 scheme: "memotile"을 이용하여 딥링크 연결
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>결제 처리 중</title>
+            <style>
+                body { text-align: center; padding-top: 50px; font-family: sans-serif; background: #fff; }
+                h2 { color: #111; }
+                p { color: #666; margin-bottom: 30px; }
+                .btn { display: inline-block; padding: 12px 24px; background: #111; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <h2>결제가 진행되었습니다.</h2>
+            <p>화면이 자동으로 닫히지 않으면 아래 버튼을 눌러 앱으로 돌아가세요.</p>
+            <a href="memotile://" class="btn">앱으로 돌아가기</a>
+            <script>
+                // 모바일 환경에서 자동으로 딥링크 실행을 시도하여 브라우저 창 닫기 유도
+                setTimeout(() => { window.location.href = "memotile://"; }, 500);
+                setTimeout(() => { window.close(); }, 2000);
+            </script>
+        </body>
+        </html>
+    `;
+    res.status(200).send(html);
 });
