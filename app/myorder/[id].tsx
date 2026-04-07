@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, onSnapshot, getDocs, collection } from "firebase/firestore";
-import { db } from "../../src/lib/firebase";
+import { db, auth } from "../../src/lib/firebase"; // ✨ auth 추가
 import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import StatusBadgeRN from "../../src/components/orders/StatusBadgeRN";
@@ -64,6 +64,11 @@ export default function OrderDetailScreen() {
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
     const [loading, setLoading] = useState(true);
+
+    // ✨ Vercel 로딩 지연 방어용 상태 추가
+    const [isAuthLoading, setIsAuthLoading] = useState(true);
+    const [user, setUser] = useState<any>(null);
+
     const [gaveUp, setGaveUp] = useState(false);
     const [previewItem, setPreviewItem] = useState<any | null>(null);
 
@@ -71,13 +76,23 @@ export default function OrderDetailScreen() {
 
     useEffect(() => {
         aliveRef.current = true;
+
+        // ✨ Firebase Auth 상태가 확실히 잡힐 때까지 기다림
+        const unsubAuth = auth.onAuthStateChanged((currentUser) => {
+            if (!aliveRef.current) return;
+            setUser(currentUser);
+            setIsAuthLoading(false);
+        });
+
         return () => {
             aliveRef.current = false;
+            unsubAuth();
         };
     }, []);
 
     useEffect(() => {
-        if (!id) return;
+        // ✨ 인증이 아직 진행 중이거나 로그인 안 했으면 DB 조회 요청 자체를 막음
+        if (isAuthLoading || !user || !id) return;
 
         setLoading(true);
         setGaveUp(false);
@@ -129,7 +144,7 @@ export default function OrderDetailScreen() {
             if (timeout) clearTimeout(timeout);
             if (unsub) unsub();
         };
-    }, [id]);
+    }, [id, user, isAuthLoading]);
 
     const renderHeader = useCallback(
         () => (
@@ -155,6 +170,37 @@ export default function OrderDetailScreen() {
         }
         return (order as any).paymentMethod || (t as any).paymentTitle || "Payment";
     };
+
+    // ✨ 1. 로딩이 안 끝났으면 무조건 로딩창
+    if (isAuthLoading) {
+        return (
+            <SafeAreaView style={styles.container}>
+                {renderHeader()}
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color="#111" />
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    // ✨ 2. 로딩 끝났는데 비회원이면 그때야 튕김 표시 (오류 해결 핵심!)
+    if (!user) {
+        return (
+            <SafeAreaView style={styles.container}>
+                {renderHeader()}
+                <View style={styles.content}>
+                    <Text style={styles.notFoundTitle}>Please Log In</Text>
+                    <Text style={styles.notFoundDesc}>You need to be logged in to view order details.</Text>
+                    <TouchableOpacity
+                        style={{ marginTop: 16, alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 }}
+                        onPress={() => router.replace("/auth/email")}
+                    >
+                        <Text style={{ color: "#111", fontWeight: "800" }}>Go to Login</Text>
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     if (loading && !order) {
         return (
@@ -203,7 +249,6 @@ export default function OrderDetailScreen() {
         );
     }
 
-    // ✅ 통화 기호 동적 설정 (결제 시 DB에 저장된 currency 값 기준)
     const currencySymbol = (order as any).currency === "USD" ? "$" : "฿";
 
     const sections = [{ type: "summary" }, { type: "items" }, { type: "shipping" }, { type: "payment" }];
@@ -254,7 +299,6 @@ export default function OrderDetailScreen() {
 
                                     <View style={styles.summaryRowBottom}>
                                         <Text style={styles.orderDate}>{formatDate((order as any).createdAt)}</Text>
-                                        {/* ✅ 총 결제 금액 기호 동적 변경 */}
                                         <Text style={styles.orderTotal}>
                                             {currencySymbol}{Number((order as any).total || 0).toFixed(2)}
                                         </Text>
@@ -334,7 +378,6 @@ export default function OrderDetailScreen() {
                                             <Ionicons name="pricetag-outline" size={12} color="#10B981" />
                                             <Text style={styles.promoText}>
                                                 {" "}
-                                                {/* ✅ 할인 금액 기호 동적 변경 */}
                                                 {(order as any).promo?.code} (-{currencySymbol}{Number((order as any).discount || 0).toFixed(2)})
                                             </Text>
                                         </View>

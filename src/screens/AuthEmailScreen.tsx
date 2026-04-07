@@ -96,7 +96,7 @@ export default function AuthEmailScreen() {
             } else {
                 const { user } = await signInWithEmail(emailTrim, passwordTrim);
 
-                // 💡 [수정된 부분] 심사역 테스트 계정은 이메일 인증 절차를 건너뜀
+                // 💡 심사역 테스트 계정은 이메일 인증 절차를 건너뜀
                 const isTestAccount = user.email === "test_user@memotile.com";
 
                 if (!user.emailVerified && !isTestAccount) {
@@ -130,11 +130,16 @@ export default function AuthEmailScreen() {
         } catch (error: any) {
             console.error("Auth Error:", error);
             const code = error?.code ?? "";
+
+            // ✨ [수정됨] Upload Failed 대신 Login Error 문구 표시
+            const errorTitle = (t as any)['paymentError'] || "Login Error";
+
             let msg = error?.message ?? "Authentication failed.";
             if (code === "auth/invalid-credential") msg = "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
             else if (code === "auth/email-already-in-use") msg = "อีเมลนี้ถูกใช้งานแล้ว โปรดเข้าสู่ระบบ";
             else if (code === "auth/weak-password") msg = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร";
-            showAlert((t as any)['failedTitle'] || "Failed", msg);
+
+            showAlert(errorTitle, msg);
         } finally {
             setLoading(false);
         }
@@ -240,7 +245,7 @@ export default function AuthEmailScreen() {
                 </ScrollView>
             </KeyboardAvoidingView>
 
-            {/* ✅ [추가됨] 화면 멈춤(5초 지연) 시 연타 방지용 전체 화면 모달 */}
+            {/* ✅ 화면 멈춤(5초 지연) 시 연타 방지용 전체 화면 모달 */}
             <Modal visible={isSigningIn || loading} transparent animationType="fade">
                 <View style={styles.overlayContainer}>
                     <View style={styles.loadingBox}>

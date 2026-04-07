@@ -275,18 +275,6 @@ export default function CheckoutStepTwoScreen() {
     // ✨ 페이레터 결제 요청
     const requestPayletterPayment = async (orderId: string, method: string) => {
         try {
-            // 💡 심사 방지용 처리: 테스트 불가능 결제 수단 블락 (맞춤형 알림 적용)
-            if (method === "TRUEMONEY" || method === "RABBIT_LINE_PAY") {
-                const title = (t as any)?.["comingSoon"] || "Coming Soon";
-                const msg = method === "TRUEMONEY"
-                    ? ((t as any)?.["trueMoneySoon"] || "TrueMoney payment is coming soon.")
-                    : ((t as any)?.["rabbitLinePaySoon"] || "Rabbit LINE Pay is coming soon.");
-
-                Alert.alert(title, msg);
-                setIsCreatingOrder(false);
-                return;
-            }
-
             let pgcode = "PLCreditCard";
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
@@ -352,6 +340,23 @@ export default function CheckoutStepTwoScreen() {
 
     const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE" | "CREDIT_CARD") => {
         Keyboard.dismiss();
+
+        // 💡 [핵심 수정] 심사 방지용 처리: TrueMoney나 Rabbit Line Pay는 즉각 차단하여 무한 로딩 방지
+        if (provider === "TRUEMONEY" || provider === "RABBIT_LINE_PAY") {
+            const title = (t as any)?.["comingSoon"] || "Coming Soon";
+            const msg = provider === "TRUEMONEY"
+                ? ((t as any)?.["trueMoneySoon"] || "TrueMoney payment is coming soon.")
+                : ((t as any)?.["rabbitLinePaySoon"] || "Rabbit LINE Pay is coming soon.");
+
+            // 웹 환경에서는 브라우저 기본 알림창 사용
+            if (Platform.OS === 'web') {
+                window.alert(`${title}\n\n${msg}`);
+            } else {
+                Alert.alert(title, msg);
+            }
+            // 여기서 즉시 종료 (로딩화면이 돌지 않음)
+            return;
+        }
 
         const user = currentUser;
 

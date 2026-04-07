@@ -8,6 +8,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useLanguage } from "../../src/context/LanguageContext";
+import { usePhoto } from "../../src/context/PhotoContext"; // ✨ 로그아웃 시 사진 초기화를 위해 추가
 import { colors } from "../../src/theme/colors";
 import { shadows } from "../../src/theme/shadows";
 import { auth, db } from "../../src/lib/firebase";
@@ -18,12 +19,18 @@ export default function Profile() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
+    // ✨ 사진 초기화 함수 가져오기
+    const { clearDraft, clearPhotos } = usePhoto() || {};
+
     const [user, setUser] = useState(auth.currentUser);
     const [userData, setUserData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
 
     const [modalVisible, setModalVisible] = useState(false);
     const [modalInfo, setModalInfo] = useState({ title: "", content: "" });
+
+    // ✨ 리스너를 담아둘 변수 선언 (권한 에러 방지)
+    const unsubDocRef = React.useRef<(() => void) | null>(null);
 
     useEffect(() => {
         const unsubAuth = auth.onAuthStateChanged((u) => {
@@ -32,24 +39,42 @@ export default function Profile() {
                 fetchUserData(u.uid);
             } else {
                 setUserData(null);
+                // ✨ 유저가 없으면(로그아웃 시) 즉시 리스너 끄기
+                if (unsubDocRef.current) {
+                    unsubDocRef.current();
+                    unsubDocRef.current = null;
+                }
             }
         });
-        return unsubAuth;
+        return () => {
+            unsubAuth();
+            if (unsubDocRef.current) unsubDocRef.current();
+        };
     }, []);
 
     const fetchUserData = (uid: string) => {
         setIsLoading(true);
-        const unsubDoc = onSnapshot(doc(db, "users", uid), (docSnap) => {
+        // 기존 리스너가 있다면 먼저 끄기
+        if (unsubDocRef.current) unsubDocRef.current();
+
+        unsubDocRef.current = onSnapshot(doc(db, "users", uid), (docSnap) => {
             if (docSnap.exists()) {
                 setUserData(docSnap.data());
             }
             setIsLoading(false);
+        }, (error) => {
+            // 권한 부족 에러 발생 시 무시하고 로딩만 종료
+            console.warn("Profile snapshot error:", error.message);
+            setIsLoading(false);
         });
-        return unsubDoc;
     };
 
     const handleLogout = async () => {
         try {
+            // ✨ 로그아웃 시 임시 저장된 사진(Draft) 지우기
+            if (clearDraft) await clearDraft();
+            if (clearPhotos) clearPhotos();
+
             await auth.signOut();
             router.replace("/");
         } catch (e) {
@@ -164,7 +189,6 @@ export default function Profile() {
                                         ]}
                                         onPress={item.onClick}
                                     >
-                                        {/* ✅ 수정됨: 좌측 영역에 flexShrink 추가하여 침범 방지 */}
                                         <View style={styles.rowLeft}>
                                             <item.icon size={20} color={iconColor} strokeWidth={2} />
                                             <Text style={[styles.rowTitle, { color: textColor }]} numberOfLines={1}>
@@ -172,7 +196,6 @@ export default function Profile() {
                                             </Text>
                                         </View>
 
-                                        {/* ✅ 수정됨: 우측 영역 flex: 1 설정 */}
                                         <View style={styles.rowRight}>
                                             {item.subtitle && (
                                                 <Text style={styles.rowSubtitle} numberOfLines={1}>
@@ -230,8 +253,6 @@ const styles = StyleSheet.create({
     section: { marginBottom: 28 },
     sectionTitle: { fontSize: 13, fontWeight: "600", color: "#8E8E93", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8, marginLeft: 4 },
     card: { backgroundColor: "#fff", borderRadius: 16, overflow: "hidden", ...shadows.sm },
-
-    // ✅ 수정됨: flexDirection을 통한 균형 잡힌 레이아웃
     row: {
         width: "100%",
         minHeight: 56,
@@ -244,25 +265,22 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 12,
-        flexShrink: 1, // 좌측 텍스트가 길어지면 줄어들게 설정
+        flexShrink: 1,
         marginRight: 10
     },
     rowTitle: { fontSize: 16, fontWeight: "500", color: "#111" },
-
     rowRight: {
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
-        flex: 1, // 남은 공간 모두 차지
+        flex: 1,
         justifyContent: 'flex-end'
     },
-    rowSubtitle: { fontSize: 13, color: "#8E8E93", flexShrink: 1 }, // 서브타이틀도 길면 생략
-
+    rowSubtitle: { fontSize: 13, color: "#8E8E93", flexShrink: 1 },
     divider: { position: "absolute", bottom: 0, right: 0, left: 48, height: 1, backgroundColor: "#F2F2F7" },
     footer: { alignItems: "center", marginTop: 12, marginBottom: 40 },
     version: { fontSize: 12, color: "#C7C7CC", marginBottom: 4 },
     copyright: { fontSize: 12, color: "#C7C7CC" },
-
     modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
     bottomSheet: {
         position: "absolute", bottom: 0, left: 0, right: 0,
