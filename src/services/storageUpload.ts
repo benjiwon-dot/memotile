@@ -100,8 +100,34 @@ async function fetchBlobWithRetry(uri: string, tries = 6) {
 }
 
 export async function uploadFileUriToStorage(path: string, fileUri: string) {
-    // ✅ 어디서 멈추는지 보이게: enter 로그 (이건 무조건 찍혀야 정상)
-    console.log("🟦 [upload] enter", { path });
+    console.log("🟦 [upload] enter", { path, fileUri });
+
+    // ✨ [핵심 해결] 웹(Vercel) 환경에서는 모바일용 파일 시스템 검사를 완전히 무시하고 즉시 업로드합니다.
+    if (Platform.OS === 'web') {
+        try {
+            console.log("🟦 [upload-web] fetching blob directly");
+            // 웹은 메모리에 이미 blob이 있으므로 안정화 대기가 필요 없습니다.
+            const res = await fetch(fileUri);
+            const blob = await res.blob();
+
+            const storageRef = ref(storage, path);
+            await uploadBytes(storageRef, blob, {
+                cacheControl: "public,max-age=31536000",
+                contentType: "image/jpeg",
+            });
+
+            const downloadUrl = await getDownloadURL(storageRef);
+            console.log("✅ [upload-web] done", { path });
+            return { path, downloadUrl };
+        } catch (e) {
+            console.error("❌ [upload-web] error:", e);
+            throw e; // 에러가 나면 멈추도록 던짐
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 👇 아래부터는 기존과 100% 동일한 모바일(앱) 전용 로직입니다.
+    // ---------------------------------------------------------
 
     let uploadUri = normalizeFileUri(fileUri);
 

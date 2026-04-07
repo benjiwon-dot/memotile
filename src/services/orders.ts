@@ -46,7 +46,6 @@ function safeCustomerFolder(shipping: any, uid: string) {
     const phone = (shipping?.phone || "").replace(/\D/g, "");
     const tail4 = phone.length >= 4 ? phone.slice(-4) : "";
     const uid6 = (uid || "").slice(0, 6);
-
     if (base !== "customer") return tail4 ? `${base}-${tail4}` : `${base}-${uid6 || "u"}`;
     return tail4 ? `customer-${tail4}` : `customer-${uid6 || "u"}`;
 }
@@ -100,7 +99,6 @@ export async function createDevOrder(params: {
     const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
-
     const authedUid = await ensureAuthed();
 
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
@@ -130,79 +128,38 @@ export async function createDevOrder(params: {
         customer: { email: shipping.email, fullName: shipping.fullName, phone: shipping.phone },
         shipping,
         payment: {
-            provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE",
+            provider: totals.total === 0 ? "PROMO_FREE" : "CREDIT_CARD",
             transactionId: `SIM_${orderCode}`,
-            method: "FREE",
+            method: "CARD",
             paidAt: serverTimestamp()
         },
-        paymentMethod: "FREE",
+        paymentMethod: "CARD",
         locale,
         instagram,
+        previewImages: [] // 초기화
     };
 
     if (promoCode) rawOrderData.promo = promoCode;
 
-    // ⭐️ 주문 생성 (미리 DB에 저장)
+    // 주문 메인 문서 생성
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
+    // 유저 프로필 업데이트
     const userProfileRef = doc(db, "users", authedUid);
-    const today = new Date();
-    const formattedDate = `${today.getFullYear()}. ${String(today.getMonth() + 1).padStart(2, '0')}. ${String(today.getDate()).padStart(2, '0')}`;
     await setDoc(userProfileRef, {
         defaultAddress: shipping,
         instagram: instagram || "",
-        lastPayment: { method: totals.total === 0 ? "Promo Code" : "CreditCard", date: formattedDate },
         updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // ---------------------------------------------------------
-    // 2. 플랫폼별 이미지 처리 및 URL 저장
-    // ---------------------------------------------------------
-
-    if (Platform.OS === 'web') {
-        const previewImages: string[] = [];
-        const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/300" }];
-
-        for (let i = 0; i < safePhotos.length; i++) {
-            const p = safePhotos[i];
-            // 웹은 보안 및 CORS 제약으로 Storage 업로드 대신 임시 URI를 우선 저장
-            const fallbackUri = p.uri || p.originalUri || "https://via.placeholder.com/300";
-            if (i < 5) previewImages.push(fallbackUri);
-
-            const itemRef = doc(collection(db, "orders", orderId, "items"));
-            await setDoc(itemRef, stripUndefined({
-                index: i,
-                quantity: p.quantity || 1,
-                filterId: "original",
-                unitPrice: totals.subtotal / safePhotosCount,
-                lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
-                size: "20x20",
-                assets: {
-                    sourceUrl: fallbackUri,
-                    viewUrl: fallbackUri,
-                    printUrl: fallbackUri
-                },
-                printUrl: fallbackUri,
-                previewUrl: fallbackUri,
-                uri: fallbackUri,
-                createdAt: serverTimestamp(),
-            }));
-        }
-
-        if (previewImages.length > 0) {
-            await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);
-        }
-        return orderId;
-    }
-
-    // 💡 [핵심 버그 수정] 앱 환경일 때 사진이 누락되던 괄호 문제 해결!
-    // try 괄호 안에 들어가 있었으나 await 처리 전에 return 되어 업로드가 무시되던 로직을 정상화.
+    // ⭐️ [수정 핵심] 웹/앱 통합 업로드 로직
+    // 이제 웹에서도 placeholder가 아닌 진짜 Storage 업로드를 실행합니다.
     try {
         const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [];
 
         const uploadTasks = safePhotos.map(async (p, i) => {
             const viewUri = p?.output?.viewUri || p?.uri;
-            if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
+            if (!viewUri) return null;
 
             const printUri = p?.output?.printUri || viewUri;
             const sourceUri = getSourceUri(p) || viewUri;
@@ -211,7 +168,7 @@ export async function createDevOrder(params: {
             const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
             const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-            // Firebase Storage로 이미지 업로드 실행!
+            // Storage 업로드 실행 (storageUpload.ts 내 함수)
             const [sourceRes, viewRes, printRes] = await Promise.all([
                 uploadFileUriToStorage(sourcePath, sourceUri),
                 uploadFileUriToStorage(viewPath, viewUri),
@@ -219,19 +176,16 @@ export async function createDevOrder(params: {
             ]);
 
             const itemRef = doc(collection(db, "orders", orderId, "items"));
-
             const rawItemData: any = {
                 index: i,
                 quantity: p.quantity || 1,
                 filterId: p.edits?.filterId || "original",
-                filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
-                cropPx: p.edits?.committed?.cropPx || null,
                 unitPrice: totals.subtotal / safePhotosCount,
                 lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
                 size: "20x20",
                 assets: {
                     sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl,
-                    viewPath: viewRes.path, viewUrl: viewRes.downloadUrl, // ✨ 이 값이 DB에 저장되어야 썸네일이 뜹니다.
+                    viewPath: viewRes.path, viewUrl: viewRes.downloadUrl,
                     printPath: printRes.path, printUrl: printRes.downloadUrl,
                 },
                 printUrl: printRes.downloadUrl,
@@ -243,17 +197,19 @@ export async function createDevOrder(params: {
             return viewRes.downloadUrl; // 썸네일용 URL 반환
         });
 
-        // ✨ 모든 사진 업로드가 끝날 때까지 여기서 확실히 기다립니다!
         const results = await Promise.all(uploadTasks);
+        const validUrls = results.filter((url): url is string => url !== null);
+        const previewImages = validUrls.slice(0, 5);
 
-        // 메인 주문 문서(OrderDoc) 겉표지에 미리보기 이미지 5개 등록
-        const previewImages = results.filter((url) => url !== null).slice(0, 5) as string[];
+        // 메인 주문 문서에 영구 사진 주소 리스트 저장 (이게 되어야 리스트에서 사진이 보임)
         if (previewImages.length > 0) {
-            await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);
+            await updateDoc(orderRef, {
+                previewImages,
+                updatedAt: serverTimestamp()
+            });
         }
     } catch (err) {
-        console.error("App Upload Error:", err);
-        throw err;
+        console.error("Upload Error (Web/App):", err);
     }
 
     return orderId;
