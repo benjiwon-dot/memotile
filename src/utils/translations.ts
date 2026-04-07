@@ -356,6 +356,8 @@ export const STRINGS = {
         "payTrueMoney": "TrueMoney Wallet",
         "payRabbitLinePay": "Rabbit LINE Pay",
         "cardPaymentSoon": "Credit card payment is coming soon.",
+        "trueMoneySoon": "TrueMoney payment is coming soon.",
+        "rabbitLinePaySoon": "Rabbit LINE Pay is coming soon.",
         "comingSoon": "Soon",
         "checkout.previewClose": "Close",
         "exchangeRateNotice": "", // English doesn't need this notice
@@ -743,6 +745,8 @@ export const STRINGS = {
         "payTrueMoney": "ทรูมันนี่ วอลเล็ท",
         "payRabbitLinePay": "Rabbit LINE Pay",
         "cardPaymentSoon": "เร็วๆ นี้",
+        "trueMoneySoon": "การชำระเงินผ่าน TrueMoney จะเปิดให้บริการเร็วๆ นี้",
+        "rabbitLinePaySoon": "การชำระเงินผ่าน Rabbit LINE Pay จะเปิดให้บริการเร็วๆ นี้",
         "comingSoon": "เร็วๆ นี้",
         "checkout.previewClose": "ปิด",
         "exchangeRateNotice": "* ยอดเรียกเก็บจริงอาจแตกต่างจากนี้เล็กน้อย ขึ้นอยู่กับอัตราแลกเปลี่ยนของผู้ให้บริการชำระเงิน",

@@ -22,8 +22,6 @@ import * as WebBrowser from "expo-web-browser";
 
 // ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
-import TrueMoneyModal from "../components/payments/TrueMoneyModal";
-import RabbitLinePayModal from "../components/payments/RabbitLinePayModal";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -164,14 +162,26 @@ export default function CheckoutStepTwoScreen() {
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
     const safeLocale = locale || "EN";
+
+    // ✨ 화면 표시용 (THB 또는 USD)
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
 
+    // ✨ 서버 전송용 고정 달러(USD) 가격
+    const BASE_PRICE_USD = 6.45;
+
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
+
+    // 화면 표시용 합계
     const subtotal = safePhotosCount * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
     const shippingFee = 0;
     const total = Math.max(0, (subtotal || 0) - (discount || 0) + shippingFee);
+
+    // ✨ 서버 전송용 달러 합계 (페이레터 규칙)
+    const subtotalUSD = safePhotosCount * BASE_PRICE_USD;
+    const discountUSD = promoResult?.success ? subtotalUSD : 0;
+    const totalInUSD = Math.max(0, subtotalUSD - discountUSD);
 
     const handleApplyPromo = async () => {
         if (!promoCode) return;
@@ -262,36 +272,39 @@ export default function CheckoutStepTwoScreen() {
         return true;
     };
 
-    // ✨ 본섭 백엔드에 안전하게 결제를 요청하는 함수 (웹브라우저 취소 처리 및 다국어 보완)
+    // ✨ 페이레터 결제 요청
     const requestPayletterPayment = async (orderId: string, method: string) => {
         try {
-            // 결제 수단에 따라 페이레터 pgcode 매핑
-            let pgcode = "PLCreditCard";
-            if (method === "TRUEMONEY") {
-                pgcode = "MOLTrueMoney";
-            } else if (method === "RABBIT_LINE_PAY") {
-                pgcode = "CodaPayRabbitLINEPay";
+            // 💡 심사 방지용 처리: 테스트 불가능 결제 수단 블락 (맞춤형 알림 적용)
+            if (method === "TRUEMONEY" || method === "RABBIT_LINE_PAY") {
+                const title = (t as any)?.["comingSoon"] || "Coming Soon";
+                const msg = method === "TRUEMONEY"
+                    ? ((t as any)?.["trueMoneySoon"] || "TrueMoney payment is coming soon.")
+                    : ((t as any)?.["rabbitLinePaySoon"] || "Rabbit LINE Pay is coming soon.");
+
+                Alert.alert(title, msg);
+                setIsCreatingOrder(false);
+                return;
             }
 
-            // 본섭 리전(us-central1)을 명시적으로 선언하여 함수 호출
+            let pgcode = "PLCreditCard";
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
-            // 1. 백엔드에 결제 URL 요청
+            // ✨ 핵심 수정: 화면에 얼마로 보이든 페이레터로는 반드시 달러(USD) 계산값을 보냄
             const response: any = await requestPayment({
                 orderId,
-                amount: total,
+                amount: totalInUSD, // 화면의 200(THB)이 아닌 6.45(USD)를 전송
                 email: formData.email,
                 pgcode: pgcode,
             });
 
             const paymentUrl = response.data.paymentUrl;
 
-            // 2. 모달/결제창 호출
             if (Platform.OS === 'web') {
+                // 웹은 팝업 차단 방지를 위해 현재 창 이동
                 window.location.href = paymentUrl;
             } else {
-                // 다국어 처리 (한국어/태국어 등)
                 const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
                 const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
                 const cancelText = (t as any)?.["cancel"] || "Cancel";
@@ -301,23 +314,26 @@ export default function CheckoutStepTwoScreen() {
                     alertTitle,
                     alertMessage,
                     [
-                        { text: cancelText, style: "cancel" },
+                        {
+                            text: cancelText,
+                            style: "cancel",
+                            onPress: () => setIsCreatingOrder(false)
+                        },
                         {
                             text: confirmText,
                             onPress: async () => {
-                                // 인앱 브라우저 오픈 및 결과 기다리기
                                 const result = await WebBrowser.openBrowserAsync(paymentUrl);
 
-                                // result.type이 'cancel'이면 유저가 X버튼으로 강제로 닫은 것
-                                if (result.type === 'cancel') {
+                                // 취소 시 완료 처리 안 함
+                                if (result.type === 'cancel' || result.type === 'dismiss') {
+                                    setIsCreatingOrder(false);
                                     Alert.alert(
                                         (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
                                         (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
                                     );
-                                    return; // ⚠️ 여기서 함수 종료! 성공 페이지로 넘어가지 않음
+                                    return;
                                 }
 
-                                // 정상적으로 딥링크를 타고 앱으로 돌아온 경우에만 장바구니 비우고 성공 페이지 이동
                                 await clearDraft();
                                 clearPhotos();
                                 router.replace({ pathname: "/myorder/success", params: { id: orderId } });
@@ -328,6 +344,7 @@ export default function CheckoutStepTwoScreen() {
             }
         } catch (error: any) {
             console.error("Payletter request error:", error);
+            setIsCreatingOrder(false);
             const errorTitle = (t as any)?.["paymentError"] || "Payment Error";
             Alert.alert(errorTitle, error.message || "An error occurred while preparing the payment.");
         }
@@ -352,6 +369,7 @@ export default function CheckoutStepTwoScreen() {
         try {
             await ensureTokenReady(user!);
 
+            // 화면에 보이는 통화 코드 (Firebase 저장용)
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
             const orderId = await createDevOrder({
@@ -391,9 +409,8 @@ export default function CheckoutStepTwoScreen() {
 
         } catch (e: any) {
             console.error("Failed to place order:", e);
-            Alert.alert("Order failed", e?.message || "Failed to place order.");
-        } finally {
             setIsCreatingOrder(false);
+            Alert.alert("Order failed", e?.message || "Failed to place order.");
         }
     };
 

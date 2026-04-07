@@ -931,9 +931,10 @@ export const payletterRequestPayment = onCall({ region: "us-central1", cors: tru
     const paymentData = {
         pginfo: pgcode || "PLCreditCard",
         storeid: PAYLETTER_CLIENT_ID,
+        // ✨ 여기서 무조건 "USD"로 통화를 픽스합니다 (페이레터 요구사항)
         currency: "USD",
         storeorderno: orderId,
-        amount: Number(amount).toFixed(2), // 페이레터 USD 소수점 필수 규칙 적용
+        amount: Number(amount).toFixed(2), // 프론트에서 달러 기준으로 계산해서 보낸 값을 그대로 씁니다
         payerid: req.auth.uid,
         payeremail: email || "",
         returnurl: `${BASE_URL}/payletterReturn`, // 결제 후 3단계 함수로 렌더링
