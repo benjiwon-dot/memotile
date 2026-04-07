@@ -99,8 +99,8 @@ export async function createDevOrder(params: {
     const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
-    const authedUid = await ensureAuthed();
 
+    const authedUid = await ensureAuthed();
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
     const orderId = orderRef.id;
     const dateKey = yyyymmdd();
@@ -111,7 +111,7 @@ export async function createDevOrder(params: {
 
     const safePhotosCount = Array.isArray(photos) && photos.length > 0 ? photos.length : 1;
 
-    // 1. 공통 주문 데이터 구성
+    // 1. 공통 주문 데이터 저장
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -141,10 +141,8 @@ export async function createDevOrder(params: {
 
     if (promoCode) rawOrderData.promo = promoCode;
 
-    // 주문 메인 문서 생성
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    // 유저 프로필 업데이트
     const userProfileRef = doc(db, "users", authedUid);
     await setDoc(userProfileRef, {
         defaultAddress: shipping,
@@ -152,64 +150,86 @@ export async function createDevOrder(params: {
         updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // ⭐️ [수정 핵심] 웹/앱 통합 업로드 로직
-    // 이제 웹에서도 placeholder가 아닌 진짜 Storage 업로드를 실행합니다.
+
+    // =========================================================
+    // 2. 📸 사진 업로드 로직 (웹과 앱을 완벽하게 분리)
+    // =========================================================
     try {
-        const safePhotos = Array.isArray(photos) && photos.length > 0 ? photos : [];
+        if (Platform.OS === 'web') {
+            // 🌐 [WEB 전용]: 심사용. 에디터를 안 거치므로 고른 원본(p.uri)을 Storage에 바로 업로드!
+            const webPhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/600x600.png?text=Test+Order" }];
 
-        const uploadTasks = safePhotos.map(async (p, i) => {
-            const viewUri = p?.output?.viewUri || p?.uri;
-            if (!viewUri) return null;
+            const uploadTasks = webPhotos.map(async (p, i) => {
+                const targetUri = p.uri || p.originalUri || "https://via.placeholder.com/600";
 
-            const printUri = p?.output?.printUri || viewUri;
-            const sourceUri = getSourceUri(p) || viewUri;
+                // 이미 인터넷 주소면 스토리지 업로드 건너뜀
+                if (targetUri.startsWith("http")) {
+                    const itemRef = doc(collection(db, "orders", orderId, "items"));
+                    await setDoc(itemRef, stripUndefined({
+                        index: i, quantity: p.quantity || 1, filterId: "original",
+                        unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
+                        size: "20x20", assets: { sourceUrl: targetUri, viewUrl: targetUri, printUrl: targetUri },
+                        printUrl: targetUri, previewUrl: targetUri, createdAt: serverTimestamp(),
+                    }));
+                    return targetUri;
+                }
 
-            const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
-            const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
-            const printPath = `${storageBasePath}/items/${i}_print.jpg`;
+                // 브라우저에서 고른 사진(blob)이면 Firebase Storage에 업로드
+                const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
+                const uploadRes = await uploadFileUriToStorage(viewPath, targetUri);
 
-            // Storage 업로드 실행 (storageUpload.ts 내 함수)
-            const [sourceRes, viewRes, printRes] = await Promise.all([
-                uploadFileUriToStorage(sourcePath, sourceUri),
-                uploadFileUriToStorage(viewPath, viewUri),
-                uploadFileUriToStorage(printPath, printUri),
-            ]);
-
-            const itemRef = doc(collection(db, "orders", orderId, "items"));
-            const rawItemData: any = {
-                index: i,
-                quantity: p.quantity || 1,
-                filterId: p.edits?.filterId || "original",
-                unitPrice: totals.subtotal / safePhotosCount,
-                lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
-                size: "20x20",
-                assets: {
-                    sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl,
-                    viewPath: viewRes.path, viewUrl: viewRes.downloadUrl,
-                    printPath: printRes.path, printUrl: printRes.downloadUrl,
-                },
-                printUrl: printRes.downloadUrl,
-                previewUrl: viewRes.downloadUrl,
-                createdAt: serverTimestamp(),
-            };
-
-            await setDoc(itemRef, stripUndefined(rawItemData));
-            return viewRes.downloadUrl; // 썸네일용 URL 반환
-        });
-
-        const results = await Promise.all(uploadTasks);
-        const validUrls = results.filter((url): url is string => url !== null);
-        const previewImages = validUrls.slice(0, 5);
-
-        // 메인 주문 문서에 영구 사진 주소 리스트 저장 (이게 되어야 리스트에서 사진이 보임)
-        if (previewImages.length > 0) {
-            await updateDoc(orderRef, {
-                previewImages,
-                updatedAt: serverTimestamp()
+                const itemRef = doc(collection(db, "orders", orderId, "items"));
+                await setDoc(itemRef, stripUndefined({
+                    index: i, quantity: p.quantity || 1, filterId: "original",
+                    unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
+                    size: "20x20", assets: { sourcePath: viewPath, sourceUrl: uploadRes.downloadUrl, viewPath: viewPath, viewUrl: uploadRes.downloadUrl, printPath: viewPath, printUrl: uploadRes.downloadUrl },
+                    printUrl: uploadRes.downloadUrl, previewUrl: uploadRes.downloadUrl, createdAt: serverTimestamp(),
+                }));
+                return uploadRes.downloadUrl; // 썸네일 URL 리턴
             });
+
+            const results = await Promise.all(uploadTasks);
+            const previewImages = results.filter((url): url is string => url !== null).slice(0, 5);
+            if (previewImages.length > 0) await updateDoc(orderRef, { previewImages, updatedAt: serverTimestamp() });
+
+        } else {
+            // 📱 [APP 전용]: 실제 서비스용. 에디터를 거친 결과물(p.output.viewUri)을 엄격하게 업로드!
+            const appPhotos = Array.isArray(photos) && photos.length > 0 ? photos : [];
+
+            const uploadTasks = appPhotos.map(async (p, i) => {
+                const viewUri = p?.output?.viewUri || p?.uri;
+                if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
+
+                const printUri = p?.output?.printUri || viewUri;
+                const sourceUri = getSourceUri(p) || viewUri;
+
+                const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
+                const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
+                const printPath = `${storageBasePath}/items/${i}_print.jpg`;
+
+                const [sourceRes, viewRes, printRes] = await Promise.all([
+                    uploadFileUriToStorage(sourcePath, sourceUri),
+                    uploadFileUriToStorage(viewPath, viewUri),
+                    uploadFileUriToStorage(printPath, printUri),
+                ]);
+
+                const itemRef = doc(collection(db, "orders", orderId, "items"));
+                await setDoc(itemRef, stripUndefined({
+                    index: i, quantity: p.quantity || 1, filterId: p.edits?.filterId || "original",
+                    filterParams: p.edits?.committed?.filterParams || null, cropPx: p.edits?.committed?.cropPx || null,
+                    unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
+                    size: "20x20", assets: { sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl, viewPath: viewRes.path, viewUrl: viewRes.downloadUrl, printPath: printRes.path, printUrl: printRes.downloadUrl },
+                    printUrl: printRes.downloadUrl, previewUrl: viewRes.downloadUrl, createdAt: serverTimestamp(),
+                }));
+                return viewRes.downloadUrl; // 썸네일 URL 리턴
+            });
+
+            const results = await Promise.all(uploadTasks);
+            const previewImages = results.filter((url): url is string => url !== null).slice(0, 5);
+            if (previewImages.length > 0) await updateDoc(orderRef, { previewImages, updatedAt: serverTimestamp() });
         }
     } catch (err) {
-        console.error("Upload Error (Web/App):", err);
+        console.error("Upload Error:", err);
     }
 
     return orderId;
