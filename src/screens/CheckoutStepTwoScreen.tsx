@@ -19,6 +19,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import * as WebBrowser from "expo-web-browser";
+import * as Linking from 'expo-linking'; // ✨ 딥링크 확인용 라이브러리 추가
 
 // ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
@@ -163,22 +164,17 @@ export default function CheckoutStepTwoScreen() {
 
     const safeLocale = locale || "EN";
 
-    // ✨ 화면 표시용 (THB 또는 USD)
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
-
-    // ✨ 서버 전송용 고정 달러(USD) 가격
     const BASE_PRICE_USD = 6.45;
 
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    // 화면 표시용 합계
     const subtotal = safePhotosCount * PRICE_PER_TILE;
     const discount = promoResult?.discountAmount || 0;
     const shippingFee = 0;
     const total = Math.max(0, (subtotal || 0) - (discount || 0) + shippingFee);
 
-    // ✨ 서버 전송용 달러 합계 (페이레터 규칙)
     const subtotalUSD = safePhotosCount * BASE_PRICE_USD;
     const discountUSD = promoResult?.success ? subtotalUSD : 0;
     const totalInUSD = Math.max(0, subtotalUSD - discountUSD);
@@ -279,18 +275,24 @@ export default function CheckoutStepTwoScreen() {
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
-            // ✨ 핵심 수정: 화면에 얼마로 보이든 페이레터로는 반드시 달러(USD) 계산값을 보냄
+            // ✨ [핵심 추가] 내 환경의 주소를 뽑아냄
+            const appScheme = Linking.createURL(''); // 엑스포 고나 정식 앱일 때 쓸 딥링크 추출
+            const webUrl = Platform.OS === 'web' ? `${window.location.origin}/myorder/success?id=${orderId}` : '';
+
+            // 서버로 통화, 내 주소 정보를 싹 다 보냄
             const response: any = await requestPayment({
                 orderId,
-                amount: totalInUSD, // 화면의 200(THB)이 아닌 6.45(USD)를 전송
+                amount: totalInUSD,
                 email: formData.email,
                 pgcode: pgcode,
+                platform: Platform.OS,
+                webUrl: webUrl,
+                appScheme: appScheme
             });
 
             const paymentUrl = response.data.paymentUrl;
 
             if (Platform.OS === 'web') {
-                // 웹은 팝업 차단 방지를 위해 현재 창 이동
                 window.location.href = paymentUrl;
             } else {
                 const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
@@ -312,7 +314,6 @@ export default function CheckoutStepTwoScreen() {
                             onPress: async () => {
                                 const result = await WebBrowser.openBrowserAsync(paymentUrl);
 
-                                // 취소 시 완료 처리 안 함
                                 if (result.type === 'cancel' || result.type === 'dismiss') {
                                     setIsCreatingOrder(false);
                                     Alert.alert(
@@ -341,20 +342,18 @@ export default function CheckoutStepTwoScreen() {
     const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE" | "CREDIT_CARD") => {
         Keyboard.dismiss();
 
-        // 💡 [핵심 수정] 심사 방지용 처리: TrueMoney나 Rabbit Line Pay는 즉각 차단하여 무한 로딩 방지
+        // 심사 방지용 처리
         if (provider === "TRUEMONEY" || provider === "RABBIT_LINE_PAY") {
             const title = (t as any)?.["comingSoon"] || "Coming Soon";
             const msg = provider === "TRUEMONEY"
                 ? ((t as any)?.["trueMoneySoon"] || "TrueMoney payment is coming soon.")
                 : ((t as any)?.["rabbitLinePaySoon"] || "Rabbit LINE Pay is coming soon.");
 
-            // 웹 환경에서는 브라우저 기본 알림창 사용
             if (Platform.OS === 'web') {
                 window.alert(`${title}\n\n${msg}`);
             } else {
                 Alert.alert(title, msg);
             }
-            // 여기서 즉시 종료 (로딩화면이 돌지 않음)
             return;
         }
 
@@ -374,7 +373,6 @@ export default function CheckoutStepTwoScreen() {
         try {
             await ensureTokenReady(user!);
 
-            // 화면에 보이는 통화 코드 (Firebase 저장용)
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
             const orderId = await createDevOrder({
@@ -644,7 +642,6 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         </TouchableOpacity>
 
-                        {/* 개발자용 테스트 결제 */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
@@ -678,12 +675,10 @@ const styles = StyleSheet.create({
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
     formSection: { marginBottom: 32 },
     sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
-
     errorBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEE2E2", padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: "#FCA5A5" },
     errorBoxText: { color: "#B91C1C", fontSize: 13, fontWeight: "600", marginLeft: 8, flex: 1 },
     input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
     inputError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2", borderWidth: 1.5 },
-
     instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff", overflow: "hidden" },
     instagramIconBox: { paddingLeft: 14, paddingRight: 8, height: "100%", justifyContent: "center" },
     readOnlyInput: { backgroundColor: "#f9fafb", justifyContent: "center" },
@@ -699,14 +694,7 @@ const styles = StyleSheet.create({
     summaryValue: { fontWeight: "600", fontSize: 14 },
     totalLabel: { fontWeight: "700", fontSize: 16 },
     totalValue: { fontWeight: "800", fontSize: 18 },
-
-    exchangeRateNotice: {
-        fontSize: 11,
-        color: "#9CA3AF",
-        textAlign: "right",
-        marginTop: 6,
-    },
-
+    exchangeRateNotice: { fontSize: 11, color: "#9CA3AF", textAlign: "right", marginTop: 6 },
     authBlockContainer: { marginBottom: 32 },
     loggedInBox: { backgroundColor: "#D9ECFF", padding: 16, borderRadius: 14, alignItems: "center" },
     loggedInText: { fontSize: 15, fontWeight: "600", color: "#003a70" },
@@ -715,63 +703,20 @@ const styles = StyleSheet.create({
     signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
     signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
     paymentSection: { marginBottom: 32 },
-
     agreementContainer: { marginBottom: 20, paddingHorizontal: 4 },
     agreementRow: { flexDirection: "row", alignItems: "flex-start", paddingRight: 10 },
     checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: "#D1D5DB", alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 2, backgroundColor: "#fff" },
     checkboxChecked: { backgroundColor: "#111", borderColor: "#111" },
     checkboxError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2" },
     agreementText: { fontSize: 13, color: "#4B5563", lineHeight: 20, flex: 1 },
-    agreementLink: { fontWeight: "700", color: "#111" },
-
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
-
     paymentLogo: { width: 42, height: 42, marginRight: 12 },
     paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
-
-    testBadge: {
-        backgroundColor: "#FFFBEB",
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: "#FBBF24",
-        marginRight: 8,
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    testBadgeText: {
-        fontSize: 11,
-        fontWeight: "800",
-        color: "#D97706",
-        letterSpacing: 0.5,
-    },
-
-    fullScreenLoading: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: "rgba(0,0,0,0.4)",
-        zIndex: 9999,
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    loadingBox: {
-        backgroundColor: "#fff",
-        padding: 30,
-        borderRadius: 20,
-        alignItems: "center",
-        justifyContent: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 15,
-        elevation: 8,
-    },
-    loadingText: {
-        marginTop: 16,
-        fontSize: 16,
-        fontWeight: "700",
-        color: "#333",
-    },
+    testBadge: { backgroundColor: "#FFFBEB", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: "#FBBF24", marginRight: 8, justifyContent: "center", alignItems: "center" },
+    testBadgeText: { fontSize: 11, fontWeight: "800", color: "#D97706", letterSpacing: 0.5 },
+    fullScreenLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)", zIndex: 9999, justifyContent: "center", alignItems: "center" },
+    loadingBox: { backgroundColor: "#fff", padding: 30, borderRadius: 20, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 15, elevation: 8 },
+    loadingText: { marginTop: 16, fontSize: 16, fontWeight: "700", color: "#333" },
 });

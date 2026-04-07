@@ -16,9 +16,9 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 // ✅ External Libraries
 import sharp from "sharp";
-const crypto = require("crypto"); // 👈 배포 에러(Crash)를 막기 위해 require로 통일했습니다.
+const crypto = require("crypto");
 const archiver = require("archiver");
-const axios = require("axios"); // ✨ 슬랙 전송용 추가
+const axios = require("axios");
 
 // ✅ Initialize Firebase Admin
 admin.initializeApp();
@@ -34,7 +34,7 @@ const part1 = "https://hooks.slack.com/services/T0AEXFY3GFM";
 const part2 = "/B0AFY664EJC/shdnJxZOJxJtzABgUyjjYUll";
 const SLACK_WEBHOOK_URL = part1 + part2;
 /* =========================================================================
-   HELPER FUNCTIONS (원본 그대로 보존)
+   HELPER FUNCTIONS 
    ========================================================================= */
 
 type ColorMatrix = number[]; // length 20
@@ -150,7 +150,7 @@ async function clampCropToImage(
 }
 
 /* =========================================================================
-   CLOUD FUNCTIONS (GEN 2 - 원본 보존)
+   CLOUD FUNCTIONS
    ========================================================================= */
 
 export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, async (req) => {
@@ -303,8 +303,6 @@ export const adminBatchUpdateStatus = onCall(
         timeoutSeconds: 60
     },
     async (req) => {
-        console.log(`[BatchUpdate] Request by UID: ${req.auth?.uid}, isAdmin: ${req.auth?.token?.isAdmin}`);
-
         try {
             if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
                 console.warn("[BatchUpdate] Permission Denied");
@@ -323,8 +321,6 @@ export const adminBatchUpdateStatus = onCall(
             const db = getFirestore();
             const batch = db.batch();
             const timestamp = FieldValue.serverTimestamp();
-
-            console.log(`[BatchUpdate] Target: ${orderIds.length} orders -> ${status}`);
 
             for (const orderId of orderIds) {
                 if (!orderId) continue;
@@ -347,8 +343,6 @@ export const adminBatchUpdateStatus = onCall(
             }
 
             await batch.commit();
-            console.log("[BatchUpdate] Successfully committed.");
-
             return { ok: true, updatedCount: orderIds.length };
 
         } catch (e: any) {
@@ -731,8 +725,6 @@ export const onPrintFileFinalized = onObjectFinalized(
             const height = meta.height || 0;
             const ok5000 = width >= 4000 && height >= 4000;
 
-            console.log(`[PrintAudit] ${filePath} => ${width}x${height}, ok=${ok5000}`);
-
             const db = getFirestore();
             const orderRef = db.collection("orders").doc(orderId);
 
@@ -750,7 +742,6 @@ export const onPrintFileFinalized = onObjectFinalized(
 
             if (!snap.empty) {
                 await snap.docs[0].ref.update({ "assets.printMeta": printMeta });
-                console.log(`[PrintAudit] Updated subcollection item ${snap.docs[0].id}`);
             } else {
                 await db.runTransaction(async (t) => {
                     const docSnap = await t.get(orderRef);
@@ -770,7 +761,6 @@ export const onPrintFileFinalized = onObjectFinalized(
 
                         if (found) {
                             t.update(orderRef, { items: newItems });
-                            console.log(`[PrintAudit] Updated array item index ${index}`);
                         }
                     }
                 });
@@ -782,30 +772,21 @@ export const onPrintFileFinalized = onObjectFinalized(
 );
 
 /* =========================================================================
-   ✨ NEW: SCHEDULED FUNCTIONS (슬랙 알림 및 자동 아카이브)
+   SCHEDULED FUNCTIONS
    ========================================================================= */
-
-/**
- * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
- */
 export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
     const db = getFirestore();
     const now = new Date();
-    // 24시간 전 시점 계산 (Timestamp 형식)
     const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
 
     try {
-        // 'paid' 상태인데 생성된 지 24시간이 지난 주문 조회
         const snapshot = await db.collection("orders")
             .where("status", "==", "paid")
             .where("createdAt", "<=", twentyFourHoursAgo)
             .orderBy("createdAt", "asc")
             .get();
 
-        if (snapshot.empty) {
-            console.log("[Scheduler] No abandoned orders found.");
-            return;
-        }
+        if (snapshot.empty) return;
 
         const count = snapshot.size;
         const orderDetails = snapshot.docs.map(doc => {
@@ -827,23 +808,15 @@ export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) =>
         };
 
         await axios.post(SLACK_WEBHOOK_URL, message);
-        console.log(`[Scheduler] Slack alert sent for ${count} orders.`);
-    } catch (e: any) {
-        console.error("[Scheduler] Alert Failed:", e?.message);
-    }
+    } catch (e: any) { }
 });
 
-/**
- * 🕒 매일 새벽 3시 실행: 7일 지난 완료/취소 주문 자동 아카이브
- */
 export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
     const db = getFirestore();
     const now = new Date();
-    // 7일 전 시점 계산
     const sevenDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)));
 
     const statusesToArchive = ["delivered", "canceled", "refunded"];
-
     let totalArchived = 0;
 
     for (const status of statusesToArchive) {
@@ -869,7 +842,6 @@ export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
     }
 
     if (totalArchived > 0) {
-        console.log(`[Scheduler] Archived ${totalArchived} orders.`);
         try {
             await axios.post(SLACK_WEBHOOK_URL, {
                 text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 완료/취소 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.`
@@ -878,10 +850,6 @@ export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
     }
 });
 
-/**
- * ✅ Admin: Delete Order (영구 삭제)
- * - 주문 문서와 items 서브컬렉션을 모두 삭제합니다.
- */
 export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -893,16 +861,12 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
         const db = getFirestore();
         const orderRef = db.collection("orders").doc(String(orderId));
 
-        // 1. 하위 items 삭제
         const items = await orderRef.collection("items").get();
         const batch = db.batch();
         items.forEach(doc => batch.delete(doc.ref));
-
-        // 2. 메인 주문 문서 삭제
         batch.delete(orderRef);
 
         await batch.commit();
-        console.log(`[Delete] Order ${orderId} permanently deleted by admin.`);
         return { ok: true };
     } catch (e: any) {
         console.error("[adminDeleteOrder] failed", e);
@@ -912,33 +876,36 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
 });
 
 /* =========================================================================
-   ✨ NEW: PAYLETTER 결제 연동 (1, 2, 3단계)
+   ✨ PAYLETTER 결제 연동 
    ========================================================================= */
 
-const PAYLETTER_API_KEY = "PL_Merchant"; // ⚠️ 라이브 배포 시 실제 키로 변경하세요.
+const PAYLETTER_API_KEY = "PL_Merchant";
 const PAYLETTER_CLIENT_ID = "PL_Merchant";
 const PROJECT_REGION = "us-central1";
-const PROJECT_ID = "memotile-app-anti-demo"; // ⚠️ 실제 Firebase 프로젝트 ID (예: memotile-app-anti) 로 꼭 변경하세요!
+const PROJECT_ID = "memotile-app-anti-demo";
 const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
 
-// 1단계: 프론트엔드를 대신해서 페이레터 서버로 결제창 URL을 요청하는 함수
 export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
 
-    const { orderId, amount, email, pgcode } = req.data || {};
+    // ✨ [핵심 수정] 프론트에서 전달받은 플랫폼(web/ios/android)과 URL 정보를 가져옴
+    const { orderId, amount, email, pgcode, platform, webUrl, appScheme } = req.data || {};
     if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
+
+    // ✨ [핵심 수정] Payletter가 결제 완료 후 돌아올 주소에 쿼리 파라미터로 우리의 앱/웹 주소를 박아둠
+    const returnQuery = `?platform=${platform || ''}&webUrl=${encodeURIComponent(webUrl || '')}&appScheme=${encodeURIComponent(appScheme || '')}`;
 
     const paymentData = {
         pginfo: pgcode || "PLCreditCard",
         storeid: PAYLETTER_CLIENT_ID,
-        // ✨ 여기서 무조건 "USD"로 통화를 픽스합니다 (페이레터 요구사항)
         currency: "USD",
         storeorderno: orderId,
-        amount: Number(amount).toFixed(2), // 프론트에서 달러 기준으로 계산해서 보낸 값을 그대로 씁니다
+        amount: Number(amount).toFixed(2),
         payerid: req.auth.uid,
         payeremail: email || "",
-        returnurl: `${BASE_URL}/payletterReturn`, // 결제 후 3단계 함수로 렌더링
-        notiurl: `${BASE_URL}/payletterWebhook`   // 결제 완료 2단계 함수로 웹훅 알림
+        // ✨ [핵심 수정] 파라미터가 포함된 리턴 URL을 페이레터로 전송
+        returnurl: `${BASE_URL}/payletterReturn${returnQuery}`,
+        notiurl: `${BASE_URL}/payletterWebhook`
     };
 
     try {
@@ -963,52 +930,53 @@ export const payletterRequestPayment = onCall({ region: "us-central1", cors: tru
     }
 });
 
-// 2단계: 웹훅 (notiurl) - 페이레터가 결제 성공 시 DB 업데이트를 하라고 찔러주는 곳
 export const payletterWebhook = onRequest({ region: "us-central1" }, async (req, res) => {
     const data = req.body;
-    const {
-        storeid, currency, storeorderno, payamt, payerid,
-        timestamp, hash, notifytype, paytoken, retcode
-    } = data;
+    const { storeid, currency, storeorderno, payamt, payerid, timestamp, hash, notifytype, paytoken, retcode } = data;
 
-    // 1. 위변조 검증 (해시 체크) - 공식 문서 참조
     const rawString = `${storeid}${currency}${storeorderno}${payamt}${payerid}${timestamp}${PAYLETTER_API_KEY}`;
     const generatedHash = crypto.createHash('sha256').update(rawString).digest('hex');
 
     if (hash !== generatedHash) {
-        console.error("[Payletter Webhook] Hash mismatch.", { storeorderno });
         res.status(400).send("Hash mismatch");
         return;
     }
 
-    // 2. 결제 완료 처리 (1: 성공, retcode 0: 정상)
     if (String(notifytype) === "1" && String(retcode) === "0") {
         const db = getFirestore();
         try {
             await db.collection("orders").doc(storeorderno).update({
-                status: "paid", // 주문 상태를 결제 완료로 업데이트
+                status: "paid",
                 payToken: paytoken,
                 paidAt: FieldValue.serverTimestamp(),
             });
-            console.log(`[Payletter Webhook] Order ${storeorderno} paid successfully.`);
-
-            // ⭐ 페이레터의 요구사항: HTML이나 공백 없이 딱 이 문자열만 보내야 함
             res.status(200).send("<RESULT>OK</RESULT>");
             return;
         } catch (error) {
-            console.error(`[Payletter Webhook] DB Update Failed for ${storeorderno}`, error);
             res.status(500).send("DB Error");
             return;
         }
     }
-
-    // 결제 취소/부분 취소 등의 다른 타입도 일단 OK를 내려서 페이레터의 불필요한 재전송 방지
     res.status(200).send("<RESULT>OK</RESULT>");
 });
 
-// 3단계: 리턴 URL (returnurl) - 결제 창을 닫고 다시 앱으로 딥링크를 태우는 역할
+// ✨ [핵심 수정] 결제가 끝나고 돌아오는 화면 분기 처리
 export const payletterReturn = onRequest({ region: "us-central1" }, async (req, res) => {
-    // app.json에 설정된 scheme: "memotile"을 이용하여 딥링크 연결
+    // URL에 숨겨두었던 쿼리 파라미터 읽기
+    const platform = req.query.platform as string;
+    const webUrl = req.query.webUrl as string;
+    const appScheme = req.query.appScheme as string;
+
+    // 1️⃣ 웹 브라우저(Mac/웹사이트)인 경우: HTML 팝업 대신 즉시 웹 성공 페이지로 이동
+    if (platform === 'web' && webUrl) {
+        res.redirect(302, webUrl);
+        return;
+    }
+
+    // 2️⃣ 모바일 앱(Expo Go 또는 스토어 앱)인 경우: 기기에 맞는 딥링크 실행 후 창 닫기
+    const fallbackScheme = "memotile://";
+    const targetScheme = appScheme || fallbackScheme;
+
     const html = `
         <!DOCTYPE html>
         <html>
@@ -1026,10 +994,10 @@ export const payletterReturn = onRequest({ region: "us-central1" }, async (req, 
         <body>
             <h2>결제가 진행되었습니다.</h2>
             <p>화면이 자동으로 닫히지 않으면 아래 버튼을 눌러 앱으로 돌아가세요.</p>
-            <a href="memotile://" class="btn">앱으로 돌아가기</a>
+            <a href="${targetScheme}" class="btn">앱으로 돌아가기</a>
             <script>
-                // 모바일 환경에서 자동으로 딥링크 실행을 시도하여 브라우저 창 닫기 유도
-                setTimeout(() => { window.location.href = "memotile://"; }, 500);
+                // 기기 환경에 맞게 자동으로 앱 열기 시도
+                setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);
                 setTimeout(() => { window.close(); }, 2000);
             </script>
         </body>
