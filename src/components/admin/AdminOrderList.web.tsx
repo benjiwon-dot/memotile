@@ -14,7 +14,9 @@ import {
     Trash2,
     Link as LinkIcon,
     Loader2,
-    Clock
+    Clock,
+    Copy,
+    Users // 마케팅용 아이콘 추가
 } from "lucide-react";
 import { getFirestore, doc, deleteDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -179,12 +181,20 @@ export default function AdminOrderList() {
 
     const handleBulkStatus = async (newStatus: string) => {
         if (selectedIds.size === 0) return;
+        const targetStatus = newStatus.toLowerCase();
         if (isWeb && !window.confirm(`Update ${selectedIds.size} orders to ${newStatus}?`)) return;
 
         setBulkLoading(true);
         try {
-            const fn = httpsCallable(functions, "adminBatchUpdateStatus");
-            await fn({ orderIds: Array.from(selectedIds), status: newStatus });
+            try {
+                const fn = httpsCallable(functions, "adminBatchUpdateStatus");
+                await fn({ orderIds: Array.from(selectedIds), status: targetStatus });
+            } catch (batchErr) {
+                const fnSingle = httpsCallable(functions, "adminUpdateOrderOps");
+                await Promise.all(
+                    Array.from(selectedIds).map(id => fnSingle({ orderId: id, status: targetStatus }))
+                );
+            }
             await fetchOrders();
             alert("Status updated successfully!");
         } catch (e: any) {
@@ -198,27 +208,21 @@ export default function AdminOrderList() {
         if (selectedIds.size === 0) return;
         const count = selectedIds.size;
         const challenge = getDeleteChallenge();
-
         const userInput = prompt(`🚨 DANGER: Delete ${count} orders permanently.\nEnter code: ${challenge}`);
-
         if (userInput !== challenge) {
             alert("Code mismatch. Cancelled.");
             return;
         }
-
         setBulkLoading(true);
-        let successCount = 0; let failCount = 0;
         try {
             const ids = Array.from(selectedIds);
             for (const id of ids) {
-                try { await deleteDoc(doc(db, "orders", id)); successCount++; }
-                catch (innerE) { failCount++; }
+                await deleteDoc(doc(db, "orders", id));
             }
             await fetchOrders();
-            if (failCount === 0) alert(`✅ ${successCount} orders deleted.`);
-            else alert(`⚠️ Success: ${successCount} / Failed: ${failCount}`);
+            alert("Deleted successfully.");
         } catch (e: any) {
-            alertCallableError("Bulk delete critical error:", e);
+            alertCallableError("Bulk delete error:", e);
         } finally {
             setBulkLoading(false);
         }
@@ -226,21 +230,14 @@ export default function AdminOrderList() {
 
     const handleBulkZipCopy = async () => {
         if (selectedIds.size === 0) return;
-        if (selectedIds.size > 50) {
-            alert(`⚠️ Max 50 orders per bulk ZIP.`);
-            return;
-        }
         setBulkLoading(true);
         try {
             const fn = httpsCallable(functions, "adminExportZipPrints");
             const res = await fn({ orderIds: Array.from(selectedIds), type: "print" });
             const { url } = (res.data as any) || {};
-
             if (url) {
                 await navigator.clipboard.writeText(url);
-                alert(`✅ Bulk ZIP URL copied!\n\nLink:\n${url}`);
-            } else {
-                alert("Failed to generate ZIP link.");
+                alert(`✅ Bulk ZIP URL copied!`);
             }
         } catch (e: any) {
             alertCallableError("ZIP export failed:", e);
@@ -249,62 +246,62 @@ export default function AdminOrderList() {
         }
     };
 
+    // ⭐️ 1. 제작용 CSV 추출 (인스타 제외)
     const handleExportCleanCSV = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
-        if (targets.length === 0) {
-            alert("No orders to export.");
-            return;
-        }
-
+        if (targets.length === 0) return;
         setBulkLoading(true);
-
         try {
             const rows = [];
-
             for (const o of targets) {
                 let zipUrl = "";
                 try {
                     const fn = httpsCallable(functions, "adminExportZipPrints");
                     const res = await fn({ orderIds: [o.id], type: "print" });
                     zipUrl = (res.data as any)?.url || "";
-                } catch (err) {
-                    console.error("Failed to fetch zip for", o.orderCode, err);
-                    zipUrl = "Link Error";
-                }
+                } catch { zipUrl = "Link Error"; }
 
                 rows.push({
                     "Order Number": o.orderCode,
                     "Date": formatDate(o.createdAt),
                     "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
                     "Phone Number": o.shipping?.phone || o.customer?.phone || "",
-
-                    "Postal Code": o.shipping?.postalCode || "",
-                    "Address 1": o.shipping?.address1 || "",
-                    "Address 2": o.shipping?.address2 || "",
-                    "City/State": [o.shipping?.city, o.shipping?.state].filter(Boolean).join(", "),
-                    "Country": o.shipping?.country || "",
-
-                    "Instagram": (o as any).instagramId || (o.customer as any)?.instagram || "",
-                    "Photo Quantity": o.itemsCount || (o as any).items?.length || 0,
-                    "Status": o.status,
+                    "Address": `${o.shipping?.address1 || ""} ${o.shipping?.address2 || ""} ${o.shipping?.city || ""} ${o.shipping?.state || ""}`.trim(),
+                    "Photo Qty": o.itemsCount || 0,
                     "Admin Note": (o as any).adminNote || "",
                     "Print URL": zipUrl,
                 });
             }
+            downloadTextFile(`Printer_Orders_${new Date().toISOString().slice(0, 10)}.csv`, "\uFEFF" + toCsv(rows));
+        } catch (e: any) { alertCallableError("CSV Export failed", e); }
+        finally { setBulkLoading(false); }
+    };
 
+    // ⭐️ 2. 마케팅용 인스타 정보 추출 (개인정보 보호용 분리)
+    const handleExportInstaInfo = async () => {
+        const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
+        if (targets.length === 0) {
+            alert("No orders to export.");
+            return;
+        }
+        setBulkLoading(true);
+        try {
+            const rows = targets.map(o => ({
+                "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
+                "Address": `${o.shipping?.address1 || ""} ${o.shipping?.address2 || ""} ${o.shipping?.city || ""} ${o.shipping?.state || ""}`.trim(),
+                "Phone Number": o.shipping?.phone || o.customer?.phone || "",
+                "Instagram": (o as any).instagramId || (o.customer as any)?.instagram || ""
+            }));
             const csvString = "\uFEFF" + toCsv(rows);
-            downloadTextFile(`Orders_${new Date().toISOString().slice(0, 10)}.csv`, csvString);
-
+            downloadTextFile(`Marketing_Insta_Info_${new Date().toISOString().slice(0, 10)}.csv`, csvString);
         } catch (e: any) {
-            alertCallableError("CSV Export failed:", e);
+            alertCallableError("Insta Export failed:", e);
         } finally {
             setBulkLoading(false);
         }
     };
 
-    const handleResetView = () => {
-        setFrom(""); setTo(""); fetchOrders();
-    };
+    const handleResetView = () => { setFrom(""); setTo(""); fetchOrders(); };
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -369,10 +366,18 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
+                        {/* 제작용 버튼 */}
                         <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
                             {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
                             Export CSV
                         </button>
+
+                        {/* ⭐️ 마케팅용 버튼 추가 */}
+                        <button onClick={handleExportInstaInfo} disabled={bulkLoading} className="bg-pink-600 text-white hover:bg-pink-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                            <Users size={12} />
+                            Export Insta Info
+                        </button>
+
                         <button onClick={handleBulkZipCopy} disabled={bulkLoading || selectedIds.size === 0} className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
                             <LinkIcon size={12} /> Bulk ZIP Link
                         </button>
@@ -409,13 +414,8 @@ export default function AdminOrderList() {
                         {visibleOrders.map((order) => {
                             const abandoned = order.status === 'paid' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
-                            const fullAddress = [
-                                order.shipping?.address1,
-                                order.shipping?.address2,
-                                order.shipping?.city,
-                                order.shipping?.state
-                            ].filter(Boolean).join(" ");
-                            const qty = order.itemsCount || (order as any).items?.length || 0;
+                            const fullAddress = [order.shipping?.address1, order.shipping?.address2, order.shipping?.city, order.shipping?.state].filter(Boolean).join(" ");
+                            const qty = order.itemsCount || 0;
 
                             return (
                                 <tr key={order.id} className="border-b last:border-0 hover:bg-zinc-50 transition-colors h-[60px]">
@@ -435,8 +435,14 @@ export default function AdminOrderList() {
                                         <div className="font-bold text-sm">{order.customer?.fullName || "-"}</div>
                                         <div className="text-[11px] text-zinc-400">{order.customer?.email || order.customer?.phone}</div>
                                         {instaId && (
-                                            <div className="text-[11px] text-pink-500 font-bold mt-0.5 inline-flex items-center bg-pink-50 px-1.5 py-0.5 rounded border border-pink-100">
-                                                @{instaId}
+                                            <div
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(`@${instaId}`);
+                                                    alert(`@${instaId} 복사 완료!`);
+                                                }}
+                                                className="text-[11px] text-pink-500 font-bold mt-0.5 inline-flex items-center gap-1 bg-pink-50 px-1.5 py-0.5 rounded border border-pink-100 cursor-pointer hover:bg-pink-100 transition-colors"
+                                            >
+                                                @{instaId} <Copy size={10} />
                                             </div>
                                         )}
                                     </td>
