@@ -13,7 +13,8 @@ import {
     AlertTriangle,
     Trash2,
     Link as LinkIcon,
-    Loader2
+    Loader2,
+    Clock
 } from "lucide-react";
 import { getFirestore, doc, deleteDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -103,6 +104,12 @@ export default function AdminOrderList() {
             hour: "2-digit", minute: "2-digit",
         });
 
+    const formatShortDateTime = (dateStr: string) =>
+        new Date(dateStr).toLocaleString("ko-KR", {
+            month: "short", day: "numeric",
+            hour: "2-digit", minute: "2-digit",
+        });
+
     const fetchOrders = async () => {
         setLoading(true);
         setError(null);
@@ -146,7 +153,7 @@ export default function AdminOrderList() {
                 o.shipping?.fullName, o.shipping?.phone, o.shipping?.email,
                 o.shipping?.address1, o.shipping?.address2, o.shipping?.city,
                 o.shipping?.state, o.shipping?.postalCode,
-                (o as any).promoCode
+                (o as any).promoCode, (o.customer as any)?.instagram, (o as any).instagramId
             ];
             return targets.some(t => t && isMatch(String(t), query));
         });
@@ -242,7 +249,6 @@ export default function AdminOrderList() {
         }
     };
 
-    // ✅ 주소 분리 및 개별 ZIP URL이 자동 포함된 택배/프린트 업체용 완벽한 CSV 추출
     const handleExportCleanCSV = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
         if (targets.length === 0) {
@@ -266,7 +272,6 @@ export default function AdminOrderList() {
                     zipUrl = "Link Error";
                 }
 
-                // 택배사 송장 출력용으로 주소를 완벽하게 분리 (Postal Code, Address 1, Address 2 등)
                 rows.push({
                     "Order Number": o.orderCode,
                     "Date": formatDate(o.createdAt),
@@ -279,14 +284,14 @@ export default function AdminOrderList() {
                     "City/State": [o.shipping?.city, o.shipping?.state].filter(Boolean).join(", "),
                     "Country": o.shipping?.country || "",
 
-                    "Photo Quantity": o.itemsCount,
+                    "Instagram": (o as any).instagramId || (o.customer as any)?.instagram || "",
+                    "Photo Quantity": o.itemsCount || (o as any).items?.length || 0,
                     "Status": o.status,
                     "Admin Note": (o as any).adminNote || "",
                     "Print URL": zipUrl,
                 });
             }
 
-            // UTF-8 BOM (\uFEFF) 적용하여 엑셀에서 열 때 문자 깨짐 방지
             const csvString = "\uFEFF" + toCsv(rows);
             downloadTextFile(`Orders_${new Date().toISOString().slice(0, 10)}.csv`, csvString);
 
@@ -333,7 +338,7 @@ export default function AdminOrderList() {
                         <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
                         <input
                             className="admin-input pl-10 w-full"
-                            placeholder="Search by name / email / orderCode / address…"
+                            placeholder="Search by name / email / orderCode / insta / address…"
                             value={q}
                             onChange={(e) => setQ(e.target.value)}
                         />
@@ -380,8 +385,8 @@ export default function AdminOrderList() {
                 </div>
             </div>
 
-            <div className="w-full bg-white border border-zinc-200 rounded-lg shadow-sm">
-                <table className="w-full relative border-collapse">
+            <div className="w-full bg-white border border-zinc-200 rounded-lg shadow-sm overflow-x-auto">
+                <table className="w-full relative border-collapse min-w-[1000px]">
                     <thead className="bg-zinc-50 border-b shadow-sm">
                         <tr>
                             <th className="p-4 w-10 text-center">
@@ -389,8 +394,11 @@ export default function AdminOrderList() {
                                     {isAllVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
                                 </button>
                             </th>
+                            <th className="p-4 text-left text-xs font-black text-zinc-400 uppercase">Date</th>
                             <th className="p-4 text-left text-xs font-black text-zinc-400 uppercase">Order</th>
                             <th className="p-4 text-left text-xs font-black text-zinc-400 uppercase">Customer</th>
+                            <th className="p-4 text-left text-xs font-black text-zinc-400 uppercase max-w-[200px]">Address</th>
+                            <th className="p-4 text-center text-xs font-black text-zinc-400 uppercase">Qty</th>
                             <th className="p-4 text-left text-xs font-black text-zinc-400 uppercase">Total</th>
                             <th className="p-4 w-px text-left text-xs font-black text-zinc-400 uppercase whitespace-nowrap">Status</th>
                             <th className="p-4 w-10" />
@@ -400,19 +408,49 @@ export default function AdminOrderList() {
                     <tbody>
                         {visibleOrders.map((order) => {
                             const abandoned = order.status === 'paid' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
+                            const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
+                            const fullAddress = [
+                                order.shipping?.address1,
+                                order.shipping?.address2,
+                                order.shipping?.city,
+                                order.shipping?.state
+                            ].filter(Boolean).join(" ");
+                            const qty = order.itemsCount || (order as any).items?.length || 0;
+
                             return (
-                                <tr key={order.id} className="border-b last:border-0 hover:bg-zinc-50 transition-colors h-[55px]">
+                                <tr key={order.id} className="border-b last:border-0 hover:bg-zinc-50 transition-colors h-[60px]">
                                     <td className="p-4 text-center">
                                         <button onClick={() => toggleSelect(order.id)}>
                                             {selectedIds.has(order.id) ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} />}
                                         </button>
                                     </td>
-                                    <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">{order.orderCode}</td>
                                     <td className="p-4">
-                                        <div className="font-bold text-sm">{order.customer?.fullName || "-"}</div>
-                                        <div className="text-[11px] text-zinc-400">{order.customer?.email}</div>
+                                        <div className="text-xs text-zinc-500 font-medium whitespace-nowrap flex items-center gap-1.5">
+                                            <Clock size={12} className="text-zinc-400" />
+                                            {formatShortDateTime(order.createdAt)}
+                                        </div>
                                     </td>
-                                    <td className="p-4 font-black text-sm">฿{order.pricing?.total?.toLocaleString()}</td>
+                                    <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">{order.orderCode}</td>
+                                    <td className="p-4 min-w-[140px]">
+                                        <div className="font-bold text-sm">{order.customer?.fullName || "-"}</div>
+                                        <div className="text-[11px] text-zinc-400">{order.customer?.email || order.customer?.phone}</div>
+                                        {instaId && (
+                                            <div className="text-[11px] text-pink-500 font-bold mt-0.5 inline-flex items-center bg-pink-50 px-1.5 py-0.5 rounded border border-pink-100">
+                                                @{instaId}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className="p-4 max-w-[200px]">
+                                        <div className="text-[12px] text-zinc-600 truncate" title={fullAddress}>
+                                            {fullAddress || "-"}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <div className="inline-flex items-center justify-center bg-zinc-100 px-2 py-1 rounded text-xs font-black text-zinc-700">
+                                            {qty}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 font-black text-sm whitespace-nowrap">฿{order.pricing?.total?.toLocaleString()}</td>
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
                                             <StatusBadge status={order.status} />

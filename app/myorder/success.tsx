@@ -39,7 +39,7 @@ export default function OrderSuccessScreen() {
 
     const router = useRouter();
 
-    // ✨ [수정] 언어 복구용 setLocale 호출
+    // ✨ 언어 복구용 setLocale 호출
     const { t, setLocale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
@@ -98,7 +98,7 @@ export default function OrderSuccessScreen() {
         unsub = subscribeOrder(id, (updated) => {
             if (!aliveRef.current) return;
             if (updated) {
-                // ✨ [수정] DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
+                // ✨ DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
                 if (updated.locale && setLocale) setLocale(updated.locale);
 
                 setOrder(updated);
@@ -115,7 +115,7 @@ export default function OrderSuccessScreen() {
                 if (!aliveRef.current) return;
 
                 if (data) {
-                    // ✨ [수정] 언어 복구 로직 동일 적용
+                    // ✨ 언어 복구 로직 동일 적용
                     if (data.locale && setLocale) setLocale(data.locale);
 
                     setOrder(data);
@@ -228,7 +228,8 @@ export default function OrderSuccessScreen() {
                     <Animated.View style={[styles.orderInfo, animatedContentStyle]}>
                         <View style={styles.infoRow}>
                             <Text style={styles.label}>{(t as any).orderNumberLabel || "ORDER NUMBER"}</Text>
-                            <Text style={styles.value}>#{id}</Text>
+                            {/* ✅ 수정된 부분: orderCode가 있으면 보여주고, 없으면 파이어베이스 id를 보여줍니다. */}
+                            <Text style={styles.value}>#{(order as any)?.orderCode || id}</Text>
                         </View>
                         <View style={styles.infoRow}>
                             <Text style={styles.estimate}>{(t as any).estimatedDelivery || "Estimated delivery: 5 days"}</Text>
