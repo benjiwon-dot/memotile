@@ -28,19 +28,23 @@ const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
 const NOT_FOUND_GRACE_MS = 12000;
 
-// ✨ [수정] 서버에 완전히 업로드된 URL(sourceUrl, downloadUrl 등)을 먼저 찾도록 보강
+// ✨ [핵심 수정] 가벼운 미리보기 파일을 1순위로, 무거운 원본을 맨 마지막(3순위)으로 순서 변경!
 function pickCustomerPreviewUri(it: any): string | null {
     const uri =
+        // 1순위: 가장 가벼운 썸네일 프리뷰
         it?.assets?.previewUrl ||
+        it?.assets?.previewUri ||
+        it?.output?.previewUri ||
         it?.previewUrl ||
         it?.previewUri ||
-        it?.assets?.sourceUrl || // 추가
-        it?.sourceUrl ||         // 추가
-        it?.downloadUrl ||       // 추가
+        // 2순위: 화면 표시용 1200px 뷰어
         it?.assets?.viewUrl ||
         it?.assets?.viewUri ||
-        it?.output?.previewUri ||
         it?.output?.viewUri ||
+        // 3순위: 최후의 수단 (무거운 원본 - 이게 위에 있으면 로딩 지옥이 열립니다)
+        it?.assets?.sourceUrl ||
+        it?.sourceUrl ||
+        it?.downloadUrl ||
         it?.uri ||
         it?.originalUri ||
         null;
@@ -48,14 +52,15 @@ function pickCustomerPreviewUri(it: any): string | null {
     if (typeof uri === "string" && /print/i.test(uri)) {
         return (
             it?.assets?.previewUrl ||
+            it?.assets?.previewUri ||
+            it?.output?.previewUri ||
             it?.previewUrl ||
             it?.previewUri ||
-            it?.assets?.sourceUrl || // 추가
-            it?.sourceUrl ||         // 추가
             it?.assets?.viewUrl ||
             it?.assets?.viewUri ||
-            it?.output?.previewUri ||
             it?.output?.viewUri ||
+            it?.assets?.sourceUrl ||
+            it?.sourceUrl ||
             it?.uri ||
             null
         );
@@ -66,7 +71,6 @@ function pickCustomerPreviewUri(it: any): string | null {
 export default function OrderDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
-    // ✨ [수정] setLocale 추가 확보 (언어 복구용)
     const { t, setLocale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
@@ -121,7 +125,6 @@ export default function OrderDetailScreen() {
                     const data = snap.data();
                     const newOrder = { id: snap.id, ...data } as OrderDoc;
 
-                    // ✨ [수정] DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
                     if (newOrder.locale && setLocale) {
                         setLocale(newOrder.locale);
                     }

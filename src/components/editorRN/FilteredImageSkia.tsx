@@ -67,15 +67,47 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
 
         React.useImperativeHandle(ref, () => ({
             snapshot: () => {
-                // 이미지가 로드되지 않았으면 null 반환 (재시도 유도)
                 if (!img && uri) return null;
 
-                // ✅ [핵심 수정] try-catch로 감싸서 에러 방지
                 try {
-                    // 캔버스 참조가 없거나 Skia 뷰가 준비되지 않았을 때 에러가 날 수 있음
+                    // ✅ [핵심 최적화] 기기 디스플레이 배율(3x 등) 뻥튀기 원천 차단!
+                    // 눈에 보이는 캔버스 캡처가 아닌, 메모리 상의 가상 도화지(Offscreen)에 W x H 정확한 사이즈로 그립니다.
+                    const surface = Skia.Surface.Make(W, H);
+
+                    if (surface) {
+                        const canvas = surface.getCanvas();
+
+                        // fit="cover"와 동일한 비율 계산 로직
+                        const imgW = img!.width();
+                        const imgH = img!.height();
+                        const scale = Math.max(W / imgW, H / imgH);
+
+                        const coverW = W / scale;
+                        const coverH = H / scale;
+
+                        const srcRect = Skia.XYWHRect(
+                            (imgW - coverW) / 2,
+                            (imgH - coverH) / 2,
+                            coverW,
+                            coverH
+                        );
+                        const dstRect = Skia.XYWHRect(0, 0, W, H);
+
+                        // 필터 페인트를 묻혀서 정확한 사이즈로 그리기
+                        canvas.drawImageRect(img!, srcRect, dstRect, imagePaint);
+
+                        // 오버레이 컬러가 있다면 그리기
+                        if (overlayPaint) {
+                            canvas.drawRect(dstRect, overlayPaint);
+                        }
+
+                        surface.flush();
+                        return surface.makeImageSnapshot();
+                    }
+
+                    // 만약 가상 도화지 생성이 실패하면 기존 방식(Fallback) 사용
                     return canvasRef.current?.makeImageSnapshot() || null;
                 } catch (e) {
-                    // 에러 로그만 남기고 null 반환 -> 상위 컴포넌트가 알아서 재시도함
                     console.warn("[FilteredImageSkia] Snapshot not ready yet, retrying...", e);
                     return null;
                 }

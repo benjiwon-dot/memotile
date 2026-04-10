@@ -1,6 +1,6 @@
+// src/utils/exportQueue.ts
+
 /**
- * src/utils/exportQueue.ts
- *
  * Simple sequential queue for processing exports in the background without blocking UI.
  * + Added pause/resume/clear + generation token to prevent tasks running after screen transition/unmount.
  */
@@ -53,8 +53,8 @@ class ExportQueue {
         return this.isProcessing;
     }
 
-    // ✅ ADD: wait until all export tasks finish
-    async waitForIdle(timeoutMs = 20000, intervalMs = 120) {
+    // ✅ 대기 시간동안 고객이 다른 행동을 할 수 있도록 백그라운드 확인용으로 사용
+    async waitForIdle(timeoutMs = 60000, intervalMs = 120) {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             if (!this.isProcessing && this.queue.length === 0) return;

@@ -19,11 +19,9 @@ import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
-// ✨ [수정] 로그인 상태 확인용 auth 임포트
 import { auth } from "../../src/lib/firebase";
 import { User } from "firebase/auth";
 
-// ✅ 테마 및 컨텍스트 경로
 import { colors } from "../../src/theme/colors";
 import { layout } from "../../src/theme/layout";
 import { shadows } from "../../src/theme/shadows";
@@ -31,10 +29,8 @@ import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
 
-// ✅ 로고 이미지 경로
 import logoHorizontal from "../../assets/logo_horizontal.png";
 
-// --- Assets ---
 const heroNew1 = require("../../src/assets/hero_new_1.jpg") as ImageSource;
 const heroNew2 = require("../../src/assets/hero_new_2.jpg") as ImageSource;
 const heroNew3 = require("../../src/assets/hero_new_3.jpg") as ImageSource;
@@ -57,13 +53,22 @@ export default function Index() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { t, locale, setLocale } = useLanguage();
-    const { setPhotos, saveDraft, hasDraft, loadDraft } = usePhoto();
+
+    // ✨ [핵심 추가] clearDraft 함수도 컨텍스트에서 가져옵니다.
+    const { setPhotos, saveDraft, hasDraft, loadDraft, clearDraft } = usePhoto();
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
 
-    // ✨ [수정] 현재 로그인 상태 추적
     const [user, setUser] = useState<User | null>(auth.currentUser);
+
+    // ✨ [핵심 추가] 결제 후 찌꺼기만 남은 '유령 배너'를 추적하는 상태
+    const [isGhost, setIsGhost] = useState(false);
+
+    // 진짜 드래프트가 생겨서 hasDraft가 켜지면 유령 상태를 다시 해제합니다.
+    useEffect(() => {
+        if (hasDraft) setIsGhost(false);
+    }, [hasDraft]);
 
     const handleLinePress = () => {
         Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
@@ -82,7 +87,9 @@ export default function Index() {
         if (loaded) {
             router.push("/create/select");
         } else {
-            Alert.alert("", t.noPhotosSelected);
+            // ✨ [핵심 수정] 사진이 없으면 에러창 띄우지 말고, 배너를 조용히 없애버립니다!
+            setIsGhost(true);
+            if (clearDraft) await clearDraft(); // 스토리지 한 번 더 확실하게 청소
         }
     };
 
@@ -95,7 +102,6 @@ export default function Index() {
             setBillboardIndex((prev) => (prev + 1) % 4);
         }, 3000);
 
-        // ✨ [수정] 로그인 상태 변경 감지 (로그아웃 시 배너 숨기기 위함)
         const unsub = auth.onAuthStateChanged((u) => setUser(u));
 
         return () => {
@@ -195,8 +201,8 @@ export default function Index() {
 
     return (
         <View style={styles.container}>
-            {/* ✨ [수정] hasDraft && user(로그인 상태)일 때만 배너 표시 */}
-            {hasDraft && user && (
+            {/* ✨ [핵심 수정] isGhost가 아닐 때만 배너를 띄웁니다! */}
+            {hasDraft && user && !isGhost && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
                     <View style={styles.resumeContent}>
                         <View>

@@ -29,7 +29,7 @@ type SerializableAsset = Pick<
 > & {
     originalUri?: string;
     cachedPreviewUri?: string;   // 에디터 화면용 (1080px)
-    cachedThumbnailUri?: string; // ✅ 필터 리스트용 (200px) - 추가됨
+    cachedThumbnailUri?: string; // ✅ 필터 리스트용 (200px)
 
     edits?: {
         crop: { x: number; y: number; width: number; height: number };
@@ -85,7 +85,7 @@ interface PhotoContextType {
 
     saveDraft: (step: DraftStep, override?: { photos?: ImagePickerAsset[]; currentIndex?: number }) => Promise<void>;
     loadDraft: () => Promise<boolean>;
-    clearDraft: () => Promise<void>;
+    clearDraft: () => Promise<void>; // ✅ 결제 완료 시 흔적을 지우는 핵심 함수
 }
 
 const PhotoContext = createContext<PhotoContextType | undefined>(undefined);
@@ -116,7 +116,7 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
         duration: anyA.duration,
         exif: anyA.exif,
         cachedPreviewUri: anyA.cachedPreviewUri,
-        cachedThumbnailUri: anyA.cachedThumbnailUri, // ✅ 저장
+        cachedThumbnailUri: anyA.cachedThumbnailUri,
         edits: anyA.edits,
         output: anyA.output,
         frameRect: anyA.frameRect,
@@ -132,18 +132,15 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const generationQueue = React.useRef<Set<string>>(new Set());
     const saveDraftTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ✅ [핵심] 미리보기 생성 최적화 (200px, 1080px 동시 생성)
     const generatePreview = async (asset: ImagePickerAsset, index: number) => {
         const id = asset.assetId || asset.uri;
         if (generationQueue.current.has(id)) return;
 
-        // 이미 둘 다 있으면 스킵
         if ((asset as any).cachedPreviewUri && (asset as any).cachedThumbnailUri) return;
 
         generationQueue.current.add(id);
         try {
             let inputUri = (asset as any).originalUri || asset.uri;
-            // Android content:// 처리
             if (typeof inputUri === "string" && inputUri.startsWith("content://")) {
                 const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
                 const dest = `${base}cache_org_${Date.now()}.jpg`;
@@ -151,14 +148,12 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 inputUri = dest;
             }
 
-            // 1. 에디터용 (1080px - 충분히 고화질이나 메모리 절약)
             const previewResult = await manipulateAsync(
                 inputUri,
                 [{ resize: { width: 1280 } }],
                 { compress: 0.9, format: SaveFormat.JPEG }
             );
 
-            // 2. 필터 리스트용 (200px - 아주 작음, 도미노 현상 해결)
             const thumbResult = await manipulateAsync(
                 inputUri,
                 [{ resize: { width: 200 } }],
@@ -170,14 +165,13 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 const cur = newPhotos[index] as any;
                 if (!cur) return prev;
 
-                // 인덱스가 바뀌었거나 삭제되었을 수 있으므로 ID 체크
                 const same = (cur.assetId && cur.assetId === asset.assetId) || cur.uri === asset.uri;
                 if (!same) return prev;
 
                 newPhotos[index] = {
                     ...cur,
                     cachedPreviewUri: previewResult.uri,
-                    cachedThumbnailUri: thumbResult.uri // ✅ 썸네일 저장
+                    cachedThumbnailUri: thumbResult.uri
                 } as any;
                 return newPhotos;
             });
@@ -237,10 +231,16 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         });
     };
 
+    // ✨ [핵심 수정] 결제 완료 시 완벽한 흔적 지우기
     const clearDraft: PhotoContextType["clearDraft"] = async () => {
         try {
             await AsyncStorage.removeItem(DRAFT_KEY);
+            // 1. 배너 스위치 끄기
             setHasDraft(false);
+            // 2. 들고 있던 사진 데이터 메모리에서 날리기
+            setPhotosState([]);
+            // 3. 인덱스 초기화
+            setCurrentIndexState(0);
         } catch (e) {
             console.error("Failed to clear draft", e);
         }
@@ -322,8 +322,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const clearPhotos = () => {
-        setPhotosState([]);
-        setCurrentIndexState(0);
+        // ✨ 여기서 clearDraft()를 호출하여 완벽하게 파기되도록 연결
         clearDraft();
     };
 

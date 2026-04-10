@@ -35,9 +35,10 @@ import { doc, getDoc } from "firebase/firestore";
 import { createDevOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 
-// ✨ Firebase Functions 연동용 패키지 추가
+// ✨ Firebase Functions 연동 및 ExportQueue 가져오기
 import { getApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { exportQueue } from "../utils/exportQueue"; // ⭐️ 필수 추가
 
 const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
 
@@ -309,22 +310,16 @@ export default function CheckoutStepTwoScreen() {
                         {
                             text: confirmText,
                             onPress: async () => {
-                                // 브라우저 창 열기
                                 await WebBrowser.openBrowserAsync(paymentUrl);
-
-                                // ✨ [핵심 추가] 엑스포 등에서 사용자가 "완료(Done)"를 눌러 수동으로 닫았을 때를 대비하여
-                                // 브라우저가 닫힌 직후 무조건 서버(DB)를 조회해서 결제가 성공했는지 최종 확인합니다.
                                 try {
                                     const orderSnap = await getDoc(doc(db, "orders", orderId));
                                     const orderData = orderSnap.data();
 
                                     if (orderData?.status === 'paid') {
-                                        // 사용자가 수동으로 닫았더라도 결제가 성공했으면 성공 페이지로 이동!
                                         await clearDraft();
                                         clearPhotos();
                                         router.replace({ pathname: "/myorder/success", params: { id: orderId } });
                                     } else {
-                                        // 진짜 결제 취소됨
                                         setIsCreatingOrder(false);
                                         Alert.alert(
                                             (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
@@ -375,9 +370,14 @@ export default function CheckoutStepTwoScreen() {
         }
 
         if (isCreatingOrder) return;
+
+        // ⭐️ [로딩 시작] 결제 프로세스 시작
         setIsCreatingOrder(true);
 
         try {
+            // ⭐️ [핵심 UX 개선] 백그라운드 이미지 작업 대기
+            await exportQueue.waitForIdle(60000);
+
             await ensureTokenReady(user!);
 
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
@@ -665,7 +665,7 @@ export default function CheckoutStepTwoScreen() {
                 <View style={styles.fullScreenLoading}>
                     <View style={styles.loadingBox}>
                         <ActivityIndicator size="large" color="#111" />
-                        <Text style={styles.loadingText}>Processing...</Text>
+                        <Text style={styles.loadingText}>Processing Payment...</Text>
                     </View>
                 </View>
             </Modal>

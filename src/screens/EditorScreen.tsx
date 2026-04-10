@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Image as RNImage,
-  Platform, // <-- 이 부분 추가
+  Platform,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -106,29 +106,6 @@ const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
   return { x, y, width: size, height: size, isValid: true };
 };
 
-async function waitForQueueIdle(timeoutMs = 60000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (!exportQueue.isBusy && exportQueue.pendingCount === 0) return true;
-    await sleep(50);
-  }
-  return false;
-}
-
-async function waitForAllViewUris(getPhotos: () => any[], timeoutMs = 60000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const arr = getPhotos() || [];
-    const missing = arr
-      .map((p: any, idx: number) => ({ idx, viewUri: p?.output?.viewUri }))
-      .filter((x: any) => !x.viewUri);
-
-    if (missing.length === 0) return true;
-    await sleep(50);
-  }
-  return false;
-}
-
 export default function EditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -172,7 +149,6 @@ export default function EditorScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const isExporting = useRef(false);
 
-  // ✅ 화면을 "박제"하기 위한 상태 변수
   const [frozenSnapshot, setFrozenSnapshot] = useState<{
     uri: string;
     crop: any;
@@ -190,7 +166,6 @@ export default function EditorScreen() {
   const outgoingStyle = useAnimatedStyle(() => ({ opacity: outgoingOpacity.value }));
   const incomingStyle = useAnimatedStyle(() => ({ opacity: incomingOpacity.value }));
 
-  // ✅ 전환 완료 시점 처리
   const commitCrossfade = useCallback(() => {
     if (!isAliveRef.current) return;
     bgPausedRef.current = false;
@@ -200,7 +175,6 @@ export default function EditorScreen() {
     outgoingOpacity.value = 0;
     incomingOpacity.value = 1;
     setIsSwitchingPhoto(false);
-    // 애니메이션 끝난 후 Processing 해제
     setIsProcessing(false);
   }, [incomingResolved, outgoingOpacity, incomingOpacity]);
 
@@ -225,7 +199,6 @@ export default function EditorScreen() {
   }, [initialInfo?.uri, isSwitchingPhoto]);
 
   useEffect(() => {
-    // ✅ 저장/이동 중에는 데이터가 바뀌어도 화면을 갱신하지 않도록 차단
     if (isExporting.current) return;
 
     let alive = true;
@@ -453,14 +426,12 @@ export default function EditorScreen() {
     return () => { cancelled = true; };
   }, [bakeJob]);
 
-  // Transition Animation Logic
   useEffect(() => {
     if (!isSwitchingPhoto) return;
     if (!incomingResolved) return;
     if (!outgoingRef.current) return;
     if (!isAliveRef.current) return;
 
-    // 로딩 종료
     setIsProcessing(false);
 
     cancelAnimation(outgoingOpacity);
@@ -477,11 +448,9 @@ export default function EditorScreen() {
 
 
   const handleNext = async () => {
-    // 1. 중복 클릭 방지
     if (!photos || photos.length === 0 || isExporting.current) return;
     if (isSwitchingPhoto || isProcessing) return;
 
-    // 2. 현재 UI 상태 변수화
     const currentPhotoUri = displayResolved?.uri || (photos[currentIndex] as any).uri;
     const currentCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
     const activeFilter = activeFilterObj;
@@ -489,7 +458,6 @@ export default function EditorScreen() {
 
     if (!currentPhotoUri) return;
 
-    // 3. 로딩 시작 및 시각적 동결(Freeze)
     setIsProcessing(true);
     isExporting.current = true;
 
@@ -501,17 +469,14 @@ export default function EditorScreen() {
       overlayOpacity: activeFilter.overlayOpacity,
     });
 
-    // 화면 업데이트 대기 (깜빡임 방지용)
     await sleep(16);
 
     const idx = currentIndex;
 
     try {
-      // 4. 데이터 준비
       const photo = { ...photos[idx] } as any;
       const vp = viewportDim;
 
-      // 애니메이션용 outgoingRef 설정
       if (idx < photos.length - 1) {
         outgoingRef.current = {
           index: idx,
@@ -528,7 +493,6 @@ export default function EditorScreen() {
         return;
       }
 
-      // --- [좌표 계산 및 데이터 저장 로직] ---
       let uiW = displayResolved?.width ?? photo.width;
       let uiH = displayResolved?.height ?? photo.height;
 
@@ -555,7 +519,6 @@ export default function EditorScreen() {
       const sSize = Math.floor(finalCropUI.width * scale);
       const finalCropSRC = { x: Math.max(0, Math.min(sx, realSrcW - 1)), y: Math.max(0, Math.min(sy, realSrcH - 1)), width: sSize, height: sSize };
 
-      // Preview 생성 & 필터
       const previewRes = await generatePreviewExport(currentPhotoUri, finalCropUI);
       let finalPreviewUri = previewRes.uri;
 
@@ -567,7 +530,6 @@ export default function EditorScreen() {
         if (bakedPreview) finalPreviewUri = bakedPreview;
       }
 
-      // 데이터 저장 (여기서 리렌더링 발생 -> frozenSnapshot이 방어)
       await updatePhoto(idx, {
         edits: {
           crop: finalCropUI,
@@ -579,7 +541,6 @@ export default function EditorScreen() {
         output: { ...(photo.output || {}), previewUri: finalPreviewUri, viewUri: "" },
       });
 
-      // Export Queue 추가
       const myToken = bgTokenRef.current;
       exportQueue.enqueue(async () => {
         if (!isAliveRef.current || bgPausedRef.current || myToken !== bgTokenRef.current) return;
@@ -592,9 +553,6 @@ export default function EditorScreen() {
           cX = Math.max(0, Math.min(cX, fW - 1)); cY = Math.max(0, Math.min(cY, fH - 1));
           const cSz = Math.min(cW, cH, fW - cX, fH - cY);
 
-          // ---------------------------------------------------------
-          // ✅ 1. View용 (앱 화면 표시용 - 1200px로 가볍게!)
-          // ---------------------------------------------------------
           const viewTarget = 1200;
           const viewRes = await manipulateAsync(
             photo.uri,
@@ -610,20 +568,12 @@ export default function EditorScreen() {
             if (bakedView) finalView = bakedView;
           }
 
-          // ---------------------------------------------------------
-          // ✅ 2. Print용 (4K 생성 삭제 -> 서버에 위임)
-          // 폰에서 무거운 4096px 작업을 삭제하여 앱 튕김을 방지합니다.
-          // ---------------------------------------------------------
-
-          // Context 업데이트
-          // printUri에는 그냥 finalView(1200px)를 넣어줍니다. 
-          // 서버(Cloud Functions)가 원본(source.jpg)을 이용해 4096px 고화질을 자동으로 만듭니다.
           const lPhoto = (photosRef.current?.[idx] as any) || {};
           await updatePhoto(idx, {
             output: {
               ...(lPhoto.output || {}),
-              viewUri: finalView,   // 1200px
-              printUri: finalView   // ✅ 앱에서는 가볍게 처리 (서버가 덮어씌움)
+              viewUri: finalView,
+              printUri: finalView
             }
           });
 
@@ -649,19 +599,11 @@ export default function EditorScreen() {
         return;
       }
 
-      // [CASE 2] Checkout 이동
-      const idleOk = await waitForQueueIdle(60000);
-      const viewsOk = await waitForAllViewUris(() => photosRef.current, 60000);
-
-      if (!idleOk || !viewsOk) {
-        Alert.alert("Wait", "Processing...");
-        setFrozenSnapshot(null);
-        setIsProcessing(false);
-        isExporting.current = false;
-        return;
-      }
-
-      // 로딩 끄지 않고 이동 (화면 멈춤 현상 가림)
+      // ⭐️ 핵심: 마지막 장에서 기다리지 않고 바로 결제창으로 넘깁니다!
+      // 여기서 딜레이를 주지 않아야 결제화면 진입 시 렉이 걸리지 않습니다.
+      setFrozenSnapshot(null);
+      setIsProcessing(false);
+      isExporting.current = false;
       router.push("/create/checkout");
 
     } catch (e) {
@@ -675,10 +617,8 @@ export default function EditorScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // 1. 저장 중이면 로딩 유지
       if (isExporting.current) return;
 
-      // 2. 평상시 초기화
       setIsProcessing(false);
       isExporting.current = false;
 
@@ -694,7 +634,6 @@ export default function EditorScreen() {
         setCurrentUi((prev) => ({ ...prev, filterId: savedFilterId }));
       }
 
-      // 3. 화면 벗어날 때 Cleanup
       return () => {
         isExporting.current = false;
       };
@@ -729,7 +668,7 @@ export default function EditorScreen() {
         </Text>
         <Pressable
           style={styles.primaryBtn}
-          onPress={() => router.push("/create/checkout")} // 바로 결제창으로 넘기기
+          onPress={() => router.push("/create/checkout")}
         >
           <Text style={styles.primaryBtnText}>Skip to Checkout</Text>
         </Pressable>
@@ -755,7 +694,6 @@ export default function EditorScreen() {
         }}
       >
         <View style={{ flex: 1, width: "100%", height: "100%" }}>
-          {/* 1. 이전 페이지 나가는 애니메이션 */}
           {isSwitchingPhoto && outgoing && viewportDim && (
             <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingStyle]}>
               <CropFrameRN
@@ -775,7 +713,6 @@ export default function EditorScreen() {
             </Animated.View>
           )}
 
-          {/* 2. 현재 페이지 (frozenSnapshot 우선) */}
           <Animated.View
             pointerEvents={isSwitchingPhoto ? "none" : "auto"}
             style={[StyleSheet.absoluteFill, incomingStyle]}
@@ -797,7 +734,6 @@ export default function EditorScreen() {
                 overlayOpacity={frozenSnapshot?.overlayOpacity || activeFilterObj.overlayOpacity}
 
                 onChange={(newCrop: any) => {
-                  // 동결 중엔 입력 차단
                   if (frozenSnapshot) return;
                   setCurrentUi((prev) => {
                     const p = prev.crop;

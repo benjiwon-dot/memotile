@@ -33,6 +33,7 @@ setGlobalOptions({ region: "us-central1" });
 const part1 = "https://hooks.slack.com/services/T0AEXFY3GFM";
 const part2 = "/B0AFY664EJC/shdnJxZOJxJtzABgUyjjYUll";
 const SLACK_WEBHOOK_URL = part1 + part2;
+
 /* =========================================================================
    HELPER FUNCTIONS 
    ========================================================================= */
@@ -43,6 +44,7 @@ function clamp255(v: number) {
     return Math.max(0, Math.min(255, v));
 }
 
+// ✨ Skia 필터를 서버에서 완벽히 재현하는 고연산 함수
 async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise<Buffer> {
     const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const out = Buffer.alloc(data.length);
@@ -65,7 +67,7 @@ async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise
     }
 
     return await sharp(out, { raw: { width: info.width!, height: info.height!, channels: 4 } })
-        .jpeg({ quality: 92 })
+        .jpeg({ quality: 92, mozjpeg: true }) // ✨ mozjpeg 적용으로 화질 유지 + 용량 다이어트
         .toBuffer();
 }
 
@@ -176,13 +178,14 @@ export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, as
     return result;
 });
 
+// ✨ 인쇄용 고화질(4K) 이미지를 생성하는 핵심 함수
 export const buildPrint5000OnItemCreated = onDocumentCreated(
     {
         document: "orders/{orderId}/items/{itemId}",
         region: "us-central1",
         memory: "2GiB",
         timeoutSeconds: 300,
-        cpu: 1
+        cpu: 2 // ✨ 연산 속도를 위해 CPU 2개 할당
     },
     async (event) => {
         const snap = event.data;
@@ -212,10 +215,28 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 
         try {
             const sourceFile = bucket.file(sourcePath);
+
+            // ✨ [핵심 보완] 원본 사진이 Storage에 올라올 때까지 핑(Ping)을 날리며 대기 (최대 15초)
+            let fileExists = false;
+            for (let i = 0; i < 10; i++) {
+                const [exists] = await sourceFile.exists();
+                if (exists) {
+                    fileExists = true;
+                    break;
+                }
+                await new Promise(r => setTimeout(r, 1500)); // 1.5초 대기
+            }
+
+            if (!fileExists) {
+                console.error(`[Print5000] 원본 파일 업로드 지연/누락. Timeout. 경로: ${sourcePath}`);
+                return;
+            }
+
             const [sourceBuf] = await sourceFile.download();
 
             let pipeline = sharp(sourceBuf).rotate();
 
+            // 1. 앱에서 넘겨준 수학 좌표대로 정확히 자르기
             if (
                 cropPx &&
                 Number.isFinite(cropPx.x) &&
@@ -227,12 +248,18 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                 pipeline = pipeline.extract(rect);
             }
 
-            let buf = await pipeline.resize(4096, 4096, { fit: "cover" }).jpeg({ quality: 92 }).toBuffer();
+            // 2. 인쇄용 고화질로 리사이징 및 압축 (4000px, mozjpeg 적용)
+            let buf = await pipeline
+                .resize(4000, 4000, { fit: "cover", withoutEnlargement: false })
+                .jpeg({ quality: 92, mozjpeg: true })
+                .toBuffer();
 
+            // 3. 필터(Color Matrix) 입히기
             if (matrix && Array.isArray(matrix) && matrix.length === 20) {
                 buf = await applyColorMatrixRGBA(buf, matrix);
             }
 
+            // 4. 오버레이(색상 덮기) 입히기
             const overlay = parseHexColor(overlayColorHex);
             const overlayOpacity =
                 typeof overlayOpacityRaw === "number" && Number.isFinite(overlayOpacityRaw)
@@ -244,8 +271,8 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 
                 const overlayPng = await sharp({
                     create: {
-                        width: 4096,
-                        height: 4096,
+                        width: 4000,
+                        height: 4000,
                         channels: 4,
                         background: { r: overlay.r, g: overlay.g, b: overlay.b, alpha },
                     },
@@ -253,9 +280,10 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                     .png()
                     .toBuffer();
 
-                buf = await sharp(buf).composite([{ input: overlayPng, blend: "over" }]).jpeg({ quality: 92 }).toBuffer();
+                buf = await sharp(buf).composite([{ input: overlayPng, blend: "over" }]).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
             }
 
+            // 완성된 고화질 파일 저장
             const orderRef = db.collection("orders").doc(orderId);
             const orderSnap = await orderRef.get();
             const storageBasePath = orderSnap.data()?.storageBasePath;
@@ -280,16 +308,17 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                 });
                 printUrl = url;
             } catch (e) {
-                console.warn("[Print5000] getSignedUrl failed (printPath saved only)", { orderId, itemId, printPath }, e);
+                console.warn("[Print5000] getSignedUrl failed", { orderId, itemId, printPath }, e);
             }
 
+            // DB 업데이트
             await snap.ref.update({
                 "assets.printPath": printPath,
                 "assets.printUrl": printUrl,
                 printUrl,
             });
 
-            console.log("[Print5000] generated", { orderId, itemId, index, sourcePath, printPath, signedUrl: !!printUrl });
+            console.log("[Print5000] generated successfully!", { orderId, index, printPath });
         } catch (err) {
             console.error("[Print5000] failed", { orderId, itemId, index, sourcePath }, err);
         }
@@ -957,7 +986,6 @@ export const payletterWebhook = onRequest({ region: "us-central1" }, async (req,
     res.status(200).send("<RESULT>OK</RESULT>");
 });
 
-// ✨ 글로벌 환경에 맞게 영문 HTML로 수정
 export const payletterReturn = onRequest({ region: "us-central1" }, async (req, res) => {
     const platform = req.query.platform as string;
     const webUrl = req.query.webUrl as string;
