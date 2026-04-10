@@ -40,7 +40,7 @@ import { getApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { exportQueue } from "../utils/exportQueue"; // ⭐️ 필수 추가
 
-const GOOGLE_PLACES_API_KEY = "AIzaSyD4ZkAp0yIRpi4IkHCFRtJZrP6koLKMS0s";
+const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || "";
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
