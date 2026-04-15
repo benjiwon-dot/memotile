@@ -38,7 +38,7 @@ import { validatePromo, PromoResult } from "../services/promo";
 // ✨ Firebase Functions 연동 및 ExportQueue 가져오기
 import { getApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { exportQueue } from "../utils/exportQueue"; // ⭐️ 필수 추가
+import { exportQueue } from "../utils/exportQueue";
 
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || "";
 
@@ -87,6 +87,10 @@ export default function CheckoutStepTwoScreen() {
 
     const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
+
+    // ⭐️ 진행 상태 UI를 위한 상태 변수 추가
+    const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+    const [progressCount, setProgressCount] = useState(0);
 
     useEffect(() => {
         if (!auth) return;
@@ -160,8 +164,6 @@ export default function CheckoutStepTwoScreen() {
     const [promoCode, setPromoCode] = useState("");
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
-
-    const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
     const safeLocale = locale || "EN";
 
@@ -290,50 +292,53 @@ export default function CheckoutStepTwoScreen() {
 
             const paymentUrl = response.data.paymentUrl;
 
-            if (Platform.OS === 'web') {
-                window.location.href = paymentUrl;
-            } else {
-                const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
-                const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
-                const cancelText = (t as any)?.["cancel"] || "Cancel";
-                const confirmText = (t as any)?.["confirm"] || "OK";
+            // 결제창 넘어가기 전에 카운트를 강제로 100% 채워줍니다.
+            setProgressCount(safePhotosCount);
 
-                Alert.alert(
-                    alertTitle,
-                    alertMessage,
-                    [
-                        {
-                            text: cancelText,
-                            style: "cancel",
-                            onPress: () => setIsCreatingOrder(false)
-                        },
-                        {
-                            text: confirmText,
-                            onPress: async () => {
-                                await WebBrowser.openBrowserAsync(paymentUrl);
-                                try {
-                                    const orderSnap = await getDoc(doc(db, "orders", orderId));
-                                    const orderData = orderSnap.data();
+            // 모달이 자연스럽게 닫힐 시간을 0.5초 줍니다.
+            setTimeout(() => {
+                setIsCreatingOrder(false);
+                if (Platform.OS === 'web') {
+                    window.location.href = paymentUrl;
+                } else {
+                    const alertTitle = (t as any)?.["paymentRedirectTitle"] || "Redirecting to Payment";
+                    const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
+                    const cancelText = (t as any)?.["cancel"] || "Cancel";
+                    const confirmText = (t as any)?.["confirm"] || "OK";
 
-                                    if (orderData?.status === 'paid') {
-                                        await clearDraft();
-                                        clearPhotos();
-                                        router.replace({ pathname: "/myorder/success", params: { id: orderId } });
-                                    } else {
-                                        setIsCreatingOrder(false);
-                                        Alert.alert(
-                                            (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
-                                            (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
-                                        );
+                    Alert.alert(
+                        alertTitle,
+                        alertMessage,
+                        [
+                            { text: cancelText, style: "cancel" },
+                            {
+                                text: confirmText,
+                                onPress: async () => {
+                                    await WebBrowser.openBrowserAsync(paymentUrl);
+                                    try {
+                                        const orderSnap = await getDoc(doc(db, "orders", orderId));
+                                        const orderData = orderSnap.data();
+
+                                        if (orderData?.status === 'paid') {
+                                            await clearDraft();
+                                            clearPhotos();
+                                            router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                                        } else {
+                                            Alert.alert(
+                                                (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
+                                                (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
+                                            );
+                                        }
+                                    } catch (e) {
+                                        // Error handling
                                     }
-                                } catch (e) {
-                                    setIsCreatingOrder(false);
                                 }
                             }
-                        }
-                    ]
-                );
-            }
+                        ]
+                    );
+                }
+            }, 500);
+
         } catch (error: any) {
             console.error("Payletter request error:", error);
             setIsCreatingOrder(false);
@@ -360,7 +365,6 @@ export default function CheckoutStepTwoScreen() {
         }
 
         const user = currentUser;
-
         if (!validateShipping()) return;
 
         const ok = await ensureTokenReady(user!);
@@ -371,13 +375,22 @@ export default function CheckoutStepTwoScreen() {
 
         if (isCreatingOrder) return;
 
-        // ⭐️ [로딩 시작] 결제 프로세스 시작
+        // ⭐️ 1. 로딩 모달 띄우기 및 숫자 1부터 시작
         setIsCreatingOrder(true);
+        setProgressCount(1);
+
+        // ⭐️ 2. 자연스러운 숫자 증가를 위한 시뮬레이션 (UX 용)
+        // 백그라운드 큐가 돌아가는 동안 지루하지 않게 숫자를 1.2초마다 1씩 올립니다. (최대치는 안전하게 1개 남겨둡니다)
+        const progressTimer = setInterval(() => {
+            setProgressCount(prev => {
+                if (prev < safePhotosCount - 1) return prev + 1;
+                return prev;
+            });
+        }, 1200);
 
         try {
-            // ⭐️ [핵심 UX 개선] 백그라운드 이미지 작업 대기
+            // 실제 무거운 백그라운드 작업과 서버 통신 대기
             await exportQueue.waitForIdle(60000);
-
             await ensureTokenReady(user!);
 
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
@@ -409,16 +422,24 @@ export default function CheckoutStepTwoScreen() {
                 instagram: formData.instagram,
             });
 
+            // 완료되면 타이머 정지
+            clearInterval(progressTimer);
+
             if (provider === "DEV_FREE" || provider === "PROMO_FREE") {
-                await clearDraft();
-                clearPhotos();
-                router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                setProgressCount(safePhotosCount);
+                setTimeout(async () => {
+                    setIsCreatingOrder(false);
+                    await clearDraft();
+                    clearPhotos();
+                    router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                }, 500);
             } else {
                 await requestPayletterPayment(orderId, provider);
             }
 
         } catch (e: any) {
             console.error("Failed to place order:", e);
+            clearInterval(progressTimer);
             setIsCreatingOrder(false);
             Alert.alert("Order failed", e?.message || "Failed to place order.");
         }
@@ -429,6 +450,16 @@ export default function CheckoutStepTwoScreen() {
     const getCleanCardName = () => {
         const originalName = (t as any)?.["payCard"] || "Credit/Debit Card";
         return originalName.replace(" (Visa, Master)", "");
+    };
+
+    // 언어에 맞춘 아름다운 단어 번역 (UX용)
+    const getProgressTitle = () => {
+        return safeLocale === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...";
+    };
+    const getProgressSubtitle = () => {
+        return safeLocale === "TH"
+            ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nกรุณาอย่าปิดแอปพลิเคชัน"
+            : "Optimizing high-resolution tiles for the best print quality.\nPlease keep the app open.";
     };
 
     return (
@@ -661,11 +692,36 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
+            {/* ⭐️ 새롭게 적용된 1/10 진행률 표시 UI */}
             <Modal visible={isCreatingOrder} transparent animationType="fade">
-                <View style={styles.fullScreenLoading}>
-                    <View style={styles.loadingBox}>
-                        <ActivityIndicator size="large" color="#111" />
-                        <Text style={styles.loadingText}>Processing Payment...</Text>
+                <View style={styles.loadingOverlay}>
+                    <View style={styles.progressBox}>
+                        <ActivityIndicator size="large" color={colors?.ink || "#111"} />
+
+                        <Text style={styles.progressTitle}>
+                            {getProgressTitle()}
+                        </Text>
+
+                        <Text style={styles.progressSubtitle}>
+                            {getProgressSubtitle()}
+                        </Text>
+
+                        {/* 진행률 카운터 (예: 1 / 10) */}
+                        <View style={styles.progressPill}>
+                            <Text style={styles.progressPillText}>
+                                {Math.min(progressCount, safePhotosCount)} / {safePhotosCount}
+                            </Text>
+                        </View>
+
+                        {/* 하단 바 형태의 게이지 */}
+                        <View style={styles.progressBarBg}>
+                            <View
+                                style={[
+                                    styles.progressBarFill,
+                                    { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }
+                                ]}
+                            />
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -724,7 +780,14 @@ const styles = StyleSheet.create({
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
     testBadge: { backgroundColor: "#FFFBEB", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: "#FBBF24", marginRight: 8, justifyContent: "center", alignItems: "center" },
     testBadgeText: { fontSize: 11, fontWeight: "800", color: "#D97706", letterSpacing: 0.5 },
-    fullScreenLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)", zIndex: 9999, justifyContent: "center", alignItems: "center" },
-    loadingBox: { backgroundColor: "#fff", padding: 30, borderRadius: 20, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 15, elevation: 8 },
-    loadingText: { marginTop: 16, fontSize: 16, fontWeight: "700", color: "#333" },
+
+    // ⭐️ 신규 추가된 Progress UI 스타일
+    loadingOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: 24 },
+    progressBox: { width: "100%", maxWidth: 340, backgroundColor: "#fff", borderRadius: 24, padding: 32, alignItems: "center", elevation: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20 },
+    progressTitle: { marginTop: 20, fontSize: 18, fontWeight: "800", color: "#111", textAlign: "center" },
+    progressSubtitle: { marginTop: 8, fontSize: 13, color: "#666", textAlign: "center", lineHeight: 20, marginBottom: 24 },
+    progressPill: { backgroundColor: "#F3F4F6", paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 16 },
+    progressPillText: { fontSize: 14, fontWeight: "800", color: "#111", letterSpacing: 0.5 },
+    progressBarBg: { width: "100%", height: 8, backgroundColor: "#F3F4F6", borderRadius: 4, overflow: "hidden" },
+    progressBarFill: { height: "100%", backgroundColor: colors?.ink || "#111", borderRadius: 4 },
 });

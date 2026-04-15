@@ -376,6 +376,10 @@ export const STRINGS = {
         policyNoticeBullet2: "As this is a custom made-to-order product, returns for change of mind are not possible.",
         policyNoticeBullet3: "For defective products, please contact support within 7 days for a reprint or refund.",
 
+        // Progress UI (Checkout)
+        progressTitle: "Preparing your memories...",
+        progressSubtitle: "Optimizing high-resolution tiles for the best print quality.\nPlease keep the app open.",
+
         // Common / Error
         cropInvalidTitle: "Invalid Crop",
         cropInvalidBody: "Please ensure the image is within the crop area.",
@@ -414,6 +418,10 @@ export const STRINGS = {
         resumeSubtitle: "ดำเนินการต่อจากที่ทำค้างไว้",
         resumeCta: "ทำต่อ",
         noPhotosSelected: "ไม่ได้เลือกรูปภาพ กรุณาเลือกใหม่",
+
+        // Progress UI (Checkout)
+        progressTitle: "กำลังเตรียมรูปภาพของคุณ...",
+        progressSubtitle: "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nกรุณาอย่าปิดแอปพลิเคชัน",
 
         // Home
         heroHeadlineLine1: "ช่วงเวลาที่คุณรัก",

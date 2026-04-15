@@ -342,7 +342,8 @@ export default function EditorScreen() {
       opts?: { maxSide?: number; overlayColor?: string; overlayOpacity?: number }
     ): Promise<string | null> => {
       if (!isAliveRef.current) return null;
-      const maxSide = Math.max(512, Math.floor(opts?.maxSide ?? 3072));
+      // maxSide 기본값을 높게 잡아 고해상도 지원
+      const maxSide = Math.max(512, Math.floor(opts?.maxSide ?? 4000));
       let bakeUri = uri;
       let bakeW = Number(w) || 0;
       let bakeH = Number(h) || 0;
@@ -362,7 +363,7 @@ export default function EditorScreen() {
           const resized = await manipulateAsync(
             uri,
             [{ resize: { width: targetW, height: targetH } }],
-            { compress: 0.92, format: SaveFormat.JPEG }
+            { compress: 0.98, format: SaveFormat.JPEG } // 품질 상향
           );
           bakeUri = resized.uri;
           bakeW = resized.width || targetW;
@@ -542,6 +543,8 @@ export default function EditorScreen() {
       });
 
       const myToken = bgTokenRef.current;
+
+      // ⭐️ 백그라운드 작업 (앱 성능에 영향 주지 않는 곳)
       exportQueue.enqueue(async () => {
         if (!isAliveRef.current || bgPausedRef.current || myToken !== bgTokenRef.current) return;
         try {
@@ -553,18 +556,20 @@ export default function EditorScreen() {
           cX = Math.max(0, Math.min(cX, fW - 1)); cY = Math.max(0, Math.min(cY, fH - 1));
           const cSz = Math.min(cW, cH, fW - cX, fH - cY);
 
-          const viewTarget = 1200;
+          // ⭐️ 변경포인트: 인화용 최적 해상도 2400 (300 DPI 기준 타협점, 메모리 크래시 방지)
+          const viewTarget = 2400;
           const viewRes = await manipulateAsync(
             photo.uri,
             [{ crop: { originX: cX, originY: cY, width: cSz, height: cSz } }, { resize: { width: viewTarget, height: viewTarget } }],
-            { compress: 0.90, format: SaveFormat.JPEG }
+            { compress: 0.98, format: SaveFormat.JPEG } // ⭐️ 압축 품질 98%로 상향
           );
 
           let finalView = viewRes.uri;
 
           if (currentUi.filterId !== "original") {
+            // ⭐️ 변경포인트: 필터 렌더링 시에도 maxSide를 2400으로 상향하여 고화질 유지
             const bakedView = await requestSkiaBake(finalView, viewRes.width || viewTarget, viewRes.height || viewTarget, matrix,
-              { maxSide: 1200, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity });
+              { maxSide: 2400, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity });
             if (bakedView) finalView = bakedView;
           }
 
@@ -583,7 +588,6 @@ export default function EditorScreen() {
       // --- [페이지 전환 분기] ---
 
       if (idx < photos.length - 1) {
-        // [CASE 1] 다음 사진으로 이동
         const nextIdx = idx + 1;
 
         cancelAnimation(outgoingOpacity); cancelAnimation(incomingOpacity);
@@ -593,14 +597,11 @@ export default function EditorScreen() {
         setIncomingResolved(null);
         setCurrentIndex(nextIdx);
 
-        // 동결 해제
         setFrozenSnapshot(null);
         isExporting.current = false;
         return;
       }
 
-      // ⭐️ 핵심: 마지막 장에서 기다리지 않고 바로 결제창으로 넘깁니다!
-      // 여기서 딜레이를 주지 않아야 결제화면 진입 시 렉이 걸리지 않습니다.
       setFrozenSnapshot(null);
       setIsProcessing(false);
       isExporting.current = false;
