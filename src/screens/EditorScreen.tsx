@@ -14,11 +14,14 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system";
+import { Feather } from "@expo/vector-icons";
 
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withSequence,
+  withDelay,
   runOnJS,
   cancelAnimation,
 } from "react-native-reanimated";
@@ -110,7 +113,7 @@ export default function EditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { photos, currentIndex, setCurrentIndex, saveDraft, updatePhoto } = usePhoto();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
 
   const photosRef = useRef<any[]>(photos as any[]);
   useEffect(() => {
@@ -162,9 +165,23 @@ export default function EditorScreen() {
 
   const outgoingOpacity = useSharedValue(0);
   const incomingOpacity = useSharedValue(1);
+  const hintOpacity = useSharedValue(0); // ✨ 크롭 안내 뱃지 투명도 상태
 
   const outgoingStyle = useAnimatedStyle(() => ({ opacity: outgoingOpacity.value }));
   const incomingStyle = useAnimatedStyle(() => ({ opacity: incomingOpacity.value }));
+  const hintStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
+
+  // ✨ 사진이 켜지면 뱃지 보여주고 3초 뒤 숨기기 애니메이션
+  useEffect(() => {
+    if (!isSwitchingPhoto && viewportDim) {
+      cancelAnimation(hintOpacity);
+      hintOpacity.value = 0;
+      hintOpacity.value = withSequence(
+        withDelay(400, withTiming(1, { duration: 400 })), // 0.4초 뒤 서서히 나타남
+        withDelay(3000, withTiming(0, { duration: 500 })) // 3초 대기 후 서서히 사라짐
+      );
+    }
+  }, [isSwitchingPhoto, currentIndex, viewportDim]);
 
   const commitCrossfade = useCallback(() => {
     if (!isAliveRef.current) return;
@@ -342,7 +359,6 @@ export default function EditorScreen() {
       opts?: { maxSide?: number; overlayColor?: string; overlayOpacity?: number }
     ): Promise<string | null> => {
       if (!isAliveRef.current) return null;
-      // maxSide 기본값을 높게 잡아 고해상도 지원
       const maxSide = Math.max(512, Math.floor(opts?.maxSide ?? 4000));
       let bakeUri = uri;
       let bakeW = Number(w) || 0;
@@ -363,7 +379,7 @@ export default function EditorScreen() {
           const resized = await manipulateAsync(
             uri,
             [{ resize: { width: targetW, height: targetH } }],
-            { compress: 0.98, format: SaveFormat.JPEG } // 품질 상향
+            { compress: 0.98, format: SaveFormat.JPEG }
           );
           bakeUri = resized.uri;
           bakeW = resized.width || targetW;
@@ -446,7 +462,6 @@ export default function EditorScreen() {
       if (finished) runOnJS(commitCrossfade)();
     });
   }, [incomingResolved, isSwitchingPhoto, commitCrossfade, outgoingOpacity, incomingOpacity]);
-
 
   const handleNext = async () => {
     if (!photos || photos.length === 0 || isExporting.current) return;
@@ -544,7 +559,6 @@ export default function EditorScreen() {
 
       const myToken = bgTokenRef.current;
 
-      // ⭐️ 백그라운드 작업 (앱 성능에 영향 주지 않는 곳)
       exportQueue.enqueue(async () => {
         if (!isAliveRef.current || bgPausedRef.current || myToken !== bgTokenRef.current) return;
         try {
@@ -556,18 +570,16 @@ export default function EditorScreen() {
           cX = Math.max(0, Math.min(cX, fW - 1)); cY = Math.max(0, Math.min(cY, fH - 1));
           const cSz = Math.min(cW, cH, fW - cX, fH - cY);
 
-          // ⭐️ 변경포인트: 인화용 최적 해상도 2400 (300 DPI 기준 타협점, 메모리 크래시 방지)
           const viewTarget = 2400;
           const viewRes = await manipulateAsync(
             photo.uri,
             [{ crop: { originX: cX, originY: cY, width: cSz, height: cSz } }, { resize: { width: viewTarget, height: viewTarget } }],
-            { compress: 0.98, format: SaveFormat.JPEG } // ⭐️ 압축 품질 98%로 상향
+            { compress: 0.98, format: SaveFormat.JPEG }
           );
 
           let finalView = viewRes.uri;
 
           if (currentUi.filterId !== "original") {
-            // ⭐️ 변경포인트: 필터 렌더링 시에도 maxSide를 2400으로 상향하여 고화질 유지
             const bakedView = await requestSkiaBake(finalView, viewRes.width || viewTarget, viewRes.height || viewTarget, matrix,
               { maxSide: 2400, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity });
             if (bakedView) finalView = bakedView;
@@ -584,8 +596,6 @@ export default function EditorScreen() {
 
         } catch (e) { console.error(e); }
       }, `View-${idx}`);
-
-      // --- [페이지 전환 분기] ---
 
       if (idx < photos.length - 1) {
         const nextIdx = idx + 1;
@@ -676,6 +686,10 @@ export default function EditorScreen() {
       </View>
     );
   }
+
+  // ✨ 다국어 지원을 위한 힌트 문구 (태국어, 영어 분기 처리)
+  const cropHintText = locale === 'TH' ? "แตะแล้วลากเพื่อครอบตัด" : "Drag to crop & adjust";
+
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
@@ -736,6 +750,10 @@ export default function EditorScreen() {
 
                 onChange={(newCrop: any) => {
                   if (frozenSnapshot) return;
+
+                  // ✨ 유저가 제스처(터치)를 시작하면 즉시 힌트 뱃지를 숨김 (0.15초 컷)
+                  hintOpacity.value = withTiming(0, { duration: 150 });
+
                   setCurrentUi((prev) => {
                     const p = prev.crop;
                     const dx = Math.abs((newCrop?.x ?? 0) - p.x);
@@ -753,6 +771,19 @@ export default function EditorScreen() {
               </View>
             )}
           </Animated.View>
+
+          {/* ✨ 프리미엄 디자인의 크롭 안내 뱃지 추가 */}
+          {!isSwitchingPhoto && viewportDim && (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.cropHintWrapper, hintStyle]}
+            >
+              <View style={styles.cropHintBadge}>
+                <Feather name="crop" size={16} color="#fff" />
+                <Text style={styles.cropHintText}>{cropHintText}</Text>
+              </View>
+            </Animated.View>
+          )}
         </View>
 
         <View
@@ -818,6 +849,36 @@ export default function EditorScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
+
+  // ✨ 크롭 안내 뱃지 스타일 추가
+  cropHintWrapper: {
+    position: 'absolute',
+    top: 40, // 사진 위쪽 여백에 살짝 띄움
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  cropHintBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  cropHintText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
   primaryBtnContainer: { padding: 16, alignItems: "center" },
   primaryBtn: {
