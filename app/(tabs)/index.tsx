@@ -8,6 +8,7 @@ import {
     Pressable,
     Alert,
     Linking,
+    Platform, // ✨ [추가됨] 웹과 모바일을 구분하기 위한 모듈
     type PressableStateCallbackType,
     type StyleProp,
     type ViewStyle,
@@ -54,7 +55,6 @@ export default function Index() {
     const insets = useSafeAreaInsets();
     const { t, locale, setLocale } = useLanguage();
 
-    // ✨ [핵심 추가] clearDraft 함수도 컨텍스트에서 가져옵니다.
     const { setPhotos, saveDraft, hasDraft, loadDraft, clearDraft } = usePhoto();
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
@@ -62,10 +62,8 @@ export default function Index() {
 
     const [user, setUser] = useState<User | null>(auth.currentUser);
 
-    // ✨ [핵심 추가] 결제 후 찌꺼기만 남은 '유령 배너'를 추적하는 상태
     const [isGhost, setIsGhost] = useState(false);
 
-    // 진짜 드래프트가 생겨서 hasDraft가 켜지면 유령 상태를 다시 해제합니다.
     useEffect(() => {
         if (hasDraft) setIsGhost(false);
     }, [hasDraft]);
@@ -87,9 +85,8 @@ export default function Index() {
         if (loaded) {
             router.push("/create/select");
         } else {
-            // ✨ [핵심 수정] 사진이 없으면 에러창 띄우지 말고, 배너를 조용히 없애버립니다!
             setIsGhost(true);
-            if (clearDraft) await clearDraft(); // 스토리지 한 번 더 확실하게 청소
+            if (clearDraft) await clearDraft();
         }
     };
 
@@ -121,56 +118,66 @@ export default function Index() {
         []
     );
 
+    // ✨ [핵심 수정됨] 웹 환경 지연 방지 및 에러 핸들링 추가
     const handleStart = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        try {
+            // 웹이 아닐 때(모바일일 때)만 갤러리 권한을 요청합니다.
+            if (Platform.OS !== "web") {
+                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-        if (status !== ImagePicker.PermissionStatus.GRANTED) {
-            Alert.alert(
-                t.permissionDeniedTitle,
-                t.permissionDeniedBody,
-                [
-                    { text: t.cancel, style: "cancel" },
-                    { text: t.openSettings, onPress: () => Linking.openSettings() }
-                ]
-            );
-            return;
-        }
-
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsMultipleSelection: true,
-            selectionLimit: 20,
-            quality: 1,
-        });
-
-        if (!result.canceled && result.assets?.length) {
-            const processedAssets = await Promise.all(
-                result.assets.map(async (asset) => {
-                    const originalUri = asset.uri;
-                    const originalWidth = asset.width;
-                    const originalHeight = asset.height;
-
-                    const manipulated = await manipulateAsync(
-                        originalUri,
-                        [{ resize: { width: 2000 } }],
-                        { compress: 0.8, format: SaveFormat.JPEG }
+                if (status !== ImagePicker.PermissionStatus.GRANTED) {
+                    Alert.alert(
+                        t.permissionDeniedTitle,
+                        t.permissionDeniedBody,
+                        [
+                            { text: t.cancel, style: "cancel" },
+                            { text: t.openSettings, onPress: () => Linking.openSettings() }
+                        ]
                     );
+                    return;
+                }
+            }
 
-                    return {
-                        ...asset,
-                        uri: manipulated.uri,
-                        width: manipulated.width,
-                        height: manipulated.height,
-                        originalUri: originalUri,
-                        originalWidth: originalWidth,
-                        originalHeight: originalHeight
-                    };
-                })
-            );
+            // 웹에서 경고를 내뿜던 구버전 문법을 최신 문법(['images'])으로 변경
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsMultipleSelection: true,
+                selectionLimit: 20,
+                quality: 1,
+            });
 
-            setPhotos(processedAssets);
-            await saveDraft('select');
-            router.push("/create/select");
+            if (!result.canceled && result.assets?.length) {
+                const processedAssets = await Promise.all(
+                    result.assets.map(async (asset) => {
+                        const originalUri = asset.uri;
+                        const originalWidth = asset.width;
+                        const originalHeight = asset.height;
+
+                        const manipulated = await manipulateAsync(
+                            originalUri,
+                            [{ resize: { width: 2000 } }],
+                            { compress: 0.8, format: SaveFormat.JPEG }
+                        );
+
+                        return {
+                            ...asset,
+                            uri: manipulated.uri,
+                            width: manipulated.width,
+                            height: manipulated.height,
+                            originalUri: originalUri,
+                            originalWidth: originalWidth,
+                            originalHeight: originalHeight
+                        };
+                    })
+                );
+
+                setPhotos(processedAssets);
+                await saveDraft('select');
+                router.push("/create/select");
+            }
+        } catch (error) {
+            console.error("사진 선택 중 오류 발생:", error);
+            Alert.alert("안내", "사진을 불러오는 중 문제가 발생했습니다.");
         }
     };
 
@@ -201,7 +208,6 @@ export default function Index() {
 
     return (
         <View style={styles.container}>
-            {/* ✨ [핵심 수정] isGhost가 아닐 때만 배너를 띄웁니다! */}
             {hasDraft && user && !isGhost && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
                     <View style={styles.resumeContent}>
@@ -225,7 +231,6 @@ export default function Index() {
                 showsVerticalScrollIndicator={false}
                 style={{ flex: 1 }}
             >
-                {/* 헤더 영역 */}
                 <View style={[styles.headerRow, { paddingTop: insets.top - 20 }]}>
                     <View style={styles.logoContainer}>
                         <ExpoImage
@@ -253,7 +258,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* Hero Section */}
                 <View style={styles.hero}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
@@ -308,7 +312,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* Benefits Section */}
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
                     <Text style={styles.sectionSmallTitle}>{t.benefitsTitle}</Text>
                     <View style={styles.grid}>
@@ -333,7 +336,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* Billboard Section */}
                 <View style={styles.section}>
                     <View style={styles.billboardContainer}>
                         <View style={styles.billboardImgWrapper}>
@@ -384,7 +386,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* How it works Section */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>{t.howItWorks}</Text>
                     <View style={styles.stepsContainer}>
@@ -400,7 +401,6 @@ export default function Index() {
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
-                {/* 푸터 영역 */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
@@ -414,7 +414,6 @@ export default function Index() {
                         </Pressable>
                     </View>
 
-                    {/* 약관 링크 */}
                     <View style={styles.legalLinksRow}>
                         <Pressable onPress={() => router.push("/privacy" as any)}>
                             <Text style={styles.legalLinkText}>Privacy Policy</Text>
