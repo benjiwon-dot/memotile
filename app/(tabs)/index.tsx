@@ -8,7 +8,7 @@ import {
     Pressable,
     Alert,
     Linking,
-    Platform, // ✨ [추가됨] 웹과 모바일을 구분하기 위한 모듈
+    Platform, // ✨ 웹/모바일 구분용 추가
     type PressableStateCallbackType,
     type StyleProp,
     type ViewStyle,
@@ -118,66 +118,63 @@ export default function Index() {
         []
     );
 
-    // ✨ [핵심 수정됨] 웹 환경 지연 방지 및 에러 핸들링 추가
     const handleStart = async () => {
-        try {
-            // 웹이 아닐 때(모바일일 때)만 갤러리 권한을 요청합니다.
-            if (Platform.OS !== "web") {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        // 모바일 기기에서만 권한을 요청합니다. (웹에서 불필요한 경고 방지)
+        if (Platform.OS !== "web") {
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-                if (status !== ImagePicker.PermissionStatus.GRANTED) {
-                    Alert.alert(
-                        t.permissionDeniedTitle,
-                        t.permissionDeniedBody,
-                        [
-                            { text: t.cancel, style: "cancel" },
-                            { text: t.openSettings, onPress: () => Linking.openSettings() }
-                        ]
-                    );
-                    return;
-                }
+            if (status !== ImagePicker.PermissionStatus.GRANTED) {
+                Alert.alert(
+                    t.permissionDeniedTitle,
+                    t.permissionDeniedBody,
+                    [
+                        { text: t.cancel, style: "cancel" },
+                        { text: t.openSettings, onPress: () => Linking.openSettings() }
+                    ]
+                );
+                return;
             }
+        }
 
-            // 웹에서 경고를 내뿜던 구버전 문법을 최신 문법(['images'])으로 변경
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsMultipleSelection: true,
-                selectionLimit: 20,
-                quality: 1,
-            });
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsMultipleSelection: true,
+            selectionLimit: 20,
+            quality: 1,
+        });
 
-            if (!result.canceled && result.assets?.length) {
-                const processedAssets = await Promise.all(
-                    result.assets.map(async (asset) => {
-                        const originalUri = asset.uri;
-                        const originalWidth = asset.width;
-                        const originalHeight = asset.height;
+        if (!result.canceled && result.assets?.length) {
+            const processedAssets = [];
 
-                        const manipulated = await manipulateAsync(
-                            originalUri,
-                            [{ resize: { width: 2000 } }],
-                            { compress: 0.8, format: SaveFormat.JPEG }
-                        );
+            // ✨ [핵심 해결책] 브라우저 캔버스 메모리 폭발을 막기 위해 Promise.all 대신 순차 처리(for...of) 적용
+            for (const asset of result.assets) {
+                const originalUri = asset.uri;
+                const originalWidth = asset.width;
+                const originalHeight = asset.height;
 
-                        return {
-                            ...asset,
-                            uri: manipulated.uri,
-                            width: manipulated.width,
-                            height: manipulated.height,
-                            originalUri: originalUri,
-                            originalWidth: originalWidth,
-                            originalHeight: originalHeight
-                        };
-                    })
+                // 웹에서는 속도와 메모리 안정성을 위해 리사이징 크기를 조금 줄입니다. (모바일은 그대로 유지)
+                const targetWidth = Platform.OS === 'web' ? 1200 : 2000;
+
+                const manipulated = await manipulateAsync(
+                    originalUri,
+                    [{ resize: { width: targetWidth } }],
+                    { compress: 0.8, format: SaveFormat.JPEG }
                 );
 
-                setPhotos(processedAssets);
-                await saveDraft('select');
-                router.push("/create/select");
+                processedAssets.push({
+                    ...asset,
+                    uri: manipulated.uri,
+                    width: manipulated.width,
+                    height: manipulated.height,
+                    originalUri: originalUri,
+                    originalWidth: originalWidth,
+                    originalHeight: originalHeight
+                });
             }
-        } catch (error) {
-            console.error("사진 선택 중 오류 발생:", error);
-            Alert.alert("안내", "사진을 불러오는 중 문제가 발생했습니다.");
+
+            setPhotos(processedAssets);
+            await saveDraft('select');
+            router.push("/create/select");
         }
     };
 
