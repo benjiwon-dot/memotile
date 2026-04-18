@@ -22,32 +22,50 @@
       "expo-router",
       "expo-web-browser",
       [
-        "@react-native-firebase/app",
+        "expo-build-properties",
         {
           "ios": {
-            "use_modular_headers": true
+            "useFrameworks": "static",
+            "buildReactNativeFromSource": true
           }
         }
       ],
-      "@react-native-firebase/auth"
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
+          "cameraPermission": "We need camera access to let you take new photos for your custom photo tiles."
+        }
+      ],
+      "expo-apple-authentication"
     ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.benjiwon.memotileappanti",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "usesAppleSignIn": true,
       "associatedDomains": [
         "applinks:memotile.com",
         "applinks:www.memotile.com"
       ],
+      "locales": {
+        "en": "./languages/en.json",
+        "th": "./languages/th.json"
+      },
       "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
+        "CFBundleAllowMixedLocalizations": true,
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
               "memotile",
-              "com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"
+              "com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm"
             ]
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -57,6 +75,11 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -89,10 +112,10 @@
       "eas": {
         "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
       },
-      "googleExpoClientId": "166543035480-m69rkgq6uhqi56ntbbgdbst66cc23a50.apps.googleusercontent.com",
-      "googleIosClientId": "166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b.apps.googleusercontent.com",
-      "googleAndroidClientId": "166543035480-i5m8vphpi7bav4iu5e9s1vkad08sfsle.apps.googleusercontent.com",
-      "googleWebClientId": "166543035480-m69rkgq6uhqi56ntbbgdbst66cc23a50.apps.googleusercontent.com"
+      "googleExpoClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+      "googleIosClientId": "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com",
+      "googleAndroidClientId": "459952418126-8v20ioolgpoksmprtogbb2vor9opr8f6.apps.googleusercontent.com",
+      "googleWebClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com"
     }
   }
 }

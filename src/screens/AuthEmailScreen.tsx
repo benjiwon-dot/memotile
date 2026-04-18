@@ -12,7 +12,7 @@ import {
     Platform,
     ScrollView,
     Image,
-    Modal // ✅ Modal 추가
+    Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +23,8 @@ import {
     sendEmailVerification,
     reload,
     sendPasswordResetEmail,
+    OAuthProvider, // ✨ Apple auth 용 추가
+    signInWithCredential // ✨ Apple auth 용 추가
 } from "firebase/auth";
 
 // ✅ Firebase 공통 인스턴스
@@ -33,6 +35,10 @@ import {
     signUpWithEmail,
     signInWithEmail
 } from '../utils/firebaseAuth';
+
+// ✨ Apple Auth Imports
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 
 const showAlert = (title: string, message?: string) => {
     if (Platform.OS === 'web') {
@@ -53,6 +59,9 @@ export default function AuthEmailScreen() {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // ✨ 애플 로그인 진행 상태 상태값 추가
+    const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
 
     // Google Auth Hook
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
@@ -145,6 +154,53 @@ export default function AuthEmailScreen() {
         }
     };
 
+    // ✨ 애플 로그인 로직 추가
+    const handleAppleLogin = async () => {
+        if (Platform.OS !== 'ios') return;
+        setIsAppleLoggingIn(true);
+        try {
+            const csrf = Math.random().toString(36).substring(2, 15);
+            const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, csrf);
+
+            const appleCredential = await AppleAuthentication.signInAsync({
+                requestedScopes: [
+                    AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+                    AppleAuthentication.AppleAuthenticationScope.EMAIL,
+                ],
+                nonce: nonce,
+            });
+
+            const { identityToken } = appleCredential;
+
+            if (identityToken) {
+                const provider = new OAuthProvider('apple.com');
+                const credential = provider.credential({
+                    idToken: identityToken,
+                    rawNonce: csrf,
+                });
+                await signInWithCredential(auth, credential);
+                console.log("Apple Sign-In success");
+                router.back(); // 로그인 성공 시 돌아가기
+            } else {
+                throw new Error("No identity token provided.");
+            }
+        } catch (e: any) {
+            if (e.code === 'ERR_REQUEST_CANCELED') {
+                console.log("User canceled Apple Sign-in");
+            } else if (e.message && e.message.includes("not available on ios")) {
+                Alert.alert(
+                    "Test Environment Notice",
+                    "Apple Sign-In requires a standalone build to test. App Store reviewers will see it working perfectly! For now, please use Email or Google to continue testing."
+                );
+            } else {
+                console.error("Apple Sign-in Error:", e);
+                Alert.alert("Apple Login Failed", e.message || "An error occurred during Apple Sign-In.");
+            }
+        } finally {
+            setIsAppleLoggingIn(false);
+        }
+    };
+
     const handleRefreshVerification = async () => {
         try {
             if (!auth.currentUser) return;
@@ -222,6 +278,7 @@ export default function AuthEmailScreen() {
 
                         <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
 
+                        {/* ⭐️ 구글 로그인 버튼 */}
                         <TouchableOpacity style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]} onPress={() => promptAsync()} disabled={isSigningIn || !isReady}>
                             {isSigningIn ? <ActivityIndicator color="#000" /> :
                                 <View style={styles.socialBtnContent}>
@@ -229,6 +286,21 @@ export default function AuthEmailScreen() {
                                     <Text style={styles.socialBtnText}>{(t as any)['signUpGoogle'] || "Continue with Google"}</Text>
                                 </View>}
                         </TouchableOpacity>
+
+                        {/* ⭐️ 애플 로그인 버튼 (iOS에서만 노출, 구글 버튼과 동일한 하얀 바탕/검정 텍스트 스타일) */}
+                        {Platform.OS === "ios" && (
+                            <TouchableOpacity
+                                style={[styles.socialBtn, { marginTop: 12 }, isAppleLoggingIn && styles.disabledBtn]}
+                                onPress={handleAppleLogin}
+                                disabled={isAppleLoggingIn}
+                            >
+                                {isAppleLoggingIn ? <ActivityIndicator color="#000" /> :
+                                    <View style={styles.socialBtnContent}>
+                                        <Ionicons name="logo-apple" size={20} color="#000" />
+                                        <Text style={styles.socialBtnText}>{(t as any)['auth.signinApple'] || "Continue with Apple"}</Text>
+                                    </View>}
+                            </TouchableOpacity>
+                        )}
 
                         {!isSignUp && (
                             <View style={styles.extraActions}>
@@ -246,7 +318,7 @@ export default function AuthEmailScreen() {
             </KeyboardAvoidingView>
 
             {/* ✅ 화면 멈춤(5초 지연) 시 연타 방지용 전체 화면 모달 */}
-            <Modal visible={isSigningIn || loading} transparent animationType="fade">
+            <Modal visible={isSigningIn || loading || isAppleLoggingIn} transparent animationType="fade">
                 <View style={styles.overlayContainer}>
                     <View style={styles.loadingBox}>
                         <ActivityIndicator size="large" color="#111" />

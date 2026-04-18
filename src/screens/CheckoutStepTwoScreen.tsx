@@ -88,7 +88,6 @@ export default function CheckoutStepTwoScreen() {
     const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser || null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
-    // ⭐️ 진행 상태 UI를 위한 상태 변수 추가
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
     const [progressCount, setProgressCount] = useState(0);
 
@@ -96,7 +95,9 @@ export default function CheckoutStepTwoScreen() {
         if (!auth) return;
         const unsub = auth.onAuthStateChanged((user) => {
             setCurrentUser(user);
-            if (user) loadSavedAddress(user.uid);
+            if (user && !formData.fullName) {
+                loadSavedAddress(user.uid);
+            }
         });
         return unsub;
     }, []);
@@ -277,8 +278,12 @@ export default function CheckoutStepTwoScreen() {
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
-            const appScheme = Linking.createURL('');
-            const webUrl = Platform.OS === 'web' ? `${window.location.origin}/myorder/success?id=${orderId}` : '';
+            // ✨ 심사 환경(정식 앱)에서 오류가 나지 않도록 memotile 스킴을 강제 지정합니다.
+            const returnScheme = Platform.OS === 'web'
+                ? `${window.location.origin}/myorder/success?id=${orderId}`
+                : Linking.createURL('/myorder/success', { scheme: 'memotile' });
+
+            const webUrl = Platform.OS === 'web' ? returnScheme : '';
 
             const response: any = await requestPayment({
                 orderId,
@@ -287,15 +292,13 @@ export default function CheckoutStepTwoScreen() {
                 pgcode: pgcode,
                 platform: Platform.OS,
                 webUrl: webUrl,
-                appScheme: appScheme
+                appScheme: returnScheme
             });
 
             const paymentUrl = response.data.paymentUrl;
 
-            // 결제창 넘어가기 전에 카운트를 강제로 100% 채워줍니다.
             setProgressCount(safePhotosCount);
 
-            // 모달이 자연스럽게 닫힐 시간을 0.5초 줍니다.
             setTimeout(() => {
                 setIsCreatingOrder(false);
                 if (Platform.OS === 'web') {
@@ -314,8 +317,11 @@ export default function CheckoutStepTwoScreen() {
                             {
                                 text: confirmText,
                                 onPress: async () => {
+                                    // ⭐️ 인앱 브라우저를 열어 결제를 진행합니다.
                                     await WebBrowser.openBrowserAsync(paymentUrl);
+
                                     try {
+                                        // 사용자가 브라우저를 닫고 앱으로 돌아왔을 때 서버 결제 상태 확인
                                         const orderSnap = await getDoc(doc(db, "orders", orderId));
                                         const orderData = orderSnap.data();
 
@@ -330,7 +336,7 @@ export default function CheckoutStepTwoScreen() {
                                             );
                                         }
                                     } catch (e) {
-                                        // Error handling
+                                        console.error("Order check failed:", e);
                                     }
                                 }
                             }
@@ -375,12 +381,9 @@ export default function CheckoutStepTwoScreen() {
 
         if (isCreatingOrder) return;
 
-        // ⭐️ 1. 로딩 모달 띄우기 및 숫자 1부터 시작
         setIsCreatingOrder(true);
         setProgressCount(1);
 
-        // ⭐️ 2. 자연스러운 숫자 증가를 위한 시뮬레이션 (UX 용)
-        // 백그라운드 큐가 돌아가는 동안 지루하지 않게 숫자를 1.2초마다 1씩 올립니다. (최대치는 안전하게 1개 남겨둡니다)
         const progressTimer = setInterval(() => {
             setProgressCount(prev => {
                 if (prev < safePhotosCount - 1) return prev + 1;
@@ -389,7 +392,6 @@ export default function CheckoutStepTwoScreen() {
         }, 1200);
 
         try {
-            // 실제 무거운 백그라운드 작업과 서버 통신 대기
             await exportQueue.waitForIdle(60000);
             await ensureTokenReady(user!);
 
@@ -422,7 +424,6 @@ export default function CheckoutStepTwoScreen() {
                 instagram: formData.instagram,
             });
 
-            // 완료되면 타이머 정지
             clearInterval(progressTimer);
 
             if (provider === "DEV_FREE" || provider === "PROMO_FREE") {
@@ -452,7 +453,6 @@ export default function CheckoutStepTwoScreen() {
         return originalName.replace(" (Visa, Master)", "");
     };
 
-    // 언어에 맞춘 아름다운 단어 번역 (UX용)
     const getProgressTitle = () => {
         return safeLocale === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...";
     };
@@ -643,45 +643,53 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
+                        {/* 🚨 심사용 숨김 처리: TrueMoney 🚨 */}
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
-                                <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                {Platform.OS !== 'web' ? (
+                                    <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                ) : (
+                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>TrueMoney</Text></View>
+                                )}
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
                                 {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                             </View>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
+                        {/* 🚨 심사용 숨김 처리: Rabbit LINE Pay 🚨 */}
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
-                                <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                {Platform.OS !== 'web' ? (
+                                    <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                ) : (
+                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
+                                )}
                                 <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
                                 {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                             </View>
                         </TouchableOpacity>
 
+                        {/* ✅ 정식 앱/심사용 활성화 버튼: Credit/Debit Card (TEST 뱃지 제거됨) ✅ */}
                         <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
                             <View style={styles.paymentItemLeft}>
-                                <Image
-                                    source={require("../assets/credit_card_logo.png")}
-                                    style={styles.paymentLogo}
-                                    resizeMode="contain"
-                                />
+                                {Platform.OS !== 'web' ? (
+                                    <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                ) : (
+                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>Card</Text></View>
+                                )}
                                 <Text style={styles.paymentItemText}>{getCleanCardName()}</Text>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <View style={styles.testBadge}><Text style={styles.testBadgeText}>TEST</Text></View>
                                 {isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
                             </View>
                         </TouchableOpacity>
 
-                        {/* 개발자용 테스트 결제 */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20 }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
+                        {/* 🚨 심사용 숨김 처리: Dev Free 🚨 */}
+                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20, display: 'none' }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
                                 <Text style={[styles.paymentItemText, { color: "#059669" }]}>{(t as any)?.["payFreeDev"] || "[Dev] Test Free Order"}</Text>
@@ -692,28 +700,17 @@ export default function CheckoutStepTwoScreen() {
                 </View>
             </ScrollView>
 
-            {/* ⭐️ 새롭게 적용된 1/10 진행률 표시 UI */}
             <Modal visible={isCreatingOrder} transparent animationType="fade">
                 <View style={styles.loadingOverlay}>
                     <View style={styles.progressBox}>
                         <ActivityIndicator size="large" color={colors?.ink || "#111"} />
-
-                        <Text style={styles.progressTitle}>
-                            {getProgressTitle()}
-                        </Text>
-
-                        <Text style={styles.progressSubtitle}>
-                            {getProgressSubtitle()}
-                        </Text>
-
-                        {/* 진행률 카운터 (예: 1 / 10) */}
+                        <Text style={styles.progressTitle}>{getProgressTitle()}</Text>
+                        <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
                         <View style={styles.progressPill}>
                             <Text style={styles.progressPillText}>
                                 {Math.min(progressCount, safePhotosCount)} / {safePhotosCount}
                             </Text>
                         </View>
-
-                        {/* 하단 바 형태의 게이지 */}
                         <View style={styles.progressBarBg}>
                             <View
                                 style={[
@@ -725,7 +722,6 @@ export default function CheckoutStepTwoScreen() {
                     </View>
                 </View>
             </Modal>
-
         </SafeAreaView>
     );
 }
@@ -776,12 +772,8 @@ const styles = StyleSheet.create({
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
     paymentLogo: { width: 42, height: 42, marginRight: 12 },
-    paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12 },
+    paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12, backgroundColor: '#f3f4f6' },
     paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
-    testBadge: { backgroundColor: "#FFFBEB", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: "#FBBF24", marginRight: 8, justifyContent: "center", alignItems: "center" },
-    testBadgeText: { fontSize: 11, fontWeight: "800", color: "#D97706", letterSpacing: 0.5 },
-
-    // ⭐️ 신규 추가된 Progress UI 스타일
     loadingOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: 24 },
     progressBox: { width: "100%", maxWidth: 340, backgroundColor: "#fff", borderRadius: 24, padding: 32, alignItems: "center", elevation: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20 },
     progressTitle: { marginTop: 20, fontSize: 18, fontWeight: "800", color: "#111", textAlign: "center" },

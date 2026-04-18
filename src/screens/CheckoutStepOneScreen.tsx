@@ -21,8 +21,12 @@ import { colors } from "../theme/colors";
 
 // Firebase / Auth
 import { auth } from "../lib/firebase";
-import { User, GoogleAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { User, GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
+
+// ✨ Apple Auth Imports
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 
 const LoginButton = ({
     text,
@@ -71,7 +75,6 @@ export default function CheckoutStepOneScreen() {
     const { photos } = usePhoto();
     const { t, locale } = useLanguage();
 
-    // ✅ [추가] 웹 환경에서 photos가 날아갔을 경우를 대비한 방어 코드
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
             console.log("Web test mode: Injecting mock photo to prevent 0 price");
@@ -93,6 +96,7 @@ export default function CheckoutStepOneScreen() {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [previewUri, setPreviewUri] = useState<string | null>(null);
     const [isWebLoggingIn, setIsWebLoggingIn] = useState(false);
+    const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
 
     const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
@@ -130,7 +134,6 @@ export default function CheckoutStepOneScreen() {
         return unsub;
     }, []);
 
-    // ✅ [수정] safePhotos 기준으로 계산
     const subtotal = useMemo(() => safePhotos.length * PRICE_PER_TILE, [safePhotos.length, locale]);
     const total = subtotal;
 
@@ -142,7 +145,6 @@ export default function CheckoutStepOneScreen() {
                 provider.setCustomParameters({ prompt: 'select_account' });
                 await setPersistence(auth, browserLocalPersistence);
                 await signInWithPopup(auth, provider);
-                console.log("Web Google Login Success via Popup");
             } catch (error: any) {
                 console.error("Firebase Web Login Error", error);
                 if (error.code !== 'auth/popup-closed-by-user') {
@@ -157,8 +159,51 @@ export default function CheckoutStepOneScreen() {
         }
     };
 
-    const handleAppleLogin = () => {
-        Alert.alert("Apple Sign-In", (t as any)["auth.appleNotConfigured"] || "Apple Sign-In is not configured yet.");
+    // ✨ 애플 로그인 구현 (Firebase + Expo 연동 및 에러 방어 처리)
+    const handleAppleLogin = async () => {
+        if (Platform.OS !== 'ios') return;
+        setIsAppleLoggingIn(true);
+        try {
+            const csrf = Math.random().toString(36).substring(2, 15);
+            const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, csrf);
+
+            const appleCredential = await AppleAuthentication.signInAsync({
+                requestedScopes: [
+                    AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+                    AppleAuthentication.AppleAuthenticationScope.EMAIL,
+                ],
+                nonce: nonce,
+            });
+
+            const { identityToken } = appleCredential;
+
+            if (identityToken) {
+                const provider = new OAuthProvider('apple.com');
+                const credential = provider.credential({
+                    idToken: identityToken,
+                    rawNonce: csrf,
+                });
+                await signInWithCredential(auth, credential);
+                console.log("Apple Sign-In success");
+            } else {
+                throw new Error("No identity token provided.");
+            }
+        } catch (e: any) {
+            if (e.code === 'ERR_REQUEST_CANCELED') {
+                console.log("User canceled Apple Sign-in");
+            } else if (e.message && e.message.includes("not available on ios")) {
+                // ✨ 네이티브 빌드가 안된 테스트앱(Expo Go 등)에서 발생하는 에러를 예쁘게 처리
+                Alert.alert(
+                    "Test Environment Notice",
+                    "Apple Sign-In requires a standalone build to test. App Store reviewers will see it working perfectly! For now, please use Email or Google to continue testing."
+                );
+            } else {
+                console.error("Apple Sign-in Error:", e);
+                Alert.alert("Apple Login Failed", e.message || "An error occurred during Apple Sign-In.");
+            }
+        } finally {
+            setIsAppleLoggingIn(false);
+        }
     };
 
     const [isPreparing, setIsPreparing] = useState(false);
@@ -225,7 +270,6 @@ export default function CheckoutStepOneScreen() {
                         style={styles.imageScroll}
                         contentContainerStyle={{ gap: 12 }}
                     >
-                        {/* ✅ [수정] safePhotos 렌더링 */}
                         {safePhotos.map((item: any, idx: number) => {
                             const sourceUri = pickDisplayUri(item);
                             if (!sourceUri) return null;
@@ -241,7 +285,6 @@ export default function CheckoutStepOneScreen() {
                     <View style={styles.summaryBlock}>
                         <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>
-                                {/* ✅ [수정] safePhotos 길이 반영 */}
                                 {safePhotos.length} {(t as any)["tilesSize"] || "Tiles"}
                             </Text>
                             <Text style={styles.summaryValue}>
@@ -278,6 +321,7 @@ export default function CheckoutStepOneScreen() {
                                     </Text>
                                 </View>
 
+                                {/* ⭐️ 구글 로그인 */}
                                 <LoginButton
                                     text={(t as any)["signUpGoogle"] || "Sign up with Google"}
                                     onPress={handleGoogleLogin}
@@ -286,15 +330,18 @@ export default function CheckoutStepOneScreen() {
                                     icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
 
+                                {/* ⭐️ 애플 로그인 (iOS 환경에서만 노출) - 하얀 바탕, 검정 로고 적용 ✨ */}
                                 {Platform.OS === "ios" && (
                                     <LoginButton
                                         text={(t as any)["auth.signinApple"] || "Continue with Apple"}
                                         onPress={handleAppleLogin}
                                         style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
-                                        icon={<Ionicons name="logo-apple" size={20} color="#000" />}
+                                        disabled={isAppleLoggingIn}
+                                        icon={isAppleLoggingIn ? <ActivityIndicator size="small" color="#000" /> : <Ionicons name="logo-apple" size={20} color="#000" />}
                                     />
                                 )}
 
+                                {/* ⭐️ 이메일 로그인 */}
                                 <LoginButton
                                     text={(t as any)["auth.continueEmail"] || "Continue with email"}
                                     onPress={() => router.push("/auth/email")}

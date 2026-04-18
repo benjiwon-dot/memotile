@@ -1,25 +1,25 @@
-// src/screens/Profile.tsx
+// app/(tabs)/profile.tsx
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import {
-    User, MapPin, CreditCard, HelpCircle, MessageCircle, Shield, FileText, ChevronRight, LogIn, LogOut
+    User as UserIcon, MapPin, CreditCard, HelpCircle, MessageCircle, Shield, FileText, ChevronRight, LogIn, LogOut, Trash2
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useLanguage } from "../../src/context/LanguageContext";
-import { usePhoto } from "../../src/context/PhotoContext"; // ✨ 로그아웃 시 사진 초기화를 위해 추가
+import { usePhoto } from "../../src/context/PhotoContext";
 import { colors } from "../../src/theme/colors";
 import { shadows } from "../../src/theme/shadows";
 import { auth, db } from "../../src/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
+import { deleteUser } from "firebase/auth";
 
 export default function Profile() {
     const { t, locale } = useLanguage();
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
-    // ✨ 사진 초기화 함수 가져오기
     const { clearDraft, clearPhotos } = usePhoto() || {};
 
     const [user, setUser] = useState(auth.currentUser);
@@ -29,7 +29,6 @@ export default function Profile() {
     const [modalVisible, setModalVisible] = useState(false);
     const [modalInfo, setModalInfo] = useState({ title: "", content: "" });
 
-    // ✨ 리스너를 담아둘 변수 선언 (권한 에러 방지)
     const unsubDocRef = React.useRef<(() => void) | null>(null);
 
     useEffect(() => {
@@ -39,7 +38,6 @@ export default function Profile() {
                 fetchUserData(u.uid);
             } else {
                 setUserData(null);
-                // ✨ 유저가 없으면(로그아웃 시) 즉시 리스너 끄기
                 if (unsubDocRef.current) {
                     unsubDocRef.current();
                     unsubDocRef.current = null;
@@ -54,7 +52,6 @@ export default function Profile() {
 
     const fetchUserData = (uid: string) => {
         setIsLoading(true);
-        // 기존 리스너가 있다면 먼저 끄기
         if (unsubDocRef.current) unsubDocRef.current();
 
         unsubDocRef.current = onSnapshot(doc(db, "users", uid), (docSnap) => {
@@ -63,23 +60,68 @@ export default function Profile() {
             }
             setIsLoading(false);
         }, (error) => {
-            // 권한 부족 에러 발생 시 무시하고 로딩만 종료
             console.warn("Profile snapshot error:", error.message);
             setIsLoading(false);
         });
     };
 
-    const handleLogout = async () => {
-        try {
-            // ✨ 로그아웃 시 임시 저장된 사진(Draft) 지우기
-            if (clearDraft) await clearDraft();
-            if (clearPhotos) clearPhotos();
+    // ✨ 실수 방지용 로그아웃 확인 팝업 (태국어/영어 지원)
+    const handleLogout = () => {
+        Alert.alert(
+            (t as any).signOut || (locale === 'TH' ? "ออกจากระบบ" : "Sign Out"),
+            locale === 'TH' ? "คุณต้องการออกจากระบบใช่หรือไม่?" : "Are you sure you want to sign out?",
+            [
+                { text: locale === 'TH' ? "ยกเลิก" : "Cancel", style: "cancel" },
+                {
+                    text: (t as any).signOut || (locale === 'TH' ? "ออกจากระบบ" : "Sign Out"),
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            if (clearDraft) await clearDraft();
+                            if (clearPhotos) clearPhotos();
+                            await auth.signOut();
+                            router.replace("/");
+                        } catch (e) {
+                            console.error("Logout failed", e);
+                        }
+                    }
+                }
+            ]
+        );
+    };
 
-            await auth.signOut();
-            router.replace("/");
-        } catch (e) {
-            console.error("Logout failed", e);
-        }
+    // 회원 탈퇴 로직
+    const handleDeleteAccount = () => {
+        Alert.alert(
+            (t as any).deleteAccountTitle || (locale === 'TH' ? "ลบบัญชี" : "Delete Account"),
+            (t as any).deleteAccountMsg || (locale === 'TH' ? "คุณแน่ใจหรือไม่ว่าต้องการลบบัญชีของคุณอย่างถาวร? การกระทำนี้ไม่สามารถย้อนกลับได้" : "Are you sure you want to permanently delete your account? This action cannot be undone."),
+            [
+                { text: (t as any).cancel || (locale === 'TH' ? "ยกเลิก" : "Cancel"), style: "cancel" },
+                {
+                    text: (t as any).delete || (locale === 'TH' ? "ลบ" : "Delete"),
+                    style: "destructive",
+                    onPress: async () => {
+                        if (user) {
+                            try {
+                                await deleteUser(user);
+                                if (clearDraft) await clearDraft();
+                                if (clearPhotos) clearPhotos();
+                                router.replace("/");
+                            } catch (error: any) {
+                                if (error.code === 'auth/requires-recent-login') {
+                                    Alert.alert(
+                                        locale === 'TH' ? "จำเป็นต้องยืนยันตัวตน" : "Authentication Required",
+                                        locale === 'TH' ? "โปรดออกจากระบบและเข้าสู่ระบบอีกครั้งเพื่อลบบัญชีของคุณ" : "Please sign out and sign in again to delete your account."
+                                    );
+                                } else {
+                                    Alert.alert(locale === 'TH' ? "ข้อผิดพลาด" : "Error", error.message);
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const showDetail = (title: string, type: 'address' | 'payment') => {
@@ -89,14 +131,14 @@ export default function Profile() {
         if (type === 'address') {
             const addr = userData?.defaultAddress;
             if (!addr) {
-                content = (t as any).noAddressSaved || "No address saved";
+                content = (t as any).noAddressSaved || (locale === 'TH' ? "ไม่มีที่อยู่ที่บันทึกไว้" : "No address saved");
             } else {
                 content = `${addr.fullName || ""}\n${addr.addressLine1 || ""}\n${addr.addressLine2 ? addr.addressLine2 + "\n" : ""}${addr.city}, ${addr.state} ${addr.postalCode}\n\nPhone: ${addr.phone || ""}`;
             }
         } else {
             const pay = userData?.lastPayment;
             if (!pay) {
-                content = (t as any).noPaymentHistory || "No history";
+                content = (t as any).noPaymentHistory || (locale === 'TH' ? "ไม่มีประวัติการชำระเงิน" : "No payment history");
             } else {
                 content = `Date: ${pay.date}\nMethod: ${pay.method}\n\nID: ${pay.id || 'N/A'}`;
             }
@@ -107,13 +149,13 @@ export default function Profile() {
     };
 
     const getAddressSummary = () => {
-        if (!userData?.defaultAddress) return (t as any).noAddressSaved || "No address saved";
+        if (!userData?.defaultAddress) return (t as any).noAddressSaved || (locale === 'TH' ? "ไม่มีที่อยู่ที่บันทึกไว้" : "No address saved");
         const addr = userData.defaultAddress;
         return `${addr.city || ""}, ${addr.state || ""}`.replace(/^, /, "");
     };
 
     const getPaymentSummary = () => {
-        if (!userData?.lastPayment) return (t as any).noPaymentHistory || "No history";
+        if (!userData?.lastPayment) return (t as any).noPaymentHistory || (locale === 'TH' ? "ไม่มีประวัติ" : "No history");
         return `${userData.lastPayment.date} (${userData.lastPayment.method})`;
     };
 
@@ -122,15 +164,15 @@ export default function Profile() {
             title: t.account,
             items: [
                 user ? {
-                    title: (t as any).signOut || "Sign Out",
+                    title: (t as any).signOut || (locale === 'TH' ? "ออกจากระบบ" : "Sign Out"),
                     icon: LogOut,
                     subtitle: user.email,
                     onClick: handleLogout,
-                    isDestructive: true
+                    isDestructive: false
                 } : {
                     title: t.signIn,
                     icon: LogIn,
-                    subtitle: (t as any).signInToContinue || "Sign in to continue",
+                    subtitle: (t as any).signInToContinue || (locale === 'TH' ? "เข้าสู่ระบบเพื่อดำเนินการต่อ" : "Sign in to continue"),
                     onClick: () => router.push("/auth/email")
                 },
                 {
@@ -159,6 +201,12 @@ export default function Profile() {
             items: [
                 { title: t.privacyPolicy, icon: Shield, onClick: () => router.push('/privacy') },
                 { title: t.termsOfService, icon: FileText, onClick: () => router.push('/terms') },
+                ...(user ? [{
+                    title: (t as any).deleteAccount || (locale === 'TH' ? "ลบบัญชี" : "Delete Account"),
+                    icon: Trash2,
+                    onClick: handleDeleteAccount,
+                    isDestructive: true
+                }] : [])
             ]
         }
     ];
@@ -213,7 +261,7 @@ export default function Profile() {
                 ))}
 
                 <View style={styles.footer}>
-                    <Text style={styles.version}>{t.version || "Version"} 1.0.0 (Build 124)</Text>
+                    <Text style={styles.version}>{(t as any).version || (locale === 'TH' ? 'เวอร์ชั่น' : 'Version')} 1.0.0 (Build 124)</Text>
                     <Text style={styles.copyright}>© 2026 Memotile</Text>
                 </View>
             </ScrollView>

@@ -165,20 +165,19 @@ export default function EditorScreen() {
 
   const outgoingOpacity = useSharedValue(0);
   const incomingOpacity = useSharedValue(1);
-  const hintOpacity = useSharedValue(0); // ✨ 크롭 안내 뱃지 투명도 상태
+  const hintOpacity = useSharedValue(0);
 
   const outgoingStyle = useAnimatedStyle(() => ({ opacity: outgoingOpacity.value }));
   const incomingStyle = useAnimatedStyle(() => ({ opacity: incomingOpacity.value }));
   const hintStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
 
-  // ✨ 사진이 켜지면 뱃지 보여주고 3초 뒤 숨기기 애니메이션
   useEffect(() => {
     if (!isSwitchingPhoto && viewportDim) {
       cancelAnimation(hintOpacity);
       hintOpacity.value = 0;
       hintOpacity.value = withSequence(
-        withDelay(400, withTiming(1, { duration: 400 })), // 0.4초 뒤 서서히 나타남
-        withDelay(3000, withTiming(0, { duration: 500 })) // 3초 대기 후 서서히 사라짐
+        withDelay(400, withTiming(1, { duration: 400 })),
+        withDelay(3000, withTiming(0, { duration: 500 }))
       );
     }
   }, [isSwitchingPhoto, currentIndex, viewportDim]);
@@ -189,6 +188,7 @@ export default function EditorScreen() {
     if (incomingResolved) setActiveResolved(incomingResolved);
     setIncomingResolved(null);
     outgoingRef.current = null;
+
     outgoingOpacity.value = 0;
     incomingOpacity.value = 1;
     setIsSwitchingPhoto(false);
@@ -449,8 +449,6 @@ export default function EditorScreen() {
     if (!outgoingRef.current) return;
     if (!isAliveRef.current) return;
 
-    setIsProcessing(false);
-
     cancelAnimation(outgoingOpacity);
     cancelAnimation(incomingOpacity);
 
@@ -603,11 +601,17 @@ export default function EditorScreen() {
         cancelAnimation(outgoingOpacity); cancelAnimation(incomingOpacity);
         outgoingOpacity.value = 1; incomingOpacity.value = 0;
 
+        // 💡 핵심: 1. 상태를 전환 시작으로 변경
         setIsSwitchingPhoto(true);
+        // 💡 핵심: 2. 다음 사진을 새로 불러올 수 있도록 기존 값을 비움
         setIncomingResolved(null);
+        // 💡 핵심: 3. 기존 화면 파괴(언마운트)를 막기 위해 얼려둔 스냅샷 해제
+        setFrozenSnapshot(null);
+        // 💡 핵심: 4. 로딩 화면 잔상이 남지 않도록 즉시 종료
+        setIsProcessing(false);
+        // 💡 핵심: 5. 인덱스를 올려 다음 사진 로딩 시작
         setCurrentIndex(nextIdx);
 
-        setFrozenSnapshot(null);
         isExporting.current = false;
         return;
       }
@@ -687,7 +691,6 @@ export default function EditorScreen() {
     );
   }
 
-  // ✨ 다국어 지원을 위한 힌트 문구 (태국어, 영어 분기 처리)
   const cropHintText = locale === 'TH' ? "แตะแล้วลากเพื่อครอบตัด" : "Drag to crop & adjust";
 
   return (
@@ -734,7 +737,8 @@ export default function EditorScreen() {
           >
             {viewportDim && (frozenSnapshot || incomingDisplayResolved) ? (
               <CropFrameRN
-                key={frozenSnapshot ? `frozen-${currentIndex}` : `in-${currentIndex}`}
+                // 💡 핵심: key를 하나로 고정해서 언마운트(화면 깨짐) 방지!
+                key={`crop-${currentIndex}`}
                 ref={cropRef}
 
                 imageSrc={frozenSnapshot?.uri || incomingDisplayResolved?.uri}
@@ -750,10 +754,7 @@ export default function EditorScreen() {
 
                 onChange={(newCrop: any) => {
                   if (frozenSnapshot) return;
-
-                  // ✨ 유저가 제스처(터치)를 시작하면 즉시 힌트 뱃지를 숨김 (0.15초 컷)
                   hintOpacity.value = withTiming(0, { duration: 150 });
-
                   setCurrentUi((prev) => {
                     const p = prev.crop;
                     const dx = Math.abs((newCrop?.x ?? 0) - p.x);
@@ -772,7 +773,6 @@ export default function EditorScreen() {
             )}
           </Animated.View>
 
-          {/* ✨ 프리미엄 디자인의 크롭 안내 뱃지 추가 */}
           {!isSwitchingPhoto && viewportDim && (
             <Animated.View
               pointerEvents="none"
@@ -849,11 +849,9 @@ export default function EditorScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
-
-  // ✨ 크롭 안내 뱃지 스타일 추가
   cropHintWrapper: {
     position: 'absolute',
-    top: 40, // 사진 위쪽 여백에 살짝 띄움
+    top: 40,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -878,7 +876,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
   primaryBtnContainer: { padding: 16, alignItems: "center" },
   primaryBtn: {
