@@ -13,6 +13,8 @@ import {
     Platform,
     Keyboard,
     Modal,
+    LayoutAnimation,
+    UIManager,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -41,6 +43,11 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { exportQueue } from "../utils/exportQueue";
 
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || "";
+
+// ✨ 안드로이드에서 부드러운 UI 전환 애니메이션(스르륵 효과)을 켜주기 위한 설정
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
@@ -91,8 +98,11 @@ export default function CheckoutStepTwoScreen() {
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
     const [progressCount, setProgressCount] = useState(0);
 
-    // 💡 결제 확인 중임을 나타내는 상태 (깜빡임 및 오해 방지용)
     const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+
+    const [promoCode, setPromoCode] = useState("");
+    const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
+    const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
     useEffect(() => {
         if (!auth) return;
@@ -165,38 +175,51 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    const [promoCode, setPromoCode] = useState("");
-    const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
-    const [isApplyingPromo, setIsApplyingPromo] = useState(false);
-
     const safeLocale = locale || "EN";
-
     const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
     const BASE_PRICE_USD = 6.45;
-
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    const subtotal = safePhotosCount * PRICE_PER_TILE;
-    const discount = promoResult?.discountAmount || 0;
-    const shippingFee = 0;
-    const total = Math.max(0, (subtotal || 0) - (discount || 0) + shippingFee);
+    // ✨ [수정됨] 퍼센트(%) 및 고정 금액 할인을 프론트에서 정확히 계산하도록 수정
+    const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
+    const subtotal = Number(rawSubtotal.toFixed(2));
 
-    // ✨ [수정됨] 실제 할인 비율을 계산하여 USD에도 정확히 적용 (버그 수정)
-    const subtotalUSD = safePhotosCount * BASE_PRICE_USD;
+    let calculatedDiscount = 0;
+    if (promoResult?.success) {
+        if (promoResult.discountType === 'percent') {
+            calculatedDiscount = subtotal * ((promoResult.discountValue || 0) / 100);
+        } else if (promoResult.discountType === 'fixed') {
+            calculatedDiscount = promoResult.discountValue || 0;
+        } else if (promoResult.discountAmount) {
+            calculatedDiscount = promoResult.discountAmount;
+        }
+    }
+
+    const discount = Number(calculatedDiscount.toFixed(2));
+    const shippingFee = 0;
+    const total = Math.max(0, Number((subtotal - discount + shippingFee).toFixed(2)));
+
+    // ✨ [수정됨] USD도 동일하게 계산 적용
+    const rawSubtotalUSD = safePhotosCount * BASE_PRICE_USD;
+    const subtotalUSD = Number(rawSubtotalUSD.toFixed(2));
     let discountRatio = 0;
     if (promoResult?.success && subtotal > 0) {
-        discountRatio = promoResult.discountAmount / subtotal;
+        discountRatio = discount / subtotal;
     }
-    const discountUSD = subtotalUSD * discountRatio;
-    const totalInUSD = Math.max(0, subtotalUSD - discountUSD);
+    const discountUSD = Number((subtotalUSD * discountRatio).toFixed(2));
+    const totalInUSD = Math.max(0, Number((subtotalUSD - discountUSD).toFixed(2)));
 
     const handleApplyPromo = async () => {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
             const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotal);
+
+            // UI 스르륵 전환 애니메이션
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
+
             if (!res.success) {
                 Alert.alert("Promo", (t as any)?.[res.error || "promoInvalid"] || res.error || "Invalid promo.");
             }
@@ -445,7 +468,7 @@ export default function CheckoutStepTwoScreen() {
 
             clearInterval(progressTimer);
 
-            // ✨ [수정됨] 총 결제액(total)이 0원이면 PG사 패스하고 바로 주문 완료 처리!
+            // ✨ 정확한 0원 체크
             const isFreeOrder = provider === "DEV_FREE" || provider === "PROMO_FREE" || total <= 0;
 
             if (isFreeOrder) {
@@ -654,7 +677,6 @@ export default function CheckoutStepTwoScreen() {
                         )}
                     </View>
 
-                    {/* ✨ [수정됨] 결제 섹션: 0원일 때 결제 수단 숨기고 무료 주문 전용 버튼 노출 */}
                     <View style={styles.paymentSection}>
                         <Text style={styles.sectionTitle}>
                             {total <= 0 ? (safeLocale === 'TH' ? "สั่งซื้อฟรี" : "Free Order") : ((t as any)?.["paymentMethodLabel"] || "Payment Method")}

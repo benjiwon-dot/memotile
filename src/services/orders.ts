@@ -232,6 +232,48 @@ export async function createDevOrder(params: {
         console.error("Upload Error:", err);
     }
 
+    // =========================================================
+    // ✨ [추가됨] 주문 완료 시: 쿠폰 사용 횟수 진짜 차감하기
+    // =========================================================
+    if (promoCode && promoCode.code) {
+        try {
+            const promoRef = doc(db, 'promoCodes', promoCode.code.toUpperCase());
+            const redemptionRef = doc(db, 'promoRedemptions', `${promoCode.code.toUpperCase()}_${authedUid}`);
+
+            await runTransaction(db, async (tx) => {
+                const promoSnap = await tx.get(promoRef);
+                const redSnap = await tx.get(redemptionRef);
+
+                // 전체 쿠폰의 redeemedCount +1
+                if (promoSnap.exists()) {
+                    const currentTotal = promoSnap.data().redeemedCount || 0;
+                    tx.update(promoRef, { redeemedCount: currentTotal + 1 });
+                }
+
+                // 내 계정의 usageCount +1
+                if (redSnap.exists()) {
+                    const currentUsage = redSnap.data().usageCount || 0;
+                    tx.update(redemptionRef, {
+                        usageCount: currentUsage + 1,
+                        lastUsedAt: serverTimestamp()
+                    });
+                } else {
+                    tx.set(redemptionRef, {
+                        code: promoCode.code.toUpperCase(),
+                        uid: authedUid,
+                        usageCount: 1,
+                        createdAt: serverTimestamp(),
+                        lastUsedAt: serverTimestamp()
+                    });
+                }
+            });
+            console.log(`[Checkout] Promo code ${promoCode.code} successfully redeemed.`);
+        } catch (e) {
+            console.error("[Checkout] Failed to redeem promo code after order creation:", e);
+            // 쿠폰 횟수 깎기에 실패하더라도 이미 생성된 주문을 막지는 않음 (고객 경험 보호)
+        }
+    }
+
     return orderId;
 }
 

@@ -1,3 +1,4 @@
+// src/context/PhotoContext.tsx
 import React, {
     createContext,
     useContext,
@@ -6,7 +7,7 @@ import React, {
     useState,
     ReactNode,
 } from "react";
-import { Platform } from "react-native"; // ✨ 추가됨: 웹 환경 판별용
+import { Platform } from "react-native";
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -29,8 +30,8 @@ type SerializableAsset = Pick<
     | "exif"
 > & {
     originalUri?: string;
-    cachedPreviewUri?: string;   // 에디터 화면용 (1080px)
-    cachedThumbnailUri?: string; // ✅ 필터 리스트용 (200px)
+    cachedPreviewUri?: string;
+    cachedThumbnailUri?: string;
 
     edits?: {
         crop: { x: number; y: number; width: number; height: number };
@@ -86,7 +87,7 @@ interface PhotoContextType {
 
     saveDraft: (step: DraftStep, override?: { photos?: ImagePickerAsset[]; currentIndex?: number }) => Promise<void>;
     loadDraft: () => Promise<boolean>;
-    clearDraft: () => Promise<void>; // ✅ 결제 완료 시 흔적을 지우는 핵심 함수
+    clearDraft: () => Promise<void>;
 }
 
 const PhotoContext = createContext<PhotoContextType | undefined>(undefined);
@@ -210,7 +211,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const saveDraft: PhotoContextType["saveDraft"] = async (step, override) => {
         if (saveDraftTimer.current) clearTimeout(saveDraftTimer.current);
 
-        return new Promise((resolve) => { // ✨ reject 제거 (웹에서 터지지 않게 방어)
+        return new Promise((resolve) => {
             saveDraftTimer.current = setTimeout(async () => {
                 try {
                     const usePhotos = override?.photos ?? photos;
@@ -222,7 +223,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                         timestamp: Date.now(),
                     };
 
-                    // ✨ [핵심 수정] 웹 환경 예외 처리 및 용량 초과 방어 로직 추가
                     if (Platform.OS === 'web') {
                         console.warn("웹 브라우저 환경에서는 용량 초과 방지를 위해 AsyncStorage 저장을 생략합니다.");
                         setHasDraft(true);
@@ -235,22 +235,24 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     resolve();
                 } catch (e) {
                     console.warn("임시 저장 실패 (용량 초과 등):", e);
-                    // 에러가 나더라도 앱이 죽지 않도록 부드럽게 완료 처리
                     resolve();
                 }
             }, 250);
         });
     };
 
-    // ✨ [핵심 수정] 결제 완료 시 완벽한 흔적 지우기
+    // ✨ [핵심 수정] 타이머를 폭파시켜서 유령 저장을 방지!
     const clearDraft: PhotoContextType["clearDraft"] = async () => {
         try {
+            // 대기 중인 임시저장 타이머가 있다면 싹 다 취소! (가장 중요)
+            if (saveDraftTimer.current) {
+                clearTimeout(saveDraftTimer.current);
+                saveDraftTimer.current = null;
+            }
+
             await AsyncStorage.removeItem(DRAFT_KEY);
-            // 1. 배너 스위치 끄기
             setHasDraft(false);
-            // 2. 들고 있던 사진 데이터 메모리에서 날리기
             setPhotosState([]);
-            // 3. 인덱스 초기화
             setCurrentIndexState(0);
         } catch (e) {
             console.error("Failed to clear draft", e);
@@ -333,7 +335,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const clearPhotos = () => {
-        // ✨ 여기서 clearDraft()를 호출하여 완벽하게 파기되도록 연결
         clearDraft();
     };
 
