@@ -181,7 +181,7 @@ async function clampCropToImage(
    CLOUD FUNCTIONS
    ========================================================================= */
 
-// ✨ [핵심 추가] 프론트엔드에서 호출하는 단일 주문 업데이트 함수
+// ✨ 프론트엔드에서 호출하는 단일 주문 업데이트 함수
 export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -189,7 +189,6 @@ export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true },
         }
 
         const db = getFirestore();
-        // adminTasks에 지시서를 넣으면 processAdminTask가 알아서 처리함
         await db.collection("adminTasks").add({
             type: "UPDATE_ORDER_OPS",
             payload: {
@@ -208,7 +207,7 @@ export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true },
     }
 });
 
-// ✨ [핵심 추가] 프론트엔드에서 호출하는 일괄(Batch) 주문 업데이트 함수
+// ✨ 프론트엔드에서 호출하는 일괄(Batch) 주문 업데이트 함수
 export const adminBatchUpdateOrderStatus = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -216,7 +215,6 @@ export const adminBatchUpdateOrderStatus = onCall({ region: "us-central1", cors:
         }
 
         const db = getFirestore();
-        // 일괄 변경도 마찬가지로 adminTasks에 던져서 백그라운드 처리
         await db.collection("adminTasks").add({
             type: "BATCH_UPDATE_STATUS",
             payload: {
@@ -235,7 +233,6 @@ export const adminBatchUpdateOrderStatus = onCall({ region: "us-central1", cors:
     }
 });
 
-// 혹시 프론트 코드 이름이 다를까봐 보조용으로 하나 더 추가 (선택사항)
 export const adminBatchUpdate = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -391,10 +388,9 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 );
 
 
-// ✨ [다국어 대응] 고객 언어(en/th) 감지하여 영어/태국어 분기 발송 + DB 트리거 연동
-// ✨ [다국어 + 마케팅 푸시 대응] DB를 감지하여 실행되는 통합 트리거 함수
+// ✨ [통합 처리] Admin Web에서 생성된 adminTasks 문서를 감지하여 일괄 처리
 export const processAdminTask = onDocumentCreated(
-    { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300 }, // 다수 발송을 위해 타임아웃 5분으로 넉넉히 설정
+    { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300 },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -491,72 +487,89 @@ export const processAdminTask = onDocumentCreated(
             }
 
             // ====================================================================
-            // 2. ✨ [신규] 마케팅 푸시(다국어 프로모션) 발송 로직
+            // 2. ✨ 마케팅 푸시 발송 (필터링 및 언어 필수조건 해제)
             // ====================================================================
             else if (task.type === "MARKETING_PUSH") {
-                const { target, testToken, en, th } = task.payload || {};
+                const { target, filters, testToken, en, th } = task.payload || {};
                 const titleEn = en?.title;
                 const bodyEn = en?.body;
+                const titleTh = th?.title;
+                const bodyTh = th?.body;
 
-                // 태국어 입력을 안 했을 경우를 대비해 영어 텍스트를 기본값으로 세팅
-                const titleTh = th?.title || titleEn;
-                const bodyTh = th?.body || bodyEn;
+                // 영어/태국어 중 하나라도 입력되어 있으면 발송 가능
+                if (!titleEn && !titleTh) throw new Error("At least one language message is required.");
 
-                if (!titleEn || !bodyEn) throw new Error("English message is required");
-
-                // ✨ [추가] 특정 토큰으로 다이렉트 테스트 쏘기
+                // ✨ 특정 기기로 테스트 발송
                 if (target === "test_token" && testToken) {
                     console.log(`[Marketing Push] Direct test to token: ${testToken}`);
-                    // 다이렉트 테스트는 누군지 모르므로 기본값(영어)으로 쏩니다.
+                    // 타겟 언어가 태국어면 태국어 우선, 아니면 영어 우선
+                    const finalTitle = filters?.language === 'th' ? (titleTh || titleEn) : (titleEn || titleTh);
+                    const finalBody = filters?.language === 'th' ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
+
                     await axios.post("https://exp.host/--/api/v2/push/send", {
                         to: testToken,
                         sound: "default",
-                        title: titleEn,
-                        body: bodyEn,
+                        title: finalTitle,
+                        body: finalBody,
                     });
                 }
-                // 기존의 DB 조회 후 발송 로직 (all 또는 test_admin)
+                // ✨ 필터링된 유저들에게 발송
                 else {
-                    // 타겟에 따라 유저 데이터 가져오기
                     let usersQuery: FirebaseFirestore.Query = db.collection("users");
 
+                    // 1. 관리자 그룹 필터
                     if (target === "test_admin") {
-                        // 테스트 모드: 관리자에게만 발송
                         usersQuery = usersQuery.where("isAdmin", "==", true);
                     }
-                    // target === "all" 일 경우 조건 없이 모든 유저 쿼리
+
+                    // 2. 성별 필터
+                    if (filters?.gender && filters.gender !== "all") {
+                        usersQuery = usersQuery.where("gender", "==", filters.gender);
+                    }
+
+                    // 3. 언어 필터
+                    if (filters?.language && filters.language !== "all") {
+                        usersQuery = usersQuery.where("language", "==", filters.language);
+                    }
 
                     const usersSnap = await usersQuery.get();
                     const notifications: { userId: string, title: string, body: string }[] = [];
 
                     usersSnap.forEach((doc) => {
                         const userData = doc.data();
-
-                        // 푸시 토큰이 있는 유저만 필터링
                         const pushToken = userData?.expoPushToken || userData?.pushToken;
                         if (!pushToken) return;
 
-                        // 유저의 언어 설정 확인 (기본값 en)
+                        // 4. 가입 시기 필터 (클라이언트 단에서 쿼리하지 않고 서버에서 거름)
+                        if (filters?.joinDate && filters.joinDate !== "all") {
+                            const createdAt = userData.createdAt?.toDate ? userData.createdAt.toDate() : null;
+                            if (createdAt) {
+                                const diffDays = (new Date().getTime() - createdAt.getTime()) / (1000 * 3600 * 24);
+                                if (filters.joinDate === "recent_7" && diffDays > 7) return;
+                                if (filters.joinDate === "recent_30" && diffDays > 30) return;
+                            }
+                        }
+
+                        // 유저 설정 언어에 맞춰 메시지 선택
                         const userLang = userData?.language || "en";
+                        const title = userLang === "th" ? (titleTh || titleEn) : (titleEn || titleTh);
+                        const body = userLang === "th" ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
 
-                        const title = userLang === "th" ? titleTh : titleEn;
-                        const body = userLang === "th" ? bodyTh : bodyEn;
-
-                        notifications.push({ userId: doc.id, title, body });
+                        if (title && body) {
+                            notifications.push({ userId: doc.id, title, body });
+                        }
                     });
 
-                    console.log(`[Marketing Push] 총 ${notifications.length}명에게 마케팅 푸시를 발송합니다.`);
+                    console.log(`[Marketing Push] 총 ${notifications.length}명에게 필터링 발송을 시작합니다.`);
 
-                    // 수집된 유저들에게 알림 순차 발송
+                    // 수집된 유저들에게 순차 발송
                     for (const noti of notifications) {
                         await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                     }
                 }
             }
 
-            // 작업 지시서 처리 완료 상태로 업데이트
             await snap.ref.update({ status: "completed", completedAt: timestamp });
-
         } catch (error) {
             console.error("Task error:", error);
             await snap.ref.update({ status: "error", error: String(error) });
