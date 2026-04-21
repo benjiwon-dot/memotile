@@ -193,7 +193,9 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     const now = Date.now();
                     const age = now - (draft.timestamp || 0);
                     const TTL = 48 * 3600 * 1000;
-                    if (age > TTL) {
+
+                    // ✨ [핵심 방어 1] 만료되었거나, "사진이 0장인 빈 껍데기"면 아예 지워버리기!
+                    if (age > TTL || !draft.photos || draft.photos.length === 0) {
                         await AsyncStorage.removeItem(DRAFT_KEY);
                         setHasDraft(false);
                     } else {
@@ -215,6 +217,15 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             saveDraftTimer.current = setTimeout(async () => {
                 try {
                     const usePhotos = override?.photos ?? photos;
+
+                    // ✨ [핵심 방어 2] 저장하려고 봤더니 사진이 0장이면? 빈 껍데기 만들지 말고 흔적 지우기!
+                    if (!usePhotos || usePhotos.length === 0) {
+                        await AsyncStorage.removeItem(DRAFT_KEY);
+                        setHasDraft(false);
+                        resolve();
+                        return;
+                    }
+
                     const useIndex = override?.currentIndex ?? currentIndex;
                     const payload: DraftPayload = {
                         photos: usePhotos.map((p) => toSerializableAsset(normalizeAsset(p))),
@@ -241,10 +252,8 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         });
     };
 
-    // ✨ [핵심 수정] 타이머를 폭파시켜서 유령 저장을 방지!
     const clearDraft: PhotoContextType["clearDraft"] = async () => {
         try {
-            // 대기 중인 임시저장 타이머가 있다면 싹 다 취소! (가장 중요)
             if (saveDraftTimer.current) {
                 clearTimeout(saveDraftTimer.current);
                 saveDraftTimer.current = null;

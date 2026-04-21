@@ -237,7 +237,7 @@ export default function EditorScreen() {
         setCurrentUi({
           ...makeDefaultEdit(),
           filterId: "original",
-          crop: defaultCenterCrop(),
+          crop: { x: 0, y: 0, scale: 1 },
         });
       }
 
@@ -307,8 +307,12 @@ export default function EditorScreen() {
     return () => { alive = false; };
   }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto]);
 
-  const displayResolved = activeResolved || initialInfo;
-  const displayUri = displayResolved?.uri || currentPhoto?.uri;
+  // ✨ [핵심 수정 1] 트랜지션 중 incoming 이미지가 null이 되어 에디터가 박살나는 현상 방지
+  const incomingDisplayResolved = isSwitchingPhoto
+    ? (incomingResolved || activeResolved || initialInfo)
+    : (activeResolved || initialInfo);
+
+  const displayUri = incomingDisplayResolved?.uri || currentPhoto?.uri;
   const thumbnailUri = (currentPhoto as any)?.cachedThumbnailUri || displayUri;
 
   const activeFilterId = currentUi.filterId;
@@ -465,7 +469,7 @@ export default function EditorScreen() {
     if (!photos || photos.length === 0 || isExporting.current) return;
     if (isSwitchingPhoto || isProcessing) return;
 
-    const currentPhotoUri = displayResolved?.uri || (photos[currentIndex] as any).uri;
+    const currentPhotoUri = incomingDisplayResolved?.uri || (photos[currentIndex] as any).uri;
     const currentCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
     const activeFilter = activeFilterObj;
     const matrix = activeMatrix;
@@ -507,8 +511,8 @@ export default function EditorScreen() {
         return;
       }
 
-      let uiW = displayResolved?.width ?? photo.width;
-      let uiH = displayResolved?.height ?? photo.height;
+      let uiW = incomingDisplayResolved?.width ?? photo.width;
+      let uiH = incomingDisplayResolved?.height ?? photo.height;
 
       try {
         const real = await getImageSizeAsync(currentPhotoUri);
@@ -601,15 +605,20 @@ export default function EditorScreen() {
         cancelAnimation(outgoingOpacity); cancelAnimation(incomingOpacity);
         outgoingOpacity.value = 1; incomingOpacity.value = 0;
 
-        // 💡 핵심: 1. 상태를 전환 시작으로 변경
         setIsSwitchingPhoto(true);
-        // 💡 핵심: 2. 다음 사진을 새로 불러올 수 있도록 기존 값을 비움
         setIncomingResolved(null);
-        // 💡 핵심: 3. 기존 화면 파괴(언마운트)를 막기 위해 얼려둔 스냅샷 해제
         setFrozenSnapshot(null);
-        // 💡 핵심: 4. 로딩 화면 잔상이 남지 않도록 즉시 종료
         setIsProcessing(false);
-        // 💡 핵심: 5. 인덱스를 올려 다음 사진 로딩 시작
+
+        // ✨ [핵심 수정 2] 다음 사진으로 넘어가기 '직전'에 다음 사진의 UI를 미리 세팅 (크롭 튐 방지)
+        const nextPhoto = photos[nextIdx] as any;
+        const savedUi = nextPhoto?.edits?.ui;
+        if (savedUi) {
+          setCurrentUi({ ...savedUi, filterId: nextPhoto?.edits?.filterId ?? "original" });
+        } else {
+          setCurrentUi(makeDefaultEdit());
+        }
+
         setCurrentIndex(nextIdx);
 
         isExporting.current = false;
@@ -672,7 +681,6 @@ export default function EditorScreen() {
   };
 
   const outgoing = outgoingRef.current;
-  const incomingDisplayResolved = isSwitchingPhoto ? incomingResolved : activeResolved || initialInfo;
 
   if (Platform.OS === 'web') {
     return (
@@ -737,8 +745,8 @@ export default function EditorScreen() {
           >
             {viewportDim && (frozenSnapshot || incomingDisplayResolved) ? (
               <CropFrameRN
-                // 💡 핵심: key를 하나로 고정해서 언마운트(화면 깨짐) 방지!
-                key={`crop-${currentIndex}`}
+                // ✨ [핵심 수정 3] key를 고정 문자열로 바꿔서 인덱스가 바뀌어도 에디터가 파괴되지 않게 방어!
+                key="main-crop-frame-fixed"
                 ref={cropRef}
 
                 imageSrc={frozenSnapshot?.uri || incomingDisplayResolved?.uri}

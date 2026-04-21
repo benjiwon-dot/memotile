@@ -1,4 +1,3 @@
-// src/screens/CheckoutStepOneScreen.tsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import {
     View,
@@ -159,7 +158,6 @@ export default function CheckoutStepOneScreen() {
         }
     };
 
-    // ✨ 애플 로그인 구현 (Firebase + Expo 연동 및 에러 방어 처리)
     const handleAppleLogin = async () => {
         if (Platform.OS !== 'ios') return;
         setIsAppleLoggingIn(true);
@@ -237,7 +235,6 @@ export default function CheckoutStepOneScreen() {
         }
     };
 
-    // ✅ 원본 경로로 롤백 (이 경로가 맞습니다!)
     const GoogleIconFallback = () => (
         <Image source={require("../assets/google_logo.png")} style={{ width: 18, height: 18 }} resizeMode="contain" />
     );
@@ -321,16 +318,7 @@ export default function CheckoutStepOneScreen() {
                                     </Text>
                                 </View>
 
-                                {/* ⭐️ 구글 로그인 */}
-                                <LoginButton
-                                    text={(t as any)["signUpGoogle"] || "Sign up with Google"}
-                                    onPress={handleGoogleLogin}
-                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
-                                    disabled={isWebLoggingIn || (!isReady && Platform.OS !== 'web') || isSigningIn}
-                                    icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
-                                />
-
-                                {/* ⭐️ 애플 로그인 (iOS 환경에서만 노출) */}
+                                {/* ⭐️ Apple 로그인을 Google 로그인 위로 배치 */}
                                 {Platform.OS === "ios" && (
                                     <LoginButton
                                         text={(t as any)["auth.signinApple"] || "Continue with Apple"}
@@ -341,7 +329,14 @@ export default function CheckoutStepOneScreen() {
                                     />
                                 )}
 
-                                {/* ⭐️ 이메일 로그인 */}
+                                <LoginButton
+                                    text={(t as any)["signUpGoogle"] || "Sign up with Google"}
+                                    onPress={handleGoogleLogin}
+                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
+                                    disabled={isWebLoggingIn || (!isReady && Platform.OS !== 'web') || isSigningIn}
+                                    icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
+                                />
+
                                 <LoginButton
                                     text={(t as any)["auth.continueEmail"] || "Continue with email"}
                                     onPress={() => router.push("/auth/email")}

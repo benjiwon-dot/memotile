@@ -41,7 +41,7 @@
       "expo-apple-authentication"
     ],
     "ios": {
-      "buildNumber": "2",
+      "buildNumber": "4",
       "supportsTablet": true,
       "bundleIdentifier": "com.benjiwon.memotileappanti",
       "googleServicesFile": "./GoogleService-Info.plist",

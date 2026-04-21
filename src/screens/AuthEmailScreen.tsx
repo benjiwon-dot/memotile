@@ -1,4 +1,3 @@
-// app/auth/email.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -51,7 +50,6 @@ export default function AuthEmailScreen() {
     const insets = useSafeAreaInsets();
     const { t } = useLanguage();
 
-    // ✨ 중복 라우팅(뒤로가기 2번)을 막기 위한 안전장치
     const navHandledRef = useRef(false);
 
     const [isSignUp, setIsSignUp] = useState(false);
@@ -65,11 +63,9 @@ export default function AuthEmailScreen() {
 
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
-    // ✨ [핵심 수정] 구글 로그인 등 외부 로그인이 성공했을 때 자동으로 뒤로 돌려보내는 글로벌 리스너
     useEffect(() => {
         const unsub = auth.onAuthStateChanged((user) => {
             if (user && !navHandledRef.current) {
-                // 구글/애플 같은 OAuth 계정이거나, 이메일 인증을 마친 계정인지 확인
                 const isOAuth = user.providerData.some(p => p.providerId === 'google.com' || p.providerId === 'apple.com');
                 const isTestAccount = user.email === "test_user@memotile.com";
 
@@ -153,7 +149,6 @@ export default function AuthEmailScreen() {
                     return;
                 }
 
-                // ✨ 이메일 로그인 성공 시 직접 뒤로가기 처리
                 if (!navHandledRef.current) {
                     navHandledRef.current = true;
                     router.back();
@@ -202,7 +197,6 @@ export default function AuthEmailScreen() {
                 await signInWithCredential(auth, credential);
                 console.log("Apple Sign-In success");
 
-                // ✨ 애플 로그인 성공 시 직접 뒤로가기 처리
                 if (!navHandledRef.current) {
                     navHandledRef.current = true;
                     router.back();
@@ -307,17 +301,10 @@ export default function AuthEmailScreen() {
 
                         <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
 
-                        <TouchableOpacity style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]} onPress={() => promptAsync()} disabled={isSigningIn || !isReady}>
-                            {isSigningIn ? <ActivityIndicator color="#000" /> :
-                                <View style={styles.socialBtnContent}>
-                                    <Image source={require('../assets/google_logo.png')} style={styles.socialIcon} resizeMode="contain" />
-                                    <Text style={styles.socialBtnText}>{(t as any)['signUpGoogle'] || "Continue with Google"}</Text>
-                                </View>}
-                        </TouchableOpacity>
-
+                        {/* ⭐️ Apple 로그인을 Google 로그인 위로 배치 */}
                         {Platform.OS === "ios" && (
                             <TouchableOpacity
-                                style={[styles.socialBtn, { marginTop: 12 }, isAppleLoggingIn && styles.disabledBtn]}
+                                style={[styles.socialBtn, isAppleLoggingIn && styles.disabledBtn]}
                                 onPress={handleAppleLogin}
                                 disabled={isAppleLoggingIn}
                             >
@@ -328,6 +315,18 @@ export default function AuthEmailScreen() {
                                     </View>}
                             </TouchableOpacity>
                         )}
+
+                        <TouchableOpacity
+                            style={[styles.socialBtn, { marginTop: Platform.OS === "ios" ? 12 : 0 }, (isSigningIn || !isReady) && styles.disabledBtn]}
+                            onPress={() => promptAsync()}
+                            disabled={isSigningIn || !isReady}
+                        >
+                            {isSigningIn ? <ActivityIndicator color="#000" /> :
+                                <View style={styles.socialBtnContent}>
+                                    <Image source={require('../assets/google_logo.png')} style={styles.socialIcon} resizeMode="contain" />
+                                    <Text style={styles.socialBtnText}>{(t as any)['signUpGoogle'] || "Continue with Google"}</Text>
+                                </View>}
+                        </TouchableOpacity>
 
                         {!isSignUp && (
                             <View style={styles.extraActions}>
