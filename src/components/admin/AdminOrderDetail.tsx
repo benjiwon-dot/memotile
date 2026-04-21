@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 
@@ -24,7 +22,8 @@ import {
     Link as LinkIcon,
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc } from "firebase/firestore";
+// ✨ [수정] getDoc 추가
+import { getFirestore, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -265,7 +264,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✅ JSON 필드명 영어로 변경 완료
     const handleExportCleanJson = async () => {
         if (!isWeb || !order) return;
 
@@ -288,12 +286,95 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         URL.revokeObjectURL(url);
     };
 
+    // ✨ [수정] 푸시 알림 발송 함수
+    const sendOrderPushNotification = async (userId: string, newStatus: string) => {
+        console.log(`[Push] Attempting to find token for User: ${userId}`);
+        try {
+            const userDoc = await getDoc(doc(db, "users", userId));
+            if (!userDoc.exists()) {
+                console.error(`[Push] User document ${userId} not found in Firestore.`);
+                return;
+            }
+
+            const userData = userDoc.data();
+            const pushToken = userData.pushToken;
+
+            if (!pushToken) {
+                console.error(`[Push] No pushToken field for user ${userId}.`);
+                alert(`알림 전송 실패: 해당 유저(${userId})의 푸시 토큰이 DB에 없습니다.`);
+                return;
+            }
+
+            let title = "";
+            let body = "";
+
+            if (newStatus === "processing") {
+                title = "🎨 We started crafting your tiles!";
+                body = "Our team is carefully printing your beautiful photos. (เราเริ่มทำ MemoTile ของคุณแล้ว!)";
+            } else if (newStatus === "shipping") {
+                title = "🚚 Your memories are on the way!";
+                body = "Good news! Your MemoTiles have been shipped. (ข่าวดี! MemoTile ของคุณถูกจัดส่งแล้ว!)";
+            } else {
+                return;
+            }
+
+            const message = {
+                to: pushToken,
+                sound: 'default',
+                title: title,
+                body: body,
+                data: { orderId: orderId, status: newStatus },
+            };
+
+            const response = await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Accept-encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(message),
+            });
+
+            const result = await response.json();
+            console.log("[Push] Expo API Response:", result);
+
+            alert(`✅ ${newStatus.toUpperCase()} notification sent to customer!`);
+        } catch (error) {
+            console.error("[Push] Error:", error);
+            alert("알림 발송 중 오류가 발생했습니다. 콘솔을 확인하세요.");
+        }
+    };
+
+    // ✨ [수정] 유저 ID 찾기 강화 버전
     const handleUpdateStatus = async (status: string) => {
         if (!order) return;
         setBusy(true);
+        console.log(`[Admin] Updating status to: ${status}`);
+
         try {
             const fn = httpsCallable(functions, "adminUpdateOrderOps");
             await fn({ orderId, status });
+
+            if (status === "processing" || status === "shipping") {
+                // 🔍 다양한 경로로 유저 ID 검색
+                const customerId =
+                    (order as any).userId ||
+                    (order as any).uid ||
+                    (order as any).createdBy ||
+                    (order as any).customer?.uid ||
+                    (order as any).customer?.id;
+
+                console.log("[Admin] Resolved Customer ID:", customerId);
+
+                if (customerId) {
+                    await sendOrderPushNotification(customerId, status);
+                } else {
+                    console.warn("[Admin] Could not find any User ID in the order object.", order);
+                    alert("주문 데이터에서 유저 ID를 찾을 수 없어 푸시 알림을 보내지 못했습니다.");
+                }
+            }
+
             await refetch();
         } catch (e: any) {
             alertCallableError("Update failed:", e);

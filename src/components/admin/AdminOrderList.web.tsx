@@ -1,4 +1,3 @@
-// src/lib/admin/adminOrderList.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -16,9 +15,12 @@ import {
     Loader2,
     Clock,
     Copy,
-    Users // 마케팅용 아이콘 추가
+    Users,
+    Package,
+    X
 } from "lucide-react";
-import { getFirestore, doc, deleteDoc } from "firebase/firestore";
+
+import { getFirestore, doc, deleteDoc, getDoc, collection, addDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { OrderHeader, OrderStatus } from "@/lib/admin/types";
@@ -94,6 +96,10 @@ export default function AdminOrderList() {
 
     const [bulkLoading, setBulkLoading] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    // ✨ 팝업창 관리를 위한 State 추가
+    const [showTrackingModal, setShowTrackingModal] = useState(false);
+    const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
 
     const lastSigRef = useRef<string>("");
 
@@ -185,21 +191,82 @@ export default function AdminOrderList() {
         if (isWeb && !window.confirm(`Update ${selectedIds.size} orders to ${newStatus}?`)) return;
 
         setBulkLoading(true);
+        const ids = Array.from(selectedIds);
+
         try {
-            try {
-                const fn = httpsCallable(functions, "adminBatchUpdateStatus");
-                await fn({ orderIds: Array.from(selectedIds), status: targetStatus });
-            } catch (batchErr) {
-                const fnSingle = httpsCallable(functions, "adminUpdateOrderOps");
-                await Promise.all(
-                    Array.from(selectedIds).map(id => fnSingle({ orderId: id, status: targetStatus }))
-                );
-            }
-            await fetchOrders();
-            alert("Status updated successfully!");
+            await addDoc(collection(db, "adminTasks"), {
+                type: "BATCH_UPDATE_STATUS",
+                payload: {
+                    orderIds: ids,
+                    status: targetStatus,
+                    uid: "admin",
+                    email: "admin-web"
+                },
+                createdAt: new Date(),
+                status: "pending"
+            });
+
+            setTimeout(() => {
+                fetchOrders();
+                alert("상태 변경 및 알림 발송을 요청했습니다!");
+                setBulkLoading(false);
+            }, 1500);
+
         } catch (e: any) {
-            alertCallableError("Bulk update failed:", e);
-        } finally {
+            console.error("Bulk update failed:", e);
+            alert("작업 요청 중 오류가 발생했습니다.");
+            setBulkLoading(false);
+        }
+    };
+
+    // ✨ 팝업창 띄우기 함수
+    const openTrackingModal = () => {
+        if (selectedIds.size === 0) return;
+        const initialInputs: Record<string, string> = {};
+        visibleOrders.forEach(o => {
+            if (selectedIds.has(o.id)) {
+                initialInputs[o.id] = o.trackingNumber || ""; // 기존 운송장 번호가 있으면 불러오기
+            }
+        });
+        setTrackingInputs(initialInputs);
+        setShowTrackingModal(true);
+    };
+
+    // ✨ 운송장 번호 일괄 저장 & Shipping 상태 변경 요청
+    const handleSaveTracking = async () => {
+        setBulkLoading(true);
+        try {
+            const promises = Array.from(selectedIds).map(id => {
+                const trackingNum = trackingInputs[id];
+                if (!trackingNum || trackingNum.trim() === "") return Promise.resolve();
+
+                // 각각의 주문에 대해 운송장 번호 입력 및 'shipping' 상태 변경 지시서를 만듭니다.
+                return addDoc(collection(db, "adminTasks"), {
+                    type: "UPDATE_ORDER_OPS",
+                    payload: {
+                        orderId: id,
+                        status: "shipping",
+                        trackingNumber: trackingNum.trim(),
+                        uid: "admin",
+                        email: "admin-web"
+                    },
+                    createdAt: new Date(),
+                    status: "pending"
+                });
+            });
+
+            await Promise.all(promises);
+
+            setTimeout(() => {
+                fetchOrders();
+                setShowTrackingModal(false);
+                setBulkLoading(false);
+                alert("운송장 번호가 저장되었으며 배송 시작(Shipping) 알림이 발송됩니다!");
+            }, 1500);
+
+        } catch (error) {
+            console.error("Tracking update failed:", error);
+            alert("오류가 발생했습니다.");
             setBulkLoading(false);
         }
     };
@@ -246,7 +313,6 @@ export default function AdminOrderList() {
         }
     };
 
-    // ⭐️ 1. 제작용 CSV 추출 (인스타 제외)
     const handleExportCleanCSV = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
         if (targets.length === 0) return;
@@ -277,7 +343,6 @@ export default function AdminOrderList() {
         finally { setBulkLoading(false); }
     };
 
-    // ⭐️ 2. 마케팅용 인스타 정보 추출 (개인정보 보호용 분리)
     const handleExportInstaInfo = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
         if (targets.length === 0) {
@@ -366,13 +431,17 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
-                        {/* 제작용 버튼 */}
+                        {/* ✨ 운송장 일괄 입력 버튼 추가 */}
+                        <button onClick={openTrackingModal} disabled={bulkLoading || selectedIds.size === 0} className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                            <Package size={12} />
+                            운송장 퀵입력
+                        </button>
+
                         <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
                             {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
                             Export CSV
                         </button>
 
-                        {/* ⭐️ 마케팅용 버튼 추가 */}
                         <button onClick={handleExportInstaInfo} disabled={bulkLoading} className="bg-pink-600 text-white hover:bg-pink-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <Users size={12} />
                             Export Insta Info
@@ -474,6 +543,57 @@ export default function AdminOrderList() {
                     </tbody>
                 </table>
             </div>
+
+            {/* ✨ 팝업 모달창 UI */}
+            {showTrackingModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-2xl flex flex-col max-h-[85vh]">
+                        <div className="flex items-center justify-between p-5 border-b">
+                            <h2 className="text-lg font-black flex items-center gap-2">
+                                <Package className="text-blue-600" />
+                                퀵 운송장 입력 ({selectedIds.size}건)
+                            </h2>
+                            <button onClick={() => setShowTrackingModal(false)} className="p-2 hover:bg-zinc-100 rounded-full text-zinc-400">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-3">
+                            {visibleOrders.filter(o => selectedIds.has(o.id)).map(o => (
+                                <div key={o.id} className="flex items-center gap-4 bg-zinc-50 p-3 rounded-lg border border-zinc-100">
+                                    <div className="flex-1">
+                                        <div className="font-mono font-bold text-sm">{o.orderCode}</div>
+                                        <div className="text-xs text-zinc-500">{o.customer?.fullName || "-"}</div>
+                                    </div>
+                                    <div className="w-1/2">
+                                        <input
+                                            type="text"
+                                            placeholder="운송장 번호 입력 (Tracking Number)"
+                                            className="w-full border border-zinc-300 rounded p-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                            value={trackingInputs[o.id] || ""}
+                                            onChange={(e) => setTrackingInputs({ ...trackingInputs, [o.id]: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="p-5 border-t bg-zinc-50 flex justify-end gap-3 rounded-b-2xl">
+                            <button onClick={() => setShowTrackingModal(false)} className="px-4 py-2 font-bold text-zinc-500 hover:bg-zinc-200 rounded-lg">
+                                취소
+                            </button>
+                            <button
+                                onClick={handleSaveTracking}
+                                disabled={bulkLoading}
+                                className="bg-blue-600 text-white font-black px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                            >
+                                {bulkLoading ? <Loader2 size={16} className="animate-spin" /> : "저장 및 발송"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {error && <div className="p-4 bg-rose-50 text-rose-600 font-bold rounded-lg border border-rose-200 flex items-center gap-2"><AlertTriangle size={18} />{error}</div>}
         </div>
     );

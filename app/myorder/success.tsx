@@ -19,7 +19,8 @@ import Animated, {
     withDelay,
 } from "react-native-reanimated";
 
-import { getOrder, subscribeOrder } from "../../src/services/orders";
+// 💡 getOrder 삭제, subscribeOrder만 사용
+import { subscribeOrder } from "../../src/services/orders";
 import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import OrderSuccessPreviewStripRN from "../../src/components/orders/OrderSuccessPreviewStripRN";
@@ -39,7 +40,6 @@ export default function OrderSuccessScreen() {
 
     const router = useRouter();
 
-    // ✨ 언어 복구용 setLocale 호출
     const { t, setLocale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
@@ -87,47 +87,28 @@ export default function OrderSuccessScreen() {
         let unsub: any = null;
         let timeout: any = null;
 
+        // 💡 만약 12초 동안 아무 데이터도 안 오면 포기(gaveUp) 상태로 전환
         timeout = setTimeout(() => {
             if (!aliveRef.current) return;
-            if (!order) {
-                setProcessing(false);
-                setGaveUp(true);
-            }
+            setProcessing(false);
+            setGaveUp(true);
         }, PROCESSING_GRACE_MS);
 
+        // 💡 오직 실시간 구독(subscribeOrder) 하나만 사용하여 깜빡임 원천 차단
         unsub = subscribeOrder(id, (updated) => {
             if (!aliveRef.current) return;
             if (updated) {
-                // ✨ DB에 저장된 주문의 언어 환경으로 앱 언어를 즉각 복구
                 if (updated.locale && setLocale) setLocale(updated.locale);
 
                 setOrder(updated);
                 setProcessing(false);
                 setGaveUp(false);
                 if (timeout) clearTimeout(timeout);
+
+                // 성공 애니메이션 시작
                 startCelebration();
             }
         });
-
-        (async () => {
-            try {
-                const data = await getOrder(id);
-                if (!aliveRef.current) return;
-
-                if (data) {
-                    // ✨ 언어 복구 로직 동일 적용
-                    if (data.locale && setLocale) setLocale(data.locale);
-
-                    setOrder(data);
-                    setProcessing(false);
-                    setGaveUp(false);
-                    if (timeout) clearTimeout(timeout);
-                    startCelebration();
-                }
-            } catch (e) {
-                if (__DEV__) console.warn("[OrderSuccess] getOrder failed:", e);
-            }
-        })();
 
         return () => {
             if (timeout) clearTimeout(timeout);
@@ -228,7 +209,6 @@ export default function OrderSuccessScreen() {
                     <Animated.View style={[styles.orderInfo, animatedContentStyle]}>
                         <View style={styles.infoRow}>
                             <Text style={styles.label}>{(t as any).orderNumberLabel || "ORDER NUMBER"}</Text>
-                            {/* ✅ 수정된 부분: orderCode가 있으면 보여주고, 없으면 파이어베이스 id를 보여줍니다. */}
                             <Text style={styles.value}>#{(order as any)?.orderCode || id}</Text>
                         </View>
                         <View style={styles.infoRow}>

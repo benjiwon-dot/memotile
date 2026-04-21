@@ -192,7 +192,6 @@ export default function CheckoutStepOneScreen() {
             if (e.code === 'ERR_REQUEST_CANCELED') {
                 console.log("User canceled Apple Sign-in");
             } else if (e.message && e.message.includes("not available on ios")) {
-                // ✨ 네이티브 빌드가 안된 테스트앱(Expo Go 등)에서 발생하는 에러를 예쁘게 처리
                 Alert.alert(
                     "Test Environment Notice",
                     "Apple Sign-In requires a standalone build to test. App Store reviewers will see it working perfectly! For now, please use Email or Google to continue testing."
@@ -238,6 +237,7 @@ export default function CheckoutStepOneScreen() {
         }
     };
 
+    // ✅ 원본 경로로 롤백 (이 경로가 맞습니다!)
     const GoogleIconFallback = () => (
         <Image source={require("../assets/google_logo.png")} style={{ width: 18, height: 18 }} resizeMode="contain" />
     );
@@ -330,7 +330,7 @@ export default function CheckoutStepOneScreen() {
                                     icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
 
-                                {/* ⭐️ 애플 로그인 (iOS 환경에서만 노출) - 하얀 바탕, 검정 로고 적용 ✨ */}
+                                {/* ⭐️ 애플 로그인 (iOS 환경에서만 노출) */}
                                 {Platform.OS === "ios" && (
                                     <LoginButton
                                         text={(t as any)["auth.signinApple"] || "Continue with Apple"}

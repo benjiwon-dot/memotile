@@ -38,6 +38,32 @@ const SLACK_WEBHOOK_URL = part1 + part2;
    HELPER FUNCTIONS 
    ========================================================================= */
 
+// ✨ Expo 푸시 알림 발송용 헬퍼 함수
+async function sendExpoPushNotification(userId: string, title: string, body: string) {
+    if (!userId) return;
+    try {
+        const db = getFirestore();
+        const userSnap = await db.collection("users").doc(String(userId)).get();
+        if (!userSnap.exists) return;
+
+        const pushToken = userSnap.data()?.expoPushToken || userSnap.data()?.pushToken;
+        if (!pushToken) {
+            console.log(`[Push Notification] 유저 ${userId}의 푸시 토큰이 없습니다.`);
+            return;
+        }
+
+        await axios.post("https://exp.host/--/api/v2/push/send", {
+            to: pushToken,
+            sound: "default",
+            title: title,
+            body: body,
+        });
+        console.log(`[Push Notification] 성공적으로 발송됨: User ${userId}`);
+    } catch (error) {
+        console.error(`[Push Notification] 발송 실패: User ${userId}`, error);
+    }
+}
+
 type ColorMatrix = number[]; // length 20
 
 function clamp255(v: number) {
@@ -67,7 +93,7 @@ async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise
     }
 
     return await sharp(out, { raw: { width: info.width!, height: info.height!, channels: 4 } })
-        .jpeg({ quality: 92, mozjpeg: true }) // ✨ mozjpeg 적용으로 화질 유지 + 용량 다이어트
+        .jpeg({ quality: 92, mozjpeg: true })
         .toBuffer();
 }
 
@@ -155,6 +181,79 @@ async function clampCropToImage(
    CLOUD FUNCTIONS
    ========================================================================= */
 
+// ✨ [핵심 추가] 프론트엔드에서 호출하는 단일 주문 업데이트 함수
+export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+            throw new HttpsError("permission-denied", "Admin only.");
+        }
+
+        const db = getFirestore();
+        // adminTasks에 지시서를 넣으면 processAdminTask가 알아서 처리함
+        await db.collection("adminTasks").add({
+            type: "UPDATE_ORDER_OPS",
+            payload: {
+                ...req.data,
+                uid: req.auth.uid,
+                email: req.auth.token.email || "unknown"
+            },
+            status: "pending",
+            createdAt: FieldValue.serverTimestamp()
+        });
+
+        return { ok: true };
+    } catch (e: any) {
+        console.error("[adminUpdateOrderOps] failed", e);
+        throw new HttpsError("internal", e?.message || "Update failed");
+    }
+});
+
+// ✨ [핵심 추가] 프론트엔드에서 호출하는 일괄(Batch) 주문 업데이트 함수
+export const adminBatchUpdateOrderStatus = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+            throw new HttpsError("permission-denied", "Admin only.");
+        }
+
+        const db = getFirestore();
+        // 일괄 변경도 마찬가지로 adminTasks에 던져서 백그라운드 처리
+        await db.collection("adminTasks").add({
+            type: "BATCH_UPDATE_STATUS",
+            payload: {
+                ...req.data,
+                uid: req.auth.uid,
+                email: req.auth.token.email || "unknown"
+            },
+            status: "pending",
+            createdAt: FieldValue.serverTimestamp()
+        });
+
+        return { ok: true };
+    } catch (e: any) {
+        console.error("[adminBatchUpdateOrderStatus] failed", e);
+        throw new HttpsError("internal", e?.message || "Batch update failed");
+    }
+});
+
+// 혹시 프론트 코드 이름이 다를까봐 보조용으로 하나 더 추가 (선택사항)
+export const adminBatchUpdate = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+            throw new HttpsError("permission-denied", "Admin only.");
+        }
+        const db = getFirestore();
+        await db.collection("adminTasks").add({
+            type: "BATCH_UPDATE_STATUS",
+            payload: { ...req.data, uid: req.auth.uid, email: req.auth.token.email },
+            status: "pending",
+            createdAt: FieldValue.serverTimestamp()
+        });
+        return { ok: true };
+    } catch (e: any) {
+        throw new HttpsError("internal", e?.message || "Batch update failed");
+    }
+});
+
 export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
 
@@ -178,14 +277,13 @@ export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, as
     return result;
 });
 
-// ✨ 인쇄용 고화질(4K) 이미지를 생성하는 핵심 함수
 export const buildPrint5000OnItemCreated = onDocumentCreated(
     {
         document: "orders/{orderId}/items/{itemId}",
         region: "us-central1",
         memory: "2GiB",
         timeoutSeconds: 300,
-        cpu: 2 // ✨ 연산 속도를 위해 CPU 2개 할당
+        cpu: 2
     },
     async (event) => {
         const snap = event.data;
@@ -208,15 +306,10 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 
         if (item?.assets?.printUrl) return;
 
-        if (!sourcePath) {
-            console.warn("[Print5000] missing sourcePath", { orderId, itemId, index });
-            return;
-        }
+        if (!sourcePath) return;
 
         try {
             const sourceFile = bucket.file(sourcePath);
-
-            // ✨ [핵심 보완] 원본 사진이 Storage에 올라올 때까지 핑(Ping)을 날리며 대기 (최대 15초)
             let fileExists = false;
             for (let i = 0; i < 10; i++) {
                 const [exists] = await sourceFile.exists();
@@ -224,42 +317,28 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                     fileExists = true;
                     break;
                 }
-                await new Promise(r => setTimeout(r, 1500)); // 1.5초 대기
+                await new Promise(r => setTimeout(r, 1500));
             }
 
-            if (!fileExists) {
-                console.error(`[Print5000] 원본 파일 업로드 지연/누락. Timeout. 경로: ${sourcePath}`);
-                return;
-            }
+            if (!fileExists) return;
 
             const [sourceBuf] = await sourceFile.download();
-
             let pipeline = sharp(sourceBuf).rotate();
 
-            // 1. 앱에서 넘겨준 수학 좌표대로 정확히 자르기
-            if (
-                cropPx &&
-                Number.isFinite(cropPx.x) &&
-                Number.isFinite(cropPx.y) &&
-                Number.isFinite(cropPx.width) &&
-                Number.isFinite(cropPx.height)
-            ) {
+            if (cropPx) {
                 const rect = await clampCropToImage(sourceBuf, cropPx);
                 pipeline = pipeline.extract(rect);
             }
 
-            // 2. 인쇄용 고화질로 리사이징 및 압축 (4000px, mozjpeg 적용)
             let buf = await pipeline
                 .resize(4000, 4000, { fit: "cover", withoutEnlargement: false })
                 .jpeg({ quality: 92, mozjpeg: true })
                 .toBuffer();
 
-            // 3. 필터(Color Matrix) 입히기
             if (matrix && Array.isArray(matrix) && matrix.length === 20) {
                 buf = await applyColorMatrixRGBA(buf, matrix);
             }
 
-            // 4. 오버레이(색상 덮기) 입히기
             const overlay = parseHexColor(overlayColorHex);
             const overlayOpacity =
                 typeof overlayOpacityRaw === "number" && Number.isFinite(overlayOpacityRaw)
@@ -268,33 +347,22 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 
             if (overlay && overlayOpacity > 0) {
                 const alpha = overlayOpacity * overlay.a;
-
                 const overlayPng = await sharp({
                     create: {
-                        width: 4000,
-                        height: 4000,
-                        channels: 4,
+                        width: 4000, height: 4000, channels: 4,
                         background: { r: overlay.r, g: overlay.g, b: overlay.b, alpha },
                     },
-                })
-                    .png()
-                    .toBuffer();
-
+                }).png().toBuffer();
                 buf = await sharp(buf).composite([{ input: overlayPng, blend: "over" }]).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
             }
 
-            // 완성된 고화질 파일 저장
             const orderRef = db.collection("orders").doc(orderId);
             const orderSnap = await orderRef.get();
             const storageBasePath = orderSnap.data()?.storageBasePath;
 
-            if (!storageBasePath) {
-                console.warn("[Print5000] missing storageBasePath", { orderId, itemId });
-                return;
-            }
+            if (!storageBasePath) return;
 
             const printPath = `${storageBasePath}/items/${index}_print.jpg`;
-
             const printFile = bucket.file(printPath);
             await printFile.save(buf, { contentType: "image/jpeg", resumable: false });
 
@@ -308,119 +376,193 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
                 });
                 printUrl = url;
             } catch (e) {
-                console.warn("[Print5000] getSignedUrl failed", { orderId, itemId, printPath }, e);
+                console.warn("[Print5000] getSignedUrl failed", e);
             }
 
-            // DB 업데이트
             await snap.ref.update({
                 "assets.printPath": printPath,
                 "assets.printUrl": printUrl,
                 printUrl,
             });
-
-            console.log("[Print5000] generated successfully!", { orderId, index, printPath });
         } catch (err) {
-            console.error("[Print5000] failed", { orderId, itemId, index, sourcePath }, err);
+            console.error("[Print5000] failed", err);
         }
     }
 );
 
-export const adminBatchUpdateStatus = onCall(
-    {
-        region: "us-central1",
-        cors: true,
-        timeoutSeconds: 60
-    },
-    async (req) => {
-        try {
-            if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-                console.warn("[BatchUpdate] Permission Denied");
-                throw new HttpsError("permission-denied", "Admin only. Please Logout & Login again.");
-            }
 
-            const { orderIds, status } = (req.data || {}) as any;
+// ✨ [다국어 대응] 고객 언어(en/th) 감지하여 영어/태국어 분기 발송 + DB 트리거 연동
+// ✨ [다국어 + 마케팅 푸시 대응] DB를 감지하여 실행되는 통합 트리거 함수
+export const processAdminTask = onDocumentCreated(
+    { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300 }, // 다수 발송을 위해 타임아웃 5분으로 넉넉히 설정
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
 
-            if (!Array.isArray(orderIds) || orderIds.length === 0) {
-                throw new HttpsError("invalid-argument", "No orderIds provided.");
-            }
-            if (!status) {
-                throw new HttpsError("invalid-argument", "Status is required.");
-            }
-
-            const db = getFirestore();
-            const batch = db.batch();
-            const timestamp = FieldValue.serverTimestamp();
-
-            for (const orderId of orderIds) {
-                if (!orderId) continue;
-                const ref = db.collection("orders").doc(String(orderId));
-
-                batch.set(ref, {
-                    status,
-                    updatedAt: timestamp,
-                    statusUpdatedAt: timestamp,
-                }, { merge: true });
-
-                const eventRef = ref.collection("events").doc();
-                batch.set(eventRef, {
-                    type: "STATUS_CHANGED",
-                    to: status,
-                    byUid: req.auth.uid,
-                    byEmail: req.auth.token.email || "unknown",
-                    createdAt: timestamp,
-                });
-            }
-
-            await batch.commit();
-            return { ok: true, updatedCount: orderIds.length };
-
-        } catch (e: any) {
-            console.error("[BatchUpdate] CRITICAL ERROR:", e);
-            if (e instanceof HttpsError) throw e;
-            throw new HttpsError("internal", `Server Error: ${e?.message || "Unknown"}`);
-        }
-    }
-);
-
-export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
-    try {
-        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Admin only.");
-        }
-
-        const { orderId, status, trackingNumber, adminNote } = req.data || {};
-        if (!orderId) throw new HttpsError("invalid-argument", "orderId required.");
-
+        const task = snap.data();
         const db = getFirestore();
-        const ref = db.collection("orders").doc(String(orderId));
         const timestamp = FieldValue.serverTimestamp();
 
-        const updates: any = { updatedAt: timestamp };
-        if (status !== undefined) {
-            updates.status = status;
-            updates.statusUpdatedAt = timestamp;
+        try {
+            // ====================================================================
+            // 1. 주문 상태 및 운송장 일괄 변경 로직
+            // ====================================================================
+            if (task.type === "BATCH_UPDATE_STATUS" || task.type === "UPDATE_ORDER_OPS") {
+                const isBatch = task.type === "BATCH_UPDATE_STATUS";
+                const { orderIds, orderId, status, trackingNumber, adminNote, uid, email } = task.payload || {};
+
+                const targetIds = isBatch ? orderIds : [orderId];
+                if (!Array.isArray(targetIds) || targetIds.length === 0) {
+                    throw new Error("No target order IDs provided.");
+                }
+
+                const batch = db.batch();
+                const notifications: { userId: string, title: string, body: string }[] = [];
+
+                for (const id of targetIds) {
+                    if (!id) continue;
+                    const ref = db.collection("orders").doc(String(id));
+                    const docSnap = await ref.get();
+                    const orderData = docSnap.data();
+
+                    const userId = orderData?.userId || orderData?.uid || orderData?.customer?.uid || orderData?.customer?.id || orderData?.createdBy;
+
+                    if (isBatch) {
+                        batch.set(ref, { status, updatedAt: timestamp, statusUpdatedAt: timestamp }, { merge: true });
+                    } else {
+                        const updates: any = { updatedAt: timestamp };
+                        if (status !== undefined) { updates.status = status; updates.statusUpdatedAt = timestamp; }
+                        if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
+                        if (adminNote !== undefined) updates.adminNote = adminNote;
+                        batch.update(ref, updates);
+                    }
+
+                    batch.set(ref.collection("events").doc(), {
+                        type: status ? "STATUS_CHANGED" : "OPS_UPDATE",
+                        to: status || undefined,
+                        changes: isBatch ? undefined : { trackingNumber, adminNote },
+                        byUid: uid || "admin",
+                        byEmail: email || "unknown",
+                        createdAt: timestamp,
+                    });
+
+                    if (userId && status) {
+                        const userSnap = await db.collection("users").doc(String(userId)).get();
+                        const userLang = userSnap.data()?.language || "en";
+
+                        let pushTitle = "";
+                        let pushBody = "";
+
+                        if (status === "processing") {
+                            if (userLang === "th") {
+                                pushTitle = "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!";
+                                pushBody = "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด";
+                            } else {
+                                pushTitle = "🎨 We started crafting your tiles!";
+                                pushBody = "Our team is carefully printing your photos.";
+                            }
+                        } else if (status === "shipping") {
+                            if (userLang === "th") {
+                                pushTitle = "🚚 ความทรงจำของคุณกำลังเดินทางไปหา!";
+                                pushBody = "ข่าวดี! MemoTile ของคุณถูกจัดส่งเรียบร้อยแล้ว";
+                            } else {
+                                pushTitle = "🚚 Your memories are on the way!";
+                                pushBody = "Good news! Your MemoTiles have been shipped.";
+                            }
+                        } else {
+                            pushTitle = userLang === "th" ? "อัปเดตสถานะการสั่งซื้อ" : "Order Status Updated";
+                            pushBody = userLang === "th" ? `คำสั่งซื้อของคุณอยู่ในสถานะ [${status}]` : `Your order is now in [${status}] status.`;
+                        }
+
+                        if (pushTitle) notifications.push({ userId, title: pushTitle, body: pushBody });
+                    } else if (userId && !isBatch && trackingNumber && trackingNumber !== orderData?.trackingNumber) {
+                        const userSnap = await db.collection("users").doc(String(userId)).get();
+                        const userLang = userSnap.data()?.language || "en";
+                        const title = userLang === "th" ? "🚚 อัปเดตการจัดส่ง" : "🚚 Shipping Update";
+                        const body = userLang === "th" ? `หมายเลขติดตามพัสดุของคุณคือ: ${trackingNumber}` : `Your tracking number: ${trackingNumber}`;
+                        notifications.push({ userId, title, body });
+                    }
+                }
+                await batch.commit();
+
+                for (const noti of notifications) {
+                    await sendExpoPushNotification(noti.userId, noti.title, noti.body);
+                }
+            }
+
+            // ====================================================================
+            // 2. ✨ [신규] 마케팅 푸시(다국어 프로모션) 발송 로직
+            // ====================================================================
+            else if (task.type === "MARKETING_PUSH") {
+                const { target, testToken, en, th } = task.payload || {};
+                const titleEn = en?.title;
+                const bodyEn = en?.body;
+
+                // 태국어 입력을 안 했을 경우를 대비해 영어 텍스트를 기본값으로 세팅
+                const titleTh = th?.title || titleEn;
+                const bodyTh = th?.body || bodyEn;
+
+                if (!titleEn || !bodyEn) throw new Error("English message is required");
+
+                // ✨ [추가] 특정 토큰으로 다이렉트 테스트 쏘기
+                if (target === "test_token" && testToken) {
+                    console.log(`[Marketing Push] Direct test to token: ${testToken}`);
+                    // 다이렉트 테스트는 누군지 모르므로 기본값(영어)으로 쏩니다.
+                    await axios.post("https://exp.host/--/api/v2/push/send", {
+                        to: testToken,
+                        sound: "default",
+                        title: titleEn,
+                        body: bodyEn,
+                    });
+                }
+                // 기존의 DB 조회 후 발송 로직 (all 또는 test_admin)
+                else {
+                    // 타겟에 따라 유저 데이터 가져오기
+                    let usersQuery: FirebaseFirestore.Query = db.collection("users");
+
+                    if (target === "test_admin") {
+                        // 테스트 모드: 관리자에게만 발송
+                        usersQuery = usersQuery.where("isAdmin", "==", true);
+                    }
+                    // target === "all" 일 경우 조건 없이 모든 유저 쿼리
+
+                    const usersSnap = await usersQuery.get();
+                    const notifications: { userId: string, title: string, body: string }[] = [];
+
+                    usersSnap.forEach((doc) => {
+                        const userData = doc.data();
+
+                        // 푸시 토큰이 있는 유저만 필터링
+                        const pushToken = userData?.expoPushToken || userData?.pushToken;
+                        if (!pushToken) return;
+
+                        // 유저의 언어 설정 확인 (기본값 en)
+                        const userLang = userData?.language || "en";
+
+                        const title = userLang === "th" ? titleTh : titleEn;
+                        const body = userLang === "th" ? bodyTh : bodyEn;
+
+                        notifications.push({ userId: doc.id, title, body });
+                    });
+
+                    console.log(`[Marketing Push] 총 ${notifications.length}명에게 마케팅 푸시를 발송합니다.`);
+
+                    // 수집된 유저들에게 알림 순차 발송
+                    for (const noti of notifications) {
+                        await sendExpoPushNotification(noti.userId, noti.title, noti.body);
+                    }
+                }
+            }
+
+            // 작업 지시서 처리 완료 상태로 업데이트
+            await snap.ref.update({ status: "completed", completedAt: timestamp });
+
+        } catch (error) {
+            console.error("Task error:", error);
+            await snap.ref.update({ status: "error", error: String(error) });
         }
-        if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
-        if (adminNote !== undefined) updates.adminNote = adminNote;
-
-        await ref.update(updates);
-
-        await ref.collection("events").doc().set({
-            type: status ? "STATUS_CHANGED" : "OPS_UPDATE",
-            to: status || undefined,
-            changes: { trackingNumber, adminNote },
-            byUid: req.auth.uid,
-            byEmail: req.auth.token.email || "unknown",
-            createdAt: timestamp,
-        });
-
-        return { ok: true };
-    } catch (e: any) {
-        console.error("[adminUpdateOrderOps] failed", e);
-        if (e instanceof HttpsError) throw e;
-        throw new HttpsError("internal", e?.message || "Update ops failed");
     }
-});
+);
 
 export const adminCancelOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {

@@ -6,6 +6,7 @@ import React, {
     useState,
     ReactNode,
 } from "react";
+import { Platform } from "react-native"; // ✨ 추가됨: 웹 환경 판별용
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -209,7 +210,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const saveDraft: PhotoContextType["saveDraft"] = async (step, override) => {
         if (saveDraftTimer.current) clearTimeout(saveDraftTimer.current);
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => { // ✨ reject 제거 (웹에서 터지지 않게 방어)
             saveDraftTimer.current = setTimeout(async () => {
                 try {
                     const usePhotos = override?.photos ?? photos;
@@ -220,12 +221,22 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                         step,
                         timestamp: Date.now(),
                     };
+
+                    // ✨ [핵심 수정] 웹 환경 예외 처리 및 용량 초과 방어 로직 추가
+                    if (Platform.OS === 'web') {
+                        console.warn("웹 브라우저 환경에서는 용량 초과 방지를 위해 AsyncStorage 저장을 생략합니다.");
+                        setHasDraft(true);
+                        resolve();
+                        return;
+                    }
+
                     await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
                     setHasDraft(true);
                     resolve();
                 } catch (e) {
-                    console.error("Failed to save draft", e);
-                    reject(e);
+                    console.warn("임시 저장 실패 (용량 초과 등):", e);
+                    // 에러가 나더라도 앱이 죽지 않도록 부드럽게 완료 처리
+                    resolve();
                 }
             }, 250);
         });

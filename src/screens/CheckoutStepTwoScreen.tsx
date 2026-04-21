@@ -91,6 +91,9 @@ export default function CheckoutStepTwoScreen() {
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
     const [progressCount, setProgressCount] = useState(0);
 
+    // 💡 결제 확인 중임을 나타내는 상태 (깜빡임 및 오해 방지용)
+    const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+
     useEffect(() => {
         if (!auth) return;
         const unsub = auth.onAuthStateChanged((user) => {
@@ -179,8 +182,13 @@ export default function CheckoutStepTwoScreen() {
     const shippingFee = 0;
     const total = Math.max(0, (subtotal || 0) - (discount || 0) + shippingFee);
 
+    // ✨ [수정됨] 실제 할인 비율을 계산하여 USD에도 정확히 적용 (버그 수정)
     const subtotalUSD = safePhotosCount * BASE_PRICE_USD;
-    const discountUSD = promoResult?.success ? subtotalUSD : 0;
+    let discountRatio = 0;
+    if (promoResult?.success && subtotal > 0) {
+        discountRatio = promoResult.discountAmount / subtotal;
+    }
+    const discountUSD = subtotalUSD * discountRatio;
     const totalInUSD = Math.max(0, subtotalUSD - discountUSD);
 
     const handleApplyPromo = async () => {
@@ -278,10 +286,9 @@ export default function CheckoutStepTwoScreen() {
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
-            // ✨ 심사 환경(정식 앱)에서 오류가 나지 않도록 memotile 스킴을 강제 지정합니다.
             const returnScheme = Platform.OS === 'web'
                 ? `${window.location.origin}/myorder/success?id=${orderId}`
-                : Linking.createURL('/myorder/success', { scheme: 'memotile' });
+                : Linking.createURL('/payment-callback', { scheme: 'memotile' });
 
             const webUrl = Platform.OS === 'web' ? returnScheme : '';
 
@@ -317,11 +324,14 @@ export default function CheckoutStepTwoScreen() {
                             {
                                 text: confirmText,
                                 onPress: async () => {
-                                    // ⭐️ 인앱 브라우저를 열어 결제를 진행합니다.
-                                    await WebBrowser.openBrowserAsync(paymentUrl);
+                                    await WebBrowser.openAuthSessionAsync(paymentUrl, returnScheme);
+
+                                    setIsVerifyingPayment(true);
+                                    setIsCreatingOrder(true);
+
+                                    await new Promise(resolve => setTimeout(resolve, 800));
 
                                     try {
-                                        // 사용자가 브라우저를 닫고 앱으로 돌아왔을 때 서버 결제 상태 확인
                                         const orderSnap = await getDoc(doc(db, "orders", orderId));
                                         const orderData = orderSnap.data();
 
@@ -329,13 +339,21 @@ export default function CheckoutStepTwoScreen() {
                                             await clearDraft();
                                             clearPhotos();
                                             router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                                            setTimeout(() => {
+                                                setIsCreatingOrder(false);
+                                                setIsVerifyingPayment(false);
+                                            }, 500);
                                         } else {
+                                            setIsCreatingOrder(false);
+                                            setIsVerifyingPayment(false);
                                             Alert.alert(
                                                 (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
                                                 (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
                                             );
                                         }
                                     } catch (e) {
+                                        setIsCreatingOrder(false);
+                                        setIsVerifyingPayment(false);
                                         console.error("Order check failed:", e);
                                     }
                                 }
@@ -382,6 +400,7 @@ export default function CheckoutStepTwoScreen() {
         if (isCreatingOrder) return;
 
         setIsCreatingOrder(true);
+        setIsVerifyingPayment(false);
         setProgressCount(1);
 
         const progressTimer = setInterval(() => {
@@ -426,7 +445,10 @@ export default function CheckoutStepTwoScreen() {
 
             clearInterval(progressTimer);
 
-            if (provider === "DEV_FREE" || provider === "PROMO_FREE") {
+            // ✨ [수정됨] 총 결제액(total)이 0원이면 PG사 패스하고 바로 주문 완료 처리!
+            const isFreeOrder = provider === "DEV_FREE" || provider === "PROMO_FREE" || total <= 0;
+
+            if (isFreeOrder) {
                 setProgressCount(safePhotosCount);
                 setTimeout(async () => {
                     setIsCreatingOrder(false);
@@ -454,9 +476,16 @@ export default function CheckoutStepTwoScreen() {
     };
 
     const getProgressTitle = () => {
+        if (isVerifyingPayment) {
+            return safeLocale === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment...";
+        }
         return safeLocale === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...";
     };
+
     const getProgressSubtitle = () => {
+        if (isVerifyingPayment) {
+            return safeLocale === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment...";
+        }
         return safeLocale === "TH"
             ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nกรุณาอย่าปิดแอปพลิเคชัน"
             : "Optimizing high-resolution tiles for the best print quality.\nPlease keep the app open.";
@@ -625,8 +654,11 @@ export default function CheckoutStepTwoScreen() {
                         )}
                     </View>
 
+                    {/* ✨ [수정됨] 결제 섹션: 0원일 때 결제 수단 숨기고 무료 주문 전용 버튼 노출 */}
                     <View style={styles.paymentSection}>
-                        <Text style={styles.sectionTitle}>{(t as any)?.["paymentMethodLabel"] || "Payment Method"}</Text>
+                        <Text style={styles.sectionTitle}>
+                            {total <= 0 ? (safeLocale === 'TH' ? "สั่งซื้อฟรี" : "Free Order") : ((t as any)?.["paymentMethodLabel"] || "Payment Method")}
+                        </Text>
 
                         <View style={styles.agreementContainer}>
                             <TouchableOpacity style={styles.agreementRow} onPress={() => { Keyboard.dismiss(); setIsAgreed(!isAgreed); }} activeOpacity={0.7}>
@@ -643,59 +675,72 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* 🚨 심사용 숨김 처리: TrueMoney 🚨 */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
-                            <View style={styles.paymentItemLeft}>
-                                {Platform.OS !== 'web' ? (
-                                    <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                ) : (
-                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>TrueMoney</Text></View>
-                                )}
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                            </View>
-                        </TouchableOpacity>
+                        {total <= 0 ? (
+                            <TouchableOpacity
+                                style={[styles.paymentItem, { borderColor: "#10B981", backgroundColor: "#F0FDF4" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
+                                onPress={() => handlePlaceOrder("PROMO_FREE")}
+                                disabled={!currentUser || isCreatingOrder}
+                            >
+                                <View style={styles.paymentItemLeft}>
+                                    <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}>
+                                        <Ionicons name="gift" size={24} color="#10B981" />
+                                    </View>
+                                    <Text style={[styles.paymentItemText, { color: "#059669", fontSize: 18, fontWeight: "800" }]}>
+                                        {safeLocale === 'TH' ? "สั่งซื้อฟรี (Free Order)" : "Claim Free Order"}
+                                    </Text>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
+                                </View>
+                            </TouchableOpacity>
+                        ) : (
+                            <>
+                                {/* 🚨 심사용 숨김 처리: TrueMoney 🚨 */}
+                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
+                                    <View style={styles.paymentItemLeft}>
+                                        {Platform.OS !== 'web' ? (
+                                            <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                        ) : (
+                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>TrueMoney</Text></View>
+                                        )}
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
+                                    </View>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                    </View>
+                                </TouchableOpacity>
 
-                        {/* 🚨 심사용 숨김 처리: Rabbit LINE Pay 🚨 */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
-                            <View style={styles.paymentItemLeft}>
-                                {Platform.OS !== 'web' ? (
-                                    <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                ) : (
-                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
-                                )}
-                                <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                            </View>
-                        </TouchableOpacity>
+                                {/* 🚨 심사용 숨김 처리: Rabbit LINE Pay 🚨 */}
+                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
+                                    <View style={styles.paymentItemLeft}>
+                                        {Platform.OS !== 'web' ? (
+                                            <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                        ) : (
+                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
+                                        )}
+                                        <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
+                                    </View>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                    </View>
+                                </TouchableOpacity>
 
-                        {/* ✅ 정식 앱/심사용 활성화 버튼: Credit/Debit Card (TEST 뱃지 제거됨) ✅ */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
-                            <View style={styles.paymentItemLeft}>
-                                {Platform.OS !== 'web' ? (
-                                    <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                ) : (
-                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>Card</Text></View>
-                                )}
-                                <Text style={styles.paymentItemText}>{getCleanCardName()}</Text>
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                {isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                            </View>
-                        </TouchableOpacity>
-
-                        {/* 🚨 심사용 숨김 처리: Dev Free 🚨 */}
-                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", borderStyle: 'dashed', marginTop: 20, display: 'none' }]} onPress={() => handlePlaceOrder("DEV_FREE")} disabled={isCreatingOrder || !currentUser}>
-                            <View style={styles.paymentItemLeft}>
-                                <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="flask" size={20} color="#10B981" /></View>
-                                <Text style={[styles.paymentItemText, { color: "#059669" }]}>{(t as any)?.["payFreeDev"] || "[Dev] Test Free Order"}</Text>
-                            </View>
-                            {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
-                        </TouchableOpacity>
+                                {/* ✅ 정식 앱/심사용 활성화 버튼: Credit/Debit Card ✅ */}
+                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
+                                    <View style={styles.paymentItemLeft}>
+                                        {Platform.OS !== 'web' ? (
+                                            <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                        ) : (
+                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>Card</Text></View>
+                                        )}
+                                        <Text style={styles.paymentItemText}>{getCleanCardName()}</Text>
+                                    </View>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                    </View>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
                 </View>
             </ScrollView>
@@ -706,19 +751,24 @@ export default function CheckoutStepTwoScreen() {
                         <ActivityIndicator size="large" color={colors?.ink || "#111"} />
                         <Text style={styles.progressTitle}>{getProgressTitle()}</Text>
                         <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
-                        <View style={styles.progressPill}>
-                            <Text style={styles.progressPillText}>
-                                {Math.min(progressCount, safePhotosCount)} / {safePhotosCount}
-                            </Text>
-                        </View>
-                        <View style={styles.progressBarBg}>
-                            <View
-                                style={[
-                                    styles.progressBarFill,
-                                    { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }
-                                ]}
-                            />
-                        </View>
+
+                        {!isVerifyingPayment && (
+                            <>
+                                <View style={styles.progressPill}>
+                                    <Text style={styles.progressPillText}>
+                                        {Math.min(progressCount, safePhotosCount)} / {safePhotosCount}
+                                    </Text>
+                                </View>
+                                <View style={styles.progressBarBg}>
+                                    <View
+                                        style={[
+                                            styles.progressBarFill,
+                                            { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }
+                                        ]}
+                                    />
+                                </View>
+                            </>
+                        )}
                     </View>
                 </View>
             </Modal>

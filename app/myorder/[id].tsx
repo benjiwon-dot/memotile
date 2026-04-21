@@ -20,7 +20,6 @@ import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import StatusBadgeRN from "../../src/components/orders/StatusBadgeRN";
 import PreviewModalRN from "../../src/components/orders/PreviewModalRN";
-import { formatDate } from "../../src/utils/date";
 
 const { width } = Dimensions.get("window");
 const GRID_SPACING = 12;
@@ -28,20 +27,16 @@ const ITEM_WIDTH = (width - 40 - GRID_SPACING * 2) / 3;
 
 const NOT_FOUND_GRACE_MS = 12000;
 
-// ✨ [핵심 수정] 가벼운 미리보기 파일을 1순위로, 무거운 원본을 맨 마지막(3순위)으로 순서 변경!
 function pickCustomerPreviewUri(it: any): string | null {
     const uri =
-        // 1순위: 가장 가벼운 썸네일 프리뷰
         it?.assets?.previewUrl ||
         it?.assets?.previewUri ||
         it?.output?.previewUri ||
         it?.previewUrl ||
         it?.previewUri ||
-        // 2순위: 화면 표시용 1200px 뷰어
         it?.assets?.viewUrl ||
         it?.assets?.viewUri ||
         it?.output?.viewUri ||
-        // 3순위: 최후의 수단 (무거운 원본 - 이게 위에 있으면 로딩 지옥이 열립니다)
         it?.assets?.sourceUrl ||
         it?.sourceUrl ||
         it?.downloadUrl ||
@@ -71,7 +66,8 @@ function pickCustomerPreviewUri(it: any): string | null {
 export default function OrderDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
-    const { t, setLocale } = useLanguage() as any;
+    // ✨ 불필요한 setLocale을 가져오지 않습니다. 오직 현재 설정된 언어만 읽어옵니다!
+    const { t, locale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
     const [loading, setLoading] = useState(true);
@@ -125,9 +121,8 @@ export default function OrderDetailScreen() {
                     const data = snap.data();
                     const newOrder = { id: snap.id, ...data } as OrderDoc;
 
-                    if (newOrder.locale && setLocale) {
-                        setLocale(newOrder.locale);
-                    }
+                    // 🚨 범인 검거 완료: 기존에 있던 setLocale(newOrder.locale) 코드를 완전히 삭제했습니다!
+                    // 이제 상세페이지를 열어도 유저가 설정한 언어가 제멋대로 바뀌지 않습니다.
 
                     try {
                         const itemsSnap = await getDocs(collection(db, "orders", snap.id, "items"));
@@ -157,29 +152,42 @@ export default function OrderDetailScreen() {
         };
     }, [id, user, isAuthLoading]);
 
+    // ✨ 날짜 포맷 함수 (다국어 지원)
+    const getFormattedDate = (dateVal: any) => {
+        if (!dateVal) return "";
+        const dateObj = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
+        return dateObj.toLocaleDateString(locale === 'TH' ? 'th-TH' : 'en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    };
+
     const renderHeader = useCallback(
         () => (
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.replace("/(tabs)/myorder")} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color="#111" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{(t as any).orderDetailTitle || "Order Details"}</Text>
+                <Text style={styles.headerTitle}>
+                    {t.orderDetailTitle || (locale === 'TH' ? "รายละเอียดคำสั่งซื้อ" : "Order Details")}
+                </Text>
                 <View style={{ width: 44 }} />
             </View>
         ),
-        [router, t]
+        [router, t, locale]
     );
 
     const renderPaymentText = () => {
         if (!order) return "";
         if (order.payment?.provider === "DEV_FREE" || order.payment?.provider === "PROMO_FREE") {
-            return (t as any).payFreeDev || "Free (Dev Order)";
+            return t.payFreeDev || (locale === 'TH' ? "ฟรี (ทดสอบระบบ)" : "Free (Dev Order)");
         }
         if (order.payment?.brand && order.payment?.last4) {
             const brand = order.payment.brand.toUpperCase();
             return `${brand} •••• ${order.payment.last4}`;
         }
-        return (order as any).paymentMethod || (t as any).paymentTitle || "Payment";
+        return (order as any).paymentMethod || t.paymentTitle || (locale === 'TH' ? "การชำระเงิน" : "Payment");
     };
 
     if (isAuthLoading) {
@@ -198,13 +206,13 @@ export default function OrderDetailScreen() {
             <SafeAreaView style={styles.container}>
                 {renderHeader()}
                 <View style={styles.content}>
-                    <Text style={styles.notFoundTitle}>Please Log In</Text>
-                    <Text style={styles.notFoundDesc}>You need to be logged in to view order details.</Text>
+                    <Text style={styles.notFoundTitle}>{locale === 'TH' ? "กรุณาเข้าสู่ระบบ" : "Please Log In"}</Text>
+                    <Text style={styles.notFoundDesc}>{locale === 'TH' ? "คุณต้องเข้าสู่ระบบเพื่อดูรายละเอียดคำสั่งซื้อ" : "You need to be logged in to view order details."}</Text>
                     <TouchableOpacity
                         style={{ marginTop: 16, alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 }}
                         onPress={() => router.replace("/auth/email")}
                     >
-                        <Text style={{ color: "#111", fontWeight: "800" }}>Go to Login</Text>
+                        <Text style={{ color: "#111", fontWeight: "800" }}>{locale === 'TH' ? "ไปหน้าเข้าสู่ระบบ" : "Go to Login"}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -218,7 +226,7 @@ export default function OrderDetailScreen() {
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color="#111" />
                     <Text style={{ marginTop: 12, color: "#666", fontWeight: "600" }}>
-                        {(t as any).processingOrder || "Processing your order..."}
+                        {t.processingOrder || (locale === 'TH' ? "กำลังโหลดข้อมูล..." : "Processing your order...")}
                     </Text>
                 </View>
             </SafeAreaView>
@@ -230,9 +238,9 @@ export default function OrderDetailScreen() {
             <SafeAreaView style={styles.container}>
                 {renderHeader()}
                 <View style={styles.content}>
-                    <Text style={styles.notFoundTitle}>{(t as any).orderNotFound || "Order Not Found"}</Text>
+                    <Text style={styles.notFoundTitle}>{t.orderNotFound || (locale === 'TH' ? "ไม่พบคำสั่งซื้อ" : "Order Not Found")}</Text>
                     <Text style={styles.notFoundDesc}>
-                        {(t as any).orderNotFoundDesc || "We couldn't find the order yet. Please try again in a moment."}
+                        {t.orderNotFoundDesc || (locale === 'TH' ? "เรายังไม่พบคำสั่งซื้อนี้ โปรดลองอีกครั้ง" : "We couldn't find the order yet. Please try again in a moment.")}
                     </Text>
                     <TouchableOpacity
                         style={{ marginTop: 16, alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 }}
@@ -240,7 +248,7 @@ export default function OrderDetailScreen() {
                             router.replace({ pathname: "/myorder/[id]" as any, params: { id: id as string } } as any);
                         }}
                     >
-                        <Text style={{ color: "#111", fontWeight: "800" }}>{(t as any).retry || "Retry"}</Text>
+                        <Text style={{ color: "#111", fontWeight: "800" }}>{t.retry || (locale === 'TH' ? "ลองใหม่" : "Retry")}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -283,11 +291,11 @@ export default function OrderDetailScreen() {
                                         <Ionicons name="gift-outline" size={24} color="#fff" />
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.shippingBannerTitle}>
-                                                {(t as any).packageSent || "Your package is on the way!"}
+                                                {t.packageSent || (locale === 'TH' ? "พัสดุของคุณถูกจัดส่งแล้ว!" : "Your package is on the way!")}
                                             </Text>
                                             {trackingNumber && (
                                                 <Text style={styles.shippingBannerText}>
-                                                    {(t as any).trackingLabel || "Tracking"}: {trackingNumber}
+                                                    {t.trackingLabel || (locale === 'TH' ? "หมายเลขติดตาม" : "Tracking")}: {trackingNumber}
                                                 </Text>
                                             )}
                                         </View>
@@ -297,7 +305,7 @@ export default function OrderDetailScreen() {
                                 <View style={styles.orderSummary}>
                                     <View style={styles.summaryRowTop}>
                                         <View style={styles.orderMeta}>
-                                            <Text style={styles.orderMetaLabel}>{(t as any).ordersId || "Order Code"}</Text>
+                                            <Text style={styles.orderMetaLabel}>{t.ordersId || (locale === 'TH' ? "เลขที่คำสั่งซื้อ" : "Order Code")}</Text>
                                             <Text style={styles.orderMetaValue}>
                                                 #{(order as any).orderCode || (order.id as string).slice(-7).toUpperCase()}
                                             </Text>
@@ -306,7 +314,7 @@ export default function OrderDetailScreen() {
                                     </View>
 
                                     <View style={styles.summaryRowBottom}>
-                                        <Text style={styles.orderDate}>{formatDate((order as any).createdAt)}</Text>
+                                        <Text style={styles.orderDate}>{getFormattedDate((order as any).createdAt)}</Text>
                                         <Text style={styles.orderTotal}>
                                             {currencySymbol}{Number((order as any).total || 0).toFixed(2)}
                                         </Text>
@@ -319,7 +327,7 @@ export default function OrderDetailScreen() {
                     if (item.type === "items") {
                         return (
                             <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>{(t as any).itemsTitle || "Items"}</Text>
+                                <Text style={styles.sectionTitle}>{t.itemsTitle || (locale === 'TH' ? "รายการสินค้า" : "Items")}</Text>
                                 <View style={styles.itemGrid}>
                                     {(order.items || []).map((it: any, idx: number) => {
                                         const uri = pickCustomerPreviewUri(it);
@@ -343,12 +351,12 @@ export default function OrderDetailScreen() {
                     if (item.type === "shipping") {
                         return (
                             <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>{(t as any).shippingAddressTitle || "Shipping Address"}</Text>
+                                <Text style={styles.sectionTitle}>{t.shippingAddressTitle || (locale === 'TH' ? "ที่อยู่จัดส่ง" : "Shipping Address")}</Text>
                                 <View style={styles.detailsCard}>
                                     {(order as any).trackingNumber ? (
                                         <View style={styles.trackingRow}>
                                             <Text style={styles.trackingLabel}>
-                                                📦 {(t as any).trackingNumberLabel || "TRACKING NUMBER"}
+                                                📦 {t.trackingNumberLabel || (locale === 'TH' ? "หมายเลขติดตาม" : "TRACKING NUMBER")}
                                             </Text>
                                             <Text style={styles.trackingValue} selectable>
                                                 {(order as any).trackingNumber}
@@ -356,20 +364,20 @@ export default function OrderDetailScreen() {
                                         </View>
                                     ) : null}
 
-                                    <DetailRow label={(t as any).fullName || "Full Name"} value={(order as any).shipping?.fullName || ""} />
+                                    <DetailRow label={t.fullName || (locale === 'TH' ? "ชื่อเต็ม" : "Full Name")} value={(order as any).shipping?.fullName || ""} />
                                     <DetailRow
-                                        label={(t as any).addressLabel || (t as any).address1 || "Address"}
+                                        label={t.addressLabel || t.address1 || (locale === 'TH' ? "ที่อยู่" : "Address")}
                                         value={(order as any).shipping?.address1 || ""}
                                     />
                                     {(order as any).shipping?.address2 ? (
-                                        <DetailRow label={(t as any).address2Label || "Address 2"} value={(order as any).shipping?.address2 || ""} />
+                                        <DetailRow label={t.address2Label || (locale === 'TH' ? "ที่อยู่ 2" : "Address 2")} value={(order as any).shipping?.address2 || ""} />
                                     ) : null}
                                     <DetailRow
-                                        label={`${(t as any).city || "City"} / ${(t as any).state || "State"}`}
+                                        label={`${t.city || (locale === 'TH' ? "เมือง" : "City")} / ${t.state || (locale === 'TH' ? "รัฐ/จังหวัด" : "State")}`}
                                         value={`${(order as any).shipping?.city || ""}, ${(order as any).shipping?.state || ""}`}
                                     />
-                                    <DetailRow label={(t as any).postalCode || "Zip"} value={(order as any).shipping?.postalCode || ""} />
-                                    <DetailRow label={(t as any).phoneLabel || "Phone"} value={(order as any).shipping?.phone || ""} />
+                                    <DetailRow label={t.postalCode || (locale === 'TH' ? "รหัสไปรษณีย์" : "Zip")} value={(order as any).shipping?.postalCode || ""} />
+                                    <DetailRow label={t.phoneLabel || (locale === 'TH' ? "โทรศัพท์" : "Phone")} value={(order as any).shipping?.phone || ""} />
                                 </View>
                             </View>
                         );
@@ -378,7 +386,7 @@ export default function OrderDetailScreen() {
                     if (item.type === "payment") {
                         return (
                             <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>{(t as any).paymentTitle || "Payment"}</Text>
+                                <Text style={styles.sectionTitle}>{t.paymentTitle || (locale === 'TH' ? "การชำระเงิน" : "Payment")}</Text>
                                 <View style={styles.detailsCard}>
                                     <Text style={styles.paymentText}>{renderPaymentText()}</Text>
                                     {(order as any).promo ? (

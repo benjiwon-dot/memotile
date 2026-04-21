@@ -2,23 +2,15 @@
 import "react-native-gesture-handler";
 import { Buffer } from "buffer";
 (global as any).Buffer = Buffer;
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Stack } from "expo-router";
 import { View, Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { LanguageProvider } from "../src/context/LanguageContext";
 import { PhotoProvider } from "../src/context/PhotoContext";
-import SplashOverlay from "../src/components/SplashOverlay";
 
 export default function RootLayout() {
-    const [showSplash, setShowSplash] = useState(true);
-
-    useEffect(() => {
-        const safetyTimer = setTimeout(() => setShowSplash(false), 2200);
-        return () => clearTimeout(safetyTimer);
-    }, []);
-
     const isWeb = Platform.OS === 'web';
 
     return (
@@ -37,7 +29,6 @@ export default function RootLayout() {
                                 }
                             }}
                         />
-                        {showSplash && <SplashOverlay onFinish={() => setShowSplash(false)} />}
                     </View>
                 </PhotoProvider>
             </LanguageProvider>

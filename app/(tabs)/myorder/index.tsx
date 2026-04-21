@@ -1,6 +1,6 @@
+// app/(tabs)/myorder/index.tsx
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { Package } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,37 +12,48 @@ import { auth } from "../../../src/lib/firebase";
 import { listOrders } from "../../../src/services/orders";
 import { OrderDoc } from "../../../src/types/order";
 import OrderCardRN from "../../../src/components/orders/OrderCardRN";
-import { formatDate } from "../../../src/utils/date";
-import { Alert } from "react-native";
+import { User } from "firebase/auth";
 
 export default function Orders() {
     const { t } = useLanguage();
     const router = useRouter();
     const insets = useSafeAreaInsets();
+
     const [orders, setOrders] = useState<OrderDoc[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const uid = auth.currentUser?.uid;
-        if (!uid) {
-            setLoading(false);
-            return;
-        }
+    // ✨ 현재 로그인한 유저 상태를 실시간으로 추적하기 위한 State 추가
+    const [user, setUser] = useState<User | null>(null);
 
-        const fetchOrders = async () => {
-            try {
-                const data = await listOrders(uid);
-                setOrders(data);
-            } catch (e) {
-                console.error("Failed to fetch orders", e);
-                Alert.alert("Error", "Failed to load orders. Please try again.");
-            } finally {
+    useEffect(() => {
+        // ✨ 실시간 로그인 감지기: 프로필에서 로그인을 하든 로그아웃을 하든 즉시 반응합니다!
+        const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+            setUser(currentUser);
+            if (currentUser) {
+                fetchOrders(currentUser.uid);
+            } else {
+                // 로그아웃 상태면 주문 내역을 비우고 로딩을 끕니다.
+                setOrders([]);
                 setLoading(false);
             }
-        };
+        });
 
-        fetchOrders();
+        // 화면이 꺼질 때 감지기 해제
+        return () => unsubscribe();
     }, []);
+
+    const fetchOrders = async (uid: string) => {
+        setLoading(true);
+        try {
+            const data = await listOrders(uid);
+            setOrders(data);
+        } catch (e) {
+            console.error("Failed to fetch orders", e);
+            Alert.alert("Error", "Failed to load orders. Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const renderHeader = () => (
         <Text style={styles.header}>{t.orders || "My Orders"}</Text>
@@ -65,10 +76,11 @@ export default function Orders() {
         );
     }
 
-    if (!auth.currentUser) {
+    // ✨ auth.currentUser 대신 실시간 추적 중인 user State를 사용합니다.
+    if (!user) {
         return (
             <View style={[styles.container, { paddingTop: insets.top }]}>
-                {renderHeader()}
+                <Text style={styles.header}>{t.orders || "My Orders"}</Text>
                 <View style={styles.emptyState}>
                     <Text style={styles.authMessage}>Please log in to view your orders.</Text>
                     <TouchableOpacity style={styles.loginBtn} onPress={() => router.push('/auth/email')}>

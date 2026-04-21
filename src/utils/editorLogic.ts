@@ -1,5 +1,5 @@
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 import { Skia, ImageFormat } from "@shopify/react-native-skia";
 import { Buffer } from "buffer";
 import { IDENTITY, type ColorMatrix } from "./colorMatrix";
@@ -104,7 +104,7 @@ export const generatePrintExport = async (
     const safeH = Math.max(1, Math.min(cropRect.height, srcH - safeY));
 
     const longest = Math.max(safeW, safeH);
-    const targetW = 5000;
+    const targetW = 4096;
 
     const result = await manipulateAsync(
         uri,

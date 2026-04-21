@@ -8,7 +8,7 @@ import {
     Pressable,
     Alert,
     Linking,
-    Platform, // ✨ 웹/모바일 구분용 추가
+    Platform,
     type PressableStateCallbackType,
     type StyleProp,
     type ViewStyle,
@@ -119,7 +119,6 @@ export default function Index() {
     );
 
     const handleStart = async () => {
-        // 모바일 기기에서만 권한을 요청합니다. (웹에서 불필요한 경고 방지)
         if (Platform.OS !== "web") {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -146,13 +145,11 @@ export default function Index() {
         if (!result.canceled && result.assets?.length) {
             const processedAssets = [];
 
-            // ✨ [핵심 해결책] 브라우저 캔버스 메모리 폭발을 막기 위해 Promise.all 대신 순차 처리(for...of) 적용
             for (const asset of result.assets) {
                 const originalUri = asset.uri;
                 const originalWidth = asset.width;
                 const originalHeight = asset.height;
 
-                // 웹에서는 속도와 메모리 안정성을 위해 리사이징 크기를 조금 줄입니다. (모바일은 그대로 유지)
                 const targetWidth = Platform.OS === 'web' ? 1200 : 2000;
 
                 const manipulated = await manipulateAsync(
@@ -289,7 +286,14 @@ export default function Index() {
                                             { opacity: slideshowIndex === idx ? 1 : 0 },
                                         ]}
                                     >
-                                        <ExpoImage source={img} style={styles.heroTile} contentFit="cover" transition={200} />
+                                        <ExpoImage
+                                            source={img}
+                                            style={styles.heroTile}
+                                            contentFit="cover"
+                                            transition={200}
+                                            priority="high" // ✨ 렌더링 병목 방지를 위한 최우선 순위 로드
+                                            cachePolicy="memory-disk"
+                                        />
                                     </View>
                                 ))}
                             </View>
@@ -351,7 +355,13 @@ export default function Index() {
                                     ]}
                                 >
                                     <View style={styles.billboardImgContainer}>
-                                        <ExpoImage source={theme.img} style={{ width: 280, height: 280 }} contentFit="cover" />
+                                        <ExpoImage
+                                            source={theme.img}
+                                            style={{ width: 280, height: 280 }}
+                                            contentFit="cover"
+                                            priority="high" // ✨ 빌보드 이미지도 우선순위 높임
+                                            cachePolicy="memory-disk"
+                                        />
                                     </View>
                                 </View>
                             ))}

@@ -3,7 +3,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 import { Platform } from "react-native";
 
 function guessExt(uri: string) {

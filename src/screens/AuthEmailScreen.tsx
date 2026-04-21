@@ -1,5 +1,5 @@
 // app/auth/email.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -23,11 +23,10 @@ import {
     sendEmailVerification,
     reload,
     sendPasswordResetEmail,
-    OAuthProvider, // ✨ Apple auth 용 추가
-    signInWithCredential // ✨ Apple auth 용 추가
+    OAuthProvider,
+    signInWithCredential
 } from "firebase/auth";
 
-// ✅ Firebase 공통 인스턴스
 import { auth } from "../lib/firebase";
 
 import {
@@ -36,7 +35,6 @@ import {
     signInWithEmail
 } from '../utils/firebaseAuth';
 
-// ✨ Apple Auth Imports
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 
@@ -53,6 +51,9 @@ export default function AuthEmailScreen() {
     const insets = useSafeAreaInsets();
     const { t } = useLanguage();
 
+    // ✨ 중복 라우팅(뒤로가기 2번)을 막기 위한 안전장치
+    const navHandledRef = useRef(false);
+
     const [isSignUp, setIsSignUp] = useState(false);
     const [cooldown, setCooldown] = useState(0);
     const [email, setEmail] = useState('');
@@ -60,11 +61,30 @@ export default function AuthEmailScreen() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
-    // ✨ 애플 로그인 진행 상태 상태값 추가
     const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
 
-    // Google Auth Hook
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
+
+    // ✨ [핵심 수정] 구글 로그인 등 외부 로그인이 성공했을 때 자동으로 뒤로 돌려보내는 글로벌 리스너
+    useEffect(() => {
+        const unsub = auth.onAuthStateChanged((user) => {
+            if (user && !navHandledRef.current) {
+                // 구글/애플 같은 OAuth 계정이거나, 이메일 인증을 마친 계정인지 확인
+                const isOAuth = user.providerData.some(p => p.providerId === 'google.com' || p.providerId === 'apple.com');
+                const isTestAccount = user.email === "test_user@memotile.com";
+
+                if (isOAuth || user.emailVerified || isTestAccount) {
+                    navHandledRef.current = true;
+                    if (router.canGoBack()) {
+                        router.back();
+                    } else {
+                        router.replace('/(tabs)/profile');
+                    }
+                }
+            }
+        });
+        return unsub;
+    }, [router]);
 
     useEffect(() => {
         if (authError) showAlert("Login Error", authError);
@@ -104,8 +124,6 @@ export default function AuthEmailScreen() {
                 setIsSignUp(false);
             } else {
                 const { user } = await signInWithEmail(emailTrim, passwordTrim);
-
-                // 💡 심사역 테스트 계정은 이메일 인증 절차를 건너뜀
                 const isTestAccount = user.email === "test_user@memotile.com";
 
                 if (!user.emailVerified && !isTestAccount) {
@@ -134,13 +152,17 @@ export default function AuthEmailScreen() {
                     }
                     return;
                 }
-                router.back();
+
+                // ✨ 이메일 로그인 성공 시 직접 뒤로가기 처리
+                if (!navHandledRef.current) {
+                    navHandledRef.current = true;
+                    router.back();
+                }
             }
         } catch (error: any) {
             console.error("Auth Error:", error);
             const code = error?.code ?? "";
 
-            // ✨ [수정됨] Upload Failed 대신 Login Error 문구 표시
             const errorTitle = (t as any)['paymentError'] || "Login Error";
 
             let msg = error?.message ?? "Authentication failed.";
@@ -154,7 +176,6 @@ export default function AuthEmailScreen() {
         }
     };
 
-    // ✨ 애플 로그인 로직 추가
     const handleAppleLogin = async () => {
         if (Platform.OS !== 'ios') return;
         setIsAppleLoggingIn(true);
@@ -180,7 +201,12 @@ export default function AuthEmailScreen() {
                 });
                 await signInWithCredential(auth, credential);
                 console.log("Apple Sign-In success");
-                router.back(); // 로그인 성공 시 돌아가기
+
+                // ✨ 애플 로그인 성공 시 직접 뒤로가기 처리
+                if (!navHandledRef.current) {
+                    navHandledRef.current = true;
+                    router.back();
+                }
             } else {
                 throw new Error("No identity token provided.");
             }
@@ -208,7 +234,10 @@ export default function AuthEmailScreen() {
             await reload(auth.currentUser);
             if (auth.currentUser.emailVerified) {
                 showAlert((t as any)['auth.verifiedSuccess'] || "Verified ✅", "Success");
-                router.back();
+                if (!navHandledRef.current) {
+                    navHandledRef.current = true;
+                    router.back();
+                }
             } else {
                 showAlert((t as any)['auth.notVerifiedYet'] || "Not verified", "Check your email.");
             }
@@ -278,7 +307,6 @@ export default function AuthEmailScreen() {
 
                         <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
 
-                        {/* ⭐️ 구글 로그인 버튼 */}
                         <TouchableOpacity style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]} onPress={() => promptAsync()} disabled={isSigningIn || !isReady}>
                             {isSigningIn ? <ActivityIndicator color="#000" /> :
                                 <View style={styles.socialBtnContent}>
@@ -287,7 +315,6 @@ export default function AuthEmailScreen() {
                                 </View>}
                         </TouchableOpacity>
 
-                        {/* ⭐️ 애플 로그인 버튼 (iOS에서만 노출, 구글 버튼과 동일한 하얀 바탕/검정 텍스트 스타일) */}
                         {Platform.OS === "ios" && (
                             <TouchableOpacity
                                 style={[styles.socialBtn, { marginTop: 12 }, isAppleLoggingIn && styles.disabledBtn]}
@@ -317,7 +344,6 @@ export default function AuthEmailScreen() {
                 </ScrollView>
             </KeyboardAvoidingView>
 
-            {/* ✅ 화면 멈춤(5초 지연) 시 연타 방지용 전체 화면 모달 */}
             <Modal visible={isSigningIn || loading || isAppleLoggingIn} transparent animationType="fade">
                 <View style={styles.overlayContainer}>
                     <View style={styles.loadingBox}>
@@ -360,8 +386,6 @@ const styles = StyleSheet.create({
     socialBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     socialIcon: { width: 18, height: 18 },
     socialBtnText: { color: '#333', fontSize: 16, fontWeight: '600' },
-
-    // ✅ 연타 방지 모달 스타일
     overlayContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
     loadingBox: { backgroundColor: '#fff', padding: 24, borderRadius: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4 },
     loadingText: { marginTop: 12, fontSize: 15, fontWeight: '600', color: '#333' }
