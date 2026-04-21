@@ -181,7 +181,6 @@ async function clampCropToImage(
    CLOUD FUNCTIONS
    ========================================================================= */
 
-// ✨ 프론트엔드에서 호출하는 단일 주문 업데이트 함수
 export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -207,7 +206,6 @@ export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true },
     }
 });
 
-// ✨ 프론트엔드에서 호출하는 일괄(Batch) 주문 업데이트 함수
 export const adminBatchUpdateOrderStatus = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -388,9 +386,9 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
 );
 
 
-// ✨ [통합 처리] Admin Web에서 생성된 adminTasks 문서를 감지하여 일괄 처리
+// ✨ [다국어 + 스마트 마케팅] DB를 감지하여 실행되는 통합 트리거 함수
 export const processAdminTask = onDocumentCreated(
-    { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300 },
+    { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -487,7 +485,7 @@ export const processAdminTask = onDocumentCreated(
             }
 
             // ====================================================================
-            // 2. ✨ 마케팅 푸시 발송 (필터링 및 언어 필수조건 해제)
+            // 2. ✨ 스마트 마케팅 푸시 발송 로직 (타겟팅 + 언어 우선순위)
             // ====================================================================
             else if (task.type === "MARKETING_PUSH") {
                 const { target, filters, testToken, en, th } = task.payload || {};
@@ -496,13 +494,12 @@ export const processAdminTask = onDocumentCreated(
                 const titleTh = th?.title;
                 const bodyTh = th?.body;
 
-                // 영어/태국어 중 하나라도 입력되어 있으면 발송 가능
-                if (!titleEn && !titleTh) throw new Error("At least one language message is required.");
+                if (!titleEn && !titleTh) throw new Error("No message content provided.");
 
                 // ✨ 특정 기기로 테스트 발송
                 if (target === "test_token" && testToken) {
                     console.log(`[Marketing Push] Direct test to token: ${testToken}`);
-                    // 타겟 언어가 태국어면 태국어 우선, 아니면 영어 우선
+                    // 필터에 설정된 언어에 맞춰서 최적의 메시지를 조합
                     const finalTitle = filters?.language === 'th' ? (titleTh || titleEn) : (titleEn || titleTh);
                     const finalBody = filters?.language === 'th' ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
 
@@ -513,63 +510,68 @@ export const processAdminTask = onDocumentCreated(
                         body: finalBody,
                     });
                 }
-                // ✨ 필터링된 유저들에게 발송
+                // ✨ 실제 유저 또는 관리자 그룹 발송 (필터링 적용)
                 else {
-                    let usersQuery: FirebaseFirestore.Query = db.collection("users");
-
-                    // 1. 관리자 그룹 필터
-                    if (target === "test_admin") {
-                        usersQuery = usersQuery.where("isAdmin", "==", true);
-                    }
-
-                    // 2. 성별 필터
-                    if (filters?.gender && filters.gender !== "all") {
-                        usersQuery = usersQuery.where("gender", "==", filters.gender);
-                    }
-
-                    // 3. 언어 필터
-                    if (filters?.language && filters.language !== "all") {
-                        usersQuery = usersQuery.where("language", "==", filters.language);
-                    }
-
-                    const usersSnap = await usersQuery.get();
+                    const usersSnap = await db.collection("users").get();
                     const notifications: { userId: string, title: string, body: string }[] = [];
 
-                    usersSnap.forEach((doc) => {
-                        const userData = doc.data();
+                    for (const userDoc of usersSnap.docs) {
+                        const userData = userDoc.data();
                         const pushToken = userData?.expoPushToken || userData?.pushToken;
-                        if (!pushToken) return;
+                        if (!pushToken) continue;
 
-                        // 4. 가입 시기 필터 (클라이언트 단에서 쿼리하지 않고 서버에서 거름)
-                        if (filters?.joinDate && filters.joinDate !== "all") {
-                            const createdAt = userData.createdAt?.toDate ? userData.createdAt.toDate() : null;
-                            if (createdAt) {
-                                const diffDays = (new Date().getTime() - createdAt.getTime()) / (1000 * 3600 * 24);
-                                if (filters.joinDate === "recent_7" && diffDays > 7) return;
-                                if (filters.joinDate === "recent_30" && diffDays > 30) return;
-                            }
-                        }
-
-                        // 유저 설정 언어에 맞춰 메시지 선택
+                        const userId = userDoc.id;
                         const userLang = userData?.language || "en";
-                        const title = userLang === "th" ? (titleTh || titleEn) : (titleEn || titleTh);
-                        const body = userLang === "th" ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
 
-                        if (title && body) {
-                            notifications.push({ userId: doc.id, title, body });
+                        // 1. 타겟 그룹 체크
+                        if (target === "admins" && userData.isAdmin !== true) continue;
+
+                        // 2. 가입 시기 필터링
+                        if (filters?.joinPeriod && filters.joinPeriod !== "all") {
+                            const createdAt = userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date();
+                            const diffDays = (new Date().getTime() - createdAt.getTime()) / (1000 * 3600 * 24);
+                            if (filters.joinPeriod === "recent_7" && diffDays > 7) continue;
+                            if (filters.joinPeriod === "recent_30" && diffDays > 30) continue;
                         }
-                    });
 
-                    console.log(`[Marketing Push] 총 ${notifications.length}명에게 필터링 발송을 시작합니다.`);
+                        // 3. 고객 그룹(Behavior) 필터링 - 주문 DB 조회
+                        if (filters?.userGroup && filters.userGroup !== "all") {
+                            const ordersSnap = await db.collection("orders").where("userId", "==", userId).get();
+                            const orderCount = ordersSnap.size;
+                            const hasAbandoned = ordersSnap.docs.some(d => ["pending", "payment_pending"].includes(d.data().status));
 
-                    // 수집된 유저들에게 순차 발송
+                            if (filters.userGroup === "zero_order" && orderCount > 0) continue;
+                            if (filters.userGroup === "vip" && orderCount < 2) continue;
+                            if (filters.userGroup === "abandoned" && !hasAbandoned) continue;
+                        }
+
+                        // 4. 언어 우선순위 결정
+                        // 유저 언어가 태국어면 태국어 최우선 (없으면 영어)
+                        // 유저 언어가 영어나 그 외면 영어 최우선 (없으면 태국어)
+                        let finalTitle, finalBody;
+                        if (userLang === "th") {
+                            finalTitle = titleTh || titleEn;
+                            finalBody = bodyTh || bodyEn;
+                        } else {
+                            finalTitle = titleEn || titleTh;
+                            finalBody = bodyEn || bodyTh;
+                        }
+
+                        if (finalTitle && finalBody) {
+                            notifications.push({ userId, title: finalTitle, body: finalBody });
+                        }
+                    }
+
+                    console.log(`[Smart CRM] 총 ${notifications.length}명에게 타겟팅 푸시 발송`);
                     for (const noti of notifications) {
                         await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                     }
                 }
             }
 
+            // 작업 지시서 처리 완료 상태로 업데이트
             await snap.ref.update({ status: "completed", completedAt: timestamp });
+
         } catch (error) {
             console.error("Task error:", error);
             await snap.ref.update({ status: "error", error: String(error) });
