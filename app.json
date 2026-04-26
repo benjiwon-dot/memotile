@@ -2,7 +2,7 @@
   "expo": {
     "name": "MemoTile",
     "slug": "memotile-app-anti",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -10,9 +10,6 @@
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -41,7 +38,7 @@
       "expo-apple-authentication"
     ],
     "ios": {
-      "buildNumber": "4",
+      "buildNumber": "24",
       "supportsTablet": true,
       "bundleIdentifier": "com.benjiwon.memotileappanti",
       "googleServicesFile": "./GoogleService-Info.plist",
@@ -69,7 +66,7 @@
       }
     },
     "android": {
-      "versionCode": 2,
+      "versionCode": 3,
       "package": "com.benjiwon.memotileappanti",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
@@ -108,7 +105,6 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
-    "runtimeVersion": "1.0.0",
     "extra": {
       "eas": {
         "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"

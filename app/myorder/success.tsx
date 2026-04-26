@@ -19,7 +19,7 @@ import Animated, {
     withDelay,
 } from "react-native-reanimated";
 
-// 💡 getOrder 삭제, subscribeOrder만 사용
+// 💡 subscribeOrder만 사용
 import { subscribeOrder } from "../../src/services/orders";
 import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
@@ -32,15 +32,15 @@ if (Platform.OS !== 'web') {
     try { Device = require("expo-device"); } catch { Device = null; }
 }
 
-const PROCESSING_GRACE_MS = 12000;
+// 💡 [수정] 순차 업로드는 안전하지만 시간이 걸리므로, 대기 시간을 45초로 넉넉히 늘립니다.
+const PROCESSING_GRACE_MS = 45000;
 
 export default function OrderSuccessScreen() {
     const params = useLocalSearchParams();
     const id = (params?.id as string | undefined) ?? undefined;
-
     const router = useRouter();
 
-    const { t, setLocale } = useLanguage() as any;
+    const { t, setLocale, locale } = useLanguage() as any;
 
     const [order, setOrder] = useState<OrderDoc | null>(null);
     const [processing, setProcessing] = useState(true);
@@ -67,9 +67,7 @@ export default function OrderSuccessScreen() {
                 if (Haptics?.notificationAsync && Haptics?.NotificationFeedbackType?.Success) {
                     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
-            } catch {
-                // ignore
-            }
+            } catch { /* ignore */ }
         }
     };
 
@@ -87,14 +85,15 @@ export default function OrderSuccessScreen() {
         let unsub: any = null;
         let timeout: any = null;
 
-        // 💡 만약 12초 동안 아무 데이터도 안 오면 포기(gaveUp) 상태로 전환
+        // 💡 지정된 시간 내에 데이터가 안 오면 실패 화면으로 전환
         timeout = setTimeout(() => {
             if (!aliveRef.current) return;
+            // 만약 그 사이에 데이터가 왔다면(order가 있다면) 포기하지 않음
             setProcessing(false);
             setGaveUp(true);
         }, PROCESSING_GRACE_MS);
 
-        // 💡 오직 실시간 구독(subscribeOrder) 하나만 사용하여 깜빡임 원천 차단
+        // 💡 실시간 구독
         unsub = subscribeOrder(id, (updated) => {
             if (!aliveRef.current) return;
             if (updated) {
@@ -105,7 +104,6 @@ export default function OrderSuccessScreen() {
                 setGaveUp(false);
                 if (timeout) clearTimeout(timeout);
 
-                // 성공 애니메이션 시작
                 startCelebration();
             }
         });
@@ -125,43 +123,48 @@ export default function OrderSuccessScreen() {
         transform: [{ translateY: (1 - opacity.value) * 30 }],
     }));
 
+    // 💡 [방어 로직] 다국어 코드가 소문자로 올 때를 대비
+    const isThai = locale?.toUpperCase() === 'TH';
+
+    // 💡 [UI 1] 로딩 중 (이 상태에서 에러 화면으로 튕기지 않게 넉넉히 대기)
     if (!id || (processing && !order && !gaveUp)) {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color="#111" />
-                    <Text style={styles.processingTitle}>{(t as any).processingOrder || "Processing your order..."}</Text>
+                    <Text style={styles.processingTitle}>
+                        {(t as any).processingOrder || (isThai ? "กำลังประมวลผลคำสั่งซื้อ..." : "Processing your order...")}
+                    </Text>
                     <Text style={styles.processingDesc}>
-                        {(t as any).processingOrderDesc ||
-                            "This can take a few seconds while we finalize your payment and create the order."}
+                        {(t as any).processingOrderDesc || (isThai
+                            ? "อาจใช้เวลาสักครู่ในขณะที่เราตรวจสอบการชำระเงินและสร้างคำสั่งซื้อของคุณ"
+                            : "This can take a few seconds while we finalize your payment and create the order.")}
                     </Text>
 
                     <View style={{ height: 18 }} />
-
                     <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace("/(tabs)/myorder")}>
                         <Text style={styles.secondaryBtnText}>{(t as any).goMyOrders || "Go to My Orders"}</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace("/")}>
-                        <Text style={styles.linkBtnText}>{(t as any).backHome || "Back to Home"}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
         );
     }
 
+    // 💡 [UI 2] 진짜로 45초를 기다렸는데도 데이터가 없을 때만 보여주는 화면
     if (!order && gaveUp) {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
-                    <Text style={styles.failTitle}>{(t as any).orderNotFound || "We couldn't load your order yet"}</Text>
+                    <Text style={styles.failTitle}>
+                        {(t as any).orderNotFound || (isThai ? "ไม่พบคำสั่งซื้อ" : "We couldn't load your order yet")}
+                    </Text>
                     <Text style={styles.failDesc}>
-                        {(t as any).orderNotFoundDesc ||
-                            "Your payment may have succeeded, but the order is still being created. Please try again."}
+                        {(t as any).orderNotFoundDesc || (isThai
+                            ? "การชำระเงินอาจสำเร็จแล้ว 하지만 데이터 생성에 시간이 더 걸리고 있습니다. 내 주문 내역에서 확인해 주세요."
+                            : "Your payment may have succeeded, but the order is still being created. Please check 'My Orders' in a moment.")}
                     </Text>
 
                     <View style={{ height: 18 }} />
-
                     <TouchableOpacity
                         style={styles.primaryBtn}
                         onPress={() => router.replace({ pathname: "/myorder/success", params: { id } })}
@@ -172,10 +175,6 @@ export default function OrderSuccessScreen() {
                     <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace("/(tabs)/myorder")}>
                         <Text style={styles.secondaryBtnText}>{(t as any).goMyOrders || "View My Orders"}</Text>
                     </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace("/")}>
-                        <Text style={styles.linkBtnText}>{(t as any).backHome || "Back to Home"}</Text>
-                    </TouchableOpacity>
                 </View>
             </SafeAreaView>
         );
@@ -183,6 +182,7 @@ export default function OrderSuccessScreen() {
 
     const email = order?.shipping?.email || "your email";
 
+    // 💡 [UI 3] 대망의 성공 화면 (여기서부터는 기존 로직과 동일)
     return (
         <SafeAreaView style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>

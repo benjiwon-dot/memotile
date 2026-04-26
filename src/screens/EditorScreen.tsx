@@ -1,4 +1,3 @@
-// src/screens/EditorScreen.tsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   View,
@@ -70,7 +69,6 @@ const getImageSizeAsync = (uri: string) =>
   });
 
 const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
-
 const waitRaf = () => new Promise<void>((res) => requestAnimationFrame(() => res()));
 
 type BakeJob = {
@@ -125,7 +123,6 @@ export default function EditorScreen() {
 
   const isAliveRef = useRef(true);
   const bgPausedRef = useRef(false);
-  const bgTokenRef = useRef(0);
 
   const [bakeJob, setBakeJob] = useState<BakeJob | null>(null);
   const bakeBusyRef = useRef(false);
@@ -307,7 +304,6 @@ export default function EditorScreen() {
     return () => { alive = false; };
   }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto]);
 
-  // ✨ [핵심 수정 1] 트랜지션 중 incoming 이미지가 null이 되어 에디터가 박살나는 현상 방지
   const incomingDisplayResolved = isSwitchingPhoto
     ? (incomingResolved || activeResolved || initialInfo)
     : (activeResolved || initialInfo);
@@ -427,9 +423,7 @@ export default function EditorScreen() {
 
       for (let i = 0; i < 10; i++) {
         if (cancelled || !isAliveRef.current) return finish(null);
-
         const snapshot = filteredCanvasRef.current?.snapshot();
-
         if (snapshot) {
           try {
             const result = await bakeFilterFromCanvasSnapshot(snapshot);
@@ -529,75 +523,74 @@ export default function EditorScreen() {
       const safeUI = sanitizeCropRect(rawCropUI, uiW, uiH);
       const finalCropUI = { x: Math.floor(safeUI.x), y: Math.floor(safeUI.y), width: Math.floor(safeUI.width), height: Math.floor(safeUI.width) };
 
-      const realSrcW = photo.originalWidth || photo.width;
-      const realSrcH = photo.originalHeight || photo.height;
-      const scale = realSrcW / (uiW || 1);
-      const sx = Math.floor(finalCropUI.x * scale);
-      const sy = Math.floor(finalCropUI.y * scale);
-      const sSize = Math.floor(finalCropUI.width * scale);
-      const finalCropSRC = { x: Math.max(0, Math.min(sx, realSrcW - 1)), y: Math.max(0, Math.min(sy, realSrcH - 1)), width: sSize, height: sSize };
+      const cropRatio = {
+        x: Math.max(0, Math.min(1, finalCropUI.x / uiW)),
+        y: Math.max(0, Math.min(1, finalCropUI.y / uiH)),
+        w: Math.max(0, Math.min(1, finalCropUI.width / uiW)),
+        h: Math.max(0, Math.min(1, finalCropUI.height / uiH))
+      };
 
       const previewRes = await generatePreviewExport(currentPhotoUri, finalCropUI);
       let finalPreviewUri = previewRes.uri;
+      let finalPrintUri = ""; // ⭐️ 필터가 없으면 비워둡니다 (orders.ts에서 4K로 자르기 위함)
 
+      // ⭐️ 핵심: 필터를 골랐다면 앱이 죽지 않는 한도(2048px) 내에서 고화질 필터를 구워서 저장합니다!
       if (currentUi.filterId !== "original") {
-        const bakedPreview = await requestSkiaBake(
-          finalPreviewUri, previewRes.width, previewRes.height, matrix,
-          { maxSide: 768, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity }
-        );
-        if (bakedPreview) finalPreviewUri = bakedPreview;
+        try {
+          const originalSourceUri = photo.originalUri || photo.sourceUri || photo.uri;
+          const trueMeta = await manipulateAsync(originalSourceUri, []);
+
+          let oX = Math.max(0, Math.min(Math.floor(trueMeta.width * cropRatio.x), trueMeta.width - 1));
+          let oY = Math.max(0, Math.min(Math.floor(trueMeta.height * cropRatio.y), trueMeta.height - 1));
+          let cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
+          let cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
+
+          // 원본에서 정확하게 크롭
+          const hrCrop = await manipulateAsync(
+            originalSourceUri,
+            [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],
+            { compress: 1, format: SaveFormat.JPEG }
+          );
+
+          // Skia를 이용해 2048px(안전 인쇄 해상도)로 흑백 등의 필터를 굽습니다.
+          const bakedPrint = await requestSkiaBake(hrCrop.uri, hrCrop.width, hrCrop.height, matrix, {
+            maxSide: 2048,
+            overlayColor: activeFilter.overlayColor,
+            overlayOpacity: activeFilter.overlayOpacity
+          });
+
+          if (bakedPrint) {
+            finalPrintUri = bakedPrint;     // 필터가 구워진 인쇄용 고화질 사진!
+            finalPreviewUri = bakedPrint;   // 미리보기도 이걸로 씁니다.
+          }
+        } catch (e) {
+          console.error("Filter bake error:", e);
+        }
       }
 
       await updatePhoto(idx, {
         edits: {
           crop: finalCropUI,
           filterId: currentUi.filterId,
-          filterParams: { matrix, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity },
+          filterParams: {
+            matrix,
+            overlayColor: activeFilter.overlayColor || null,
+            overlayOpacity: activeFilter.overlayOpacity || 0
+          },
           ui: { ...currentUi, crop: currentCrop },
-          committed: { cropPx: finalCropSRC as any, filterId: currentUi.filterId, filterParams: { matrix } },
+          committed: {
+            cropRatio: cropRatio,
+            filterId: currentUi.filterId,
+            filterParams: { matrix }
+          },
         } as any,
-        output: { ...(photo.output || {}), previewUri: finalPreviewUri, viewUri: "" },
+        output: {
+          ...(photo.output || {}),
+          previewUri: finalPreviewUri || null,
+          viewUri: finalPreviewUri || null,
+          printUri: finalPrintUri // ⭐️ 필터가 있으면 여기서 구운 사진이, 원본이면 빈 문자열이 넘어갑니다.
+        },
       });
-
-      const myToken = bgTokenRef.current;
-
-      exportQueue.enqueue(async () => {
-        if (!isAliveRef.current || bgPausedRef.current || myToken !== bgTokenRef.current) return;
-        try {
-          const fileInfo = await manipulateAsync(photo.uri, [], { format: SaveFormat.JPEG });
-          const fW = fileInfo.width; const fH = fileInfo.height;
-          const sX = fW / (uiW || 1); const sY = fH / (uiH || 1);
-          let cX = Math.floor(finalCropUI.x * sX); let cY = Math.floor(finalCropUI.y * sY);
-          let cW = Math.floor(finalCropUI.width * sX); let cH = Math.floor(finalCropUI.height * sY);
-          cX = Math.max(0, Math.min(cX, fW - 1)); cY = Math.max(0, Math.min(cY, fH - 1));
-          const cSz = Math.min(cW, cH, fW - cX, fH - cY);
-
-          const viewTarget = 2400;
-          const viewRes = await manipulateAsync(
-            photo.uri,
-            [{ crop: { originX: cX, originY: cY, width: cSz, height: cSz } }, { resize: { width: viewTarget, height: viewTarget } }],
-            { compress: 0.98, format: SaveFormat.JPEG }
-          );
-
-          let finalView = viewRes.uri;
-
-          if (currentUi.filterId !== "original") {
-            const bakedView = await requestSkiaBake(finalView, viewRes.width || viewTarget, viewRes.height || viewTarget, matrix,
-              { maxSide: 2400, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity });
-            if (bakedView) finalView = bakedView;
-          }
-
-          const lPhoto = (photosRef.current?.[idx] as any) || {};
-          await updatePhoto(idx, {
-            output: {
-              ...(lPhoto.output || {}),
-              viewUri: finalView,
-              printUri: finalView
-            }
-          });
-
-        } catch (e) { console.error(e); }
-      }, `View-${idx}`);
 
       if (idx < photos.length - 1) {
         const nextIdx = idx + 1;
@@ -610,7 +603,6 @@ export default function EditorScreen() {
         setFrozenSnapshot(null);
         setIsProcessing(false);
 
-        // ✨ [핵심 수정 2] 다음 사진으로 넘어가기 '직전'에 다음 사진의 UI를 미리 세팅 (크롭 튐 방지)
         const nextPhoto = photos[nextIdx] as any;
         const savedUi = nextPhoto?.edits?.ui;
         if (savedUi) {
@@ -635,7 +627,7 @@ export default function EditorScreen() {
       setFrozenSnapshot(null);
       setIsProcessing(false);
       isExporting.current = false;
-      Alert.alert("Error", "Failed.");
+      Alert.alert("Error", "Failed to process image.");
     }
   };
 
@@ -689,10 +681,7 @@ export default function EditorScreen() {
         <Text style={{ textAlign: 'center', color: '#666', marginBottom: 20 }}>
           The web version is for preview and checkout testing. Please download our mobile app for full photo editing features.
         </Text>
-        <Pressable
-          style={styles.primaryBtn}
-          onPress={() => router.push("/create/checkout")}
-        >
+        <Pressable style={styles.primaryBtn} onPress={() => router.push("/create/checkout")}>
           <Text style={styles.primaryBtnText}>Skip to Checkout</Text>
         </Pressable>
       </View>
@@ -704,12 +693,7 @@ export default function EditorScreen() {
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
-        <TopBarRN
-          current={currentIndex + 1}
-          total={photos.length}
-          onBack={handleBack}
-          onNext={handleNext}
-        />
+        <TopBarRN current={currentIndex + 1} total={photos.length} onBack={handleBack} onNext={handleNext} />
       </View>
 
       <View
@@ -739,27 +723,20 @@ export default function EditorScreen() {
             </Animated.View>
           )}
 
-          <Animated.View
-            pointerEvents={isSwitchingPhoto ? "none" : "auto"}
-            style={[StyleSheet.absoluteFill, incomingStyle]}
-          >
+          <Animated.View pointerEvents={isSwitchingPhoto ? "none" : "auto"} style={[StyleSheet.absoluteFill, incomingStyle]}>
             {viewportDim && (frozenSnapshot || incomingDisplayResolved) ? (
               <CropFrameRN
-                // ✨ [핵심 수정 3] key를 고정 문자열로 바꿔서 인덱스가 바뀌어도 에디터가 파괴되지 않게 방어!
                 key="main-crop-frame-fixed"
                 ref={cropRef}
-
                 imageSrc={frozenSnapshot?.uri || incomingDisplayResolved?.uri}
                 imageWidth={incomingDisplayResolved?.width || 1000}
                 imageHeight={incomingDisplayResolved?.height || 1000}
                 containerWidth={viewportDim.width}
                 containerHeight={viewportDim.height}
-
                 crop={frozenSnapshot?.crop || currentUi.crop}
                 matrix={frozenSnapshot?.matrix || activeMatrix}
                 overlayColor={frozenSnapshot?.overlayColor || activeFilterObj.overlayColor}
                 overlayOpacity={frozenSnapshot?.overlayOpacity || activeFilterObj.overlayOpacity}
-
                 onChange={(newCrop: any) => {
                   if (frozenSnapshot) return;
                   hintOpacity.value = withTiming(0, { duration: 150 });
@@ -782,10 +759,7 @@ export default function EditorScreen() {
           </Animated.View>
 
           {!isSwitchingPhoto && viewportDim && (
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.cropHintWrapper, hintStyle]}
-            >
+            <Animated.View pointerEvents="none" style={[styles.cropHintWrapper, hintStyle]}>
               <View style={styles.cropHintBadge}>
                 <Feather name="crop" size={16} color="#fff" />
                 <Text style={styles.cropHintText}>{cropHintText}</Text>
@@ -794,27 +768,11 @@ export default function EditorScreen() {
           )}
         </View>
 
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            width: 10,
-            height: 10,
-            top: '50%',
-            left: '50%',
-            opacity: 0.01,
-            zIndex: -1,
-          }}
-        >
+        <View pointerEvents="none" style={{ position: "absolute", width: 10, height: 10, top: '50%', left: '50%', opacity: 0.01, zIndex: -1 }}>
           {bakeJob?.uri ? (
             <FilteredImageSkia
-              ref={filteredCanvasRef}
-              uri={bakeJob.uri}
-              width={bakeJob.w}
-              height={bakeJob.h}
-              matrix={bakeJob.matrix}
-              overlayColor={bakeJob.overlayColor}
-              overlayOpacity={bakeJob.overlayOpacity}
+              ref={filteredCanvasRef} uri={bakeJob.uri} width={bakeJob.w} height={bakeJob.h}
+              matrix={bakeJob.matrix} overlayColor={bakeJob.overlayColor} overlayOpacity={bakeJob.overlayOpacity}
             />
           ) : null}
         </View>
@@ -831,22 +789,11 @@ export default function EditorScreen() {
         <FilterStripRN currentFilter={activeFilterObj} imageSrc={thumbnailUri} onSelect={onSelectFilter} />
         <View style={styles.primaryBtnContainer}>
           <Pressable
-            style={[
-              styles.primaryBtn,
-              (!viewportDim || !activeResolved || isSwitchingPhoto || isProcessing) && { opacity: 0.5, backgroundColor: '#888' },
-            ]}
+            style={[styles.primaryBtn, (!viewportDim || !activeResolved || isSwitchingPhoto || isProcessing) && { opacity: 0.5, backgroundColor: '#888' }]}
             onPress={handleNext}
             disabled={!viewportDim || !activeResolved || isSwitchingPhoto || isExporting.current || isProcessing}
           >
-            {isProcessing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryBtnText}>
-                {currentIndex === photos.length - 1
-                  ? ((t as any).saveCheckout || "Save & Checkout")
-                  : ((t as any).nextPhoto || "Next Photo")}
-              </Text>
-            )}
+            {isProcessing ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>{currentIndex === photos.length - 1 ? ((t as any).saveCheckout || "Save & Checkout") : ((t as any).nextPhoto || "Next Photo")}</Text>}
           </Pressable>
         </View>
       </View>
@@ -857,52 +804,13 @@ export default function EditorScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
-  cropHintWrapper: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 100,
-  },
-  cropHintBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 24,
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  cropHintText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  cropHintWrapper: { position: 'absolute', top: 40, left: 0, right: 0, alignItems: 'center', zIndex: 100 },
+  cropHintBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, gap: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
+  cropHintText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
   primaryBtnContainer: { padding: 16, alignItems: "center" },
-  primaryBtn: {
-    width: "100%",
-    maxWidth: 340,
-    height: 52,
-    backgroundColor: colors.ink,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 6,
-  },
+  primaryBtn: { width: "100%", maxWidth: 340, height: 52, backgroundColor: colors.ink, borderRadius: 26, alignItems: "center", justifyContent: "center", elevation: 6 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  fullLoading: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    zIndex: 9999,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  fullLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.8)", zIndex: 9999, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 15, fontWeight: "700", color: "#111" }
 });

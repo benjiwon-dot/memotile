@@ -1,4 +1,3 @@
-// src/screens/CheckoutStepTwoScreen.tsx
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
     View,
@@ -96,7 +95,7 @@ export default function CheckoutStepTwoScreen() {
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-    const [progressCount, setProgressCount] = useState(0);
+    const [progressCount, setProgressCount] = useState(0); // ⭐️ 초기값 0으로 시작
 
     const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
 
@@ -181,7 +180,6 @@ export default function CheckoutStepTwoScreen() {
     const BASE_PRICE_USD = 6.45;
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    // ✨ [수정됨] 퍼센트(%) 및 고정 금액 할인을 프론트에서 정확히 계산하도록 수정
     const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
     const subtotal = Number(rawSubtotal.toFixed(2));
 
@@ -200,7 +198,6 @@ export default function CheckoutStepTwoScreen() {
     const shippingFee = 0;
     const total = Math.max(0, Number((subtotal - discount + shippingFee).toFixed(2)));
 
-    // ✨ [수정됨] USD도 동일하게 계산 적용
     const rawSubtotalUSD = safePhotosCount * BASE_PRICE_USD;
     const subtotalUSD = Number(rawSubtotalUSD.toFixed(2));
     let discountRatio = 0;
@@ -216,7 +213,6 @@ export default function CheckoutStepTwoScreen() {
         try {
             const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotal);
 
-            // UI 스르륵 전환 애니메이션
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
 
@@ -424,14 +420,7 @@ export default function CheckoutStepTwoScreen() {
 
         setIsCreatingOrder(true);
         setIsVerifyingPayment(false);
-        setProgressCount(1);
-
-        const progressTimer = setInterval(() => {
-            setProgressCount(prev => {
-                if (prev < safePhotosCount - 1) return prev + 1;
-                return prev;
-            });
-        }, 1200);
+        setProgressCount(0); // ⭐️ 가짜 타이머 대신 0부터 시작합니다.
 
         try {
             await exportQueue.waitForIdle(60000);
@@ -464,9 +453,10 @@ export default function CheckoutStepTwoScreen() {
                 locale,
                 currency: CURRENCY_CODE,
                 instagram: formData.instagram,
+                onProgress: (current) => {
+                    setProgressCount(current); // ⭐️ 진짜 사진이 올라갈 때마다 UI 업데이트
+                }
             });
-
-            clearInterval(progressTimer);
 
             // ✨ 정확한 0원 체크
             const isFreeOrder = provider === "DEV_FREE" || provider === "PROMO_FREE" || total <= 0;
@@ -485,7 +475,6 @@ export default function CheckoutStepTwoScreen() {
 
         } catch (e: any) {
             console.error("Failed to place order:", e);
-            clearInterval(progressTimer);
             setIsCreatingOrder(false);
             Alert.alert("Order failed", e?.message || "Failed to place order.");
         }
@@ -500,18 +489,18 @@ export default function CheckoutStepTwoScreen() {
 
     const getProgressTitle = () => {
         if (isVerifyingPayment) {
-            return safeLocale === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment...";
+            return (t as any)?.["verifyingPayment"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment...");
         }
-        return safeLocale === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...";
+        return (t as any)?.["preparingMemories"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...");
     };
 
     const getProgressSubtitle = () => {
         if (isVerifyingPayment) {
-            return safeLocale === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment...";
+            return (t as any)?.["pleaseWait"] || (safeLocale?.toUpperCase() === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment...");
         }
-        return safeLocale === "TH"
-            ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nกรุณาอย่าปิดแอปพลิเคชัน"
-            : "Optimizing high-resolution tiles for the best print quality.\nPlease keep the app open.";
+        return (t as any)?.["optimizingImages"] || (safeLocale?.toUpperCase() === "TH"
+            ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nใช้เวลาสักครู่ กรุณาอย่าปิดแอปพลิเคชัน"
+            : "Optimizing high-resolution tiles for the best print quality.\nThis may take a few minutes. Please keep the app open.");
     };
 
     return (

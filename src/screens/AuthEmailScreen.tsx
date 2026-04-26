@@ -45,6 +45,13 @@ const showAlert = (title: string, message?: string) => {
     }
 };
 
+// 💡 테스트 계정 목록을 배열로 관리 (유지보수 편의성)
+const TEST_ACCOUNTS = [
+    "test_apple@memotile.com",
+    "test_android@memotile.com",
+    "test_user@memotile.com"
+];
+
 export default function AuthEmailScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -67,7 +74,9 @@ export default function AuthEmailScreen() {
         const unsub = auth.onAuthStateChanged((user) => {
             if (user && !navHandledRef.current) {
                 const isOAuth = user.providerData.some(p => p.providerId === 'google.com' || p.providerId === 'apple.com');
-                const isTestAccount = user.email === "test_user@memotile.com";
+
+                // 💡 수정됨: 배열에 포함된 이메일인지 확인
+                const isTestAccount = user.email ? TEST_ACCOUNTS.includes(user.email) : false;
 
                 if (isOAuth || user.emailVerified || isTestAccount) {
                     navHandledRef.current = true;
@@ -120,9 +129,14 @@ export default function AuthEmailScreen() {
                 setIsSignUp(false);
             } else {
                 const { user } = await signInWithEmail(emailTrim, passwordTrim);
-                const isTestAccount = user.email === "test_user@memotile.com";
+
+                // 💡 수정됨: 배열에 포함된 이메일인지 확인
+                const isTestAccount = user.email ? TEST_ACCOUNTS.includes(user.email) : false;
 
                 if (!user.emailVerified && !isTestAccount) {
+                    // 💡 핵심 버그 수정: 인증 안 된 유저는 Firebase 세션 강제 종료 (유령 로그인 방지)
+                    await auth.signOut();
+
                     if (cooldown > 0) {
                         showAlert(
                             (t as any)['auth.verifyCheckInboxTitle'] || "Verify your email",

@@ -1,4 +1,3 @@
-// src/services/orders.ts
 import {
     collection,
     doc,
@@ -17,6 +16,7 @@ import {
 
 import { onAuthStateChanged } from "firebase/auth";
 import { Platform } from "react-native";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
 import { db, auth } from "../lib/firebase";
 import { OrderDoc, OrderItem } from "../types/order";
@@ -48,11 +48,6 @@ function safeCustomerFolder(shipping: any, uid: string) {
     const uid6 = (uid || "").slice(0, 6);
     if (base !== "customer") return tail4 ? `${base}-${tail4}` : `${base}-${uid6 || "u"}`;
     return tail4 ? `customer-${tail4}` : `customer-${uid6 || "u"}`;
-}
-
-function getSourceUri(p: any): string | null {
-    const u = p?.output?.sourceUri || p?.originalUri || p?.uri || null;
-    return typeof u === "string" && u.length > 0 ? u : null;
 }
 
 async function ensureAuthed(): Promise<string> {
@@ -95,8 +90,9 @@ export async function createDevOrder(params: {
     locale?: string;
     currency?: string;
     instagram?: string;
+    onProgress?: (current: number, total: number) => void;
 }): Promise<string> {
-    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram } = params;
+    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram, onProgress } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
@@ -111,7 +107,6 @@ export async function createDevOrder(params: {
 
     const safePhotosCount = Array.isArray(photos) && photos.length > 0 ? photos.length : 1;
 
-    // 1. 공통 주문 데이터 저장
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -136,7 +131,7 @@ export async function createDevOrder(params: {
         paymentMethod: "CARD",
         locale,
         instagram,
-        previewImages: [] // 초기화
+        previewImages: []
     };
 
     if (promoCode) rawOrderData.promo = promoCode;
@@ -150,91 +145,120 @@ export async function createDevOrder(params: {
         updatedAt: serverTimestamp()
     }, { merge: true });
 
-
-    // =========================================================
-    // 2. 📸 사진 업로드 로직 (웹과 앱을 완벽하게 분리)
-    // =========================================================
     try {
         if (Platform.OS === 'web') {
-            // 🌐 [WEB 전용]: 심사용. 에디터를 안 거치므로 고른 원본(p.uri)을 Storage에 바로 업로드!
             const webPhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/600x600.png?text=Test+Order" }];
+            const results: string[] = [];
 
-            const uploadTasks = webPhotos.map(async (p, i) => {
+            for (let i = 0; i < webPhotos.length; i++) {
+                const p = webPhotos[i];
                 const targetUri = p.uri || p.originalUri || "https://via.placeholder.com/600";
 
-                // 이미 인터넷 주소면 스토리지 업로드 건너뜀
                 if (targetUri.startsWith("http")) {
                     const itemRef = doc(collection(db, "orders", orderId, "items"));
                     await setDoc(itemRef, stripUndefined({
                         index: i, quantity: p.quantity || 1, filterId: "original",
                         unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
-                        size: "20x20", assets: { sourceUrl: targetUri, viewUrl: targetUri, printUrl: targetUri },
+                        size: "20x20", assets: { printUrl: targetUri },
                         printUrl: targetUri, previewUrl: targetUri, createdAt: serverTimestamp(),
                     }));
-                    return targetUri;
+                    results.push(targetUri);
+                    if (onProgress) onProgress(i + 1, webPhotos.length);
+                    continue;
                 }
 
-                // 브라우저에서 고른 사진(blob)이면 Firebase Storage에 업로드
-                const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
-                const uploadRes = await uploadFileUriToStorage(viewPath, targetUri);
+                const printPath = `${storageBasePath}/items/${i}_print.jpg`;
+                const uploadRes = await uploadFileUriToStorage(printPath, targetUri);
 
                 const itemRef = doc(collection(db, "orders", orderId, "items"));
                 await setDoc(itemRef, stripUndefined({
                     index: i, quantity: p.quantity || 1, filterId: "original",
                     unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
-                    size: "20x20", assets: { sourcePath: viewPath, sourceUrl: uploadRes.downloadUrl, viewPath: viewPath, viewUrl: uploadRes.downloadUrl, printPath: viewPath, printUrl: uploadRes.downloadUrl },
-                    printUrl: uploadRes.downloadUrl, previewUrl: uploadRes.downloadUrl, createdAt: serverTimestamp(),
+                    size: "20x20",
+                    assets: { printPath: printPath, printUrl: uploadRes.downloadUrl },
+                    printUrl: uploadRes.downloadUrl,
+                    previewUrl: uploadRes.downloadUrl,
+                    createdAt: serverTimestamp(),
                 }));
-                return uploadRes.downloadUrl; // 썸네일 URL 리턴
-            });
+                results.push(uploadRes.downloadUrl);
+                if (onProgress) onProgress(i + 1, webPhotos.length);
+            }
 
-            const results = await Promise.all(uploadTasks);
             const previewImages = results.filter((url): url is string => url !== null).slice(0, 5);
             if (previewImages.length > 0) await updateDoc(orderRef, { previewImages, updatedAt: serverTimestamp() });
 
         } else {
-            // 📱 [APP 전용]: 실제 서비스용. 에디터를 거친 결과물(p.output.viewUri)을 엄격하게 업로드!
+            // 📱 [APP 전용: 하이브리드 엔진]
             const appPhotos = Array.isArray(photos) && photos.length > 0 ? photos : [];
+            const results: string[] = [];
 
-            const uploadTasks = appPhotos.map(async (p, i) => {
-                const viewUri = p?.output?.viewUri || p?.uri;
-                if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
+            for (let i = 0; i < appPhotos.length; i++) {
+                const p = appPhotos[i];
 
-                const printUri = p?.output?.printUri || viewUri;
-                const sourceUri = getSourceUri(p) || viewUri;
+                // ⭐️ 1. 에디터가 필터를 2048px로 정성껏 구워서 보내줬는지 확인! (있으면 이거 그대로 씀)
+                let targetPrintUri = p?.output?.printUri;
 
-                const viewPath = `${storageBasePath}/items/${i}_view.jpg`;
-                const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
+                const cropRatio = p?.edits?.committed?.cropRatio;
+                const originalUri = p?.originalUri || p?.sourceUri || p?.uri;
+
+                // ⭐️ 2. 에디터가 필터 안 구워줬네? (일반 사진임) -> 그럼 여기서 4K 쌩원본 불러와서 비율대로 자름!
+                if (!targetPrintUri && cropRatio && originalUri) {
+                    try {
+                        const trueMeta = await manipulateAsync(originalUri, []);
+                        let oX = Math.floor(trueMeta.width * cropRatio.x);
+                        let oY = Math.floor(trueMeta.height * cropRatio.y);
+                        let cW = Math.floor(trueMeta.width * cropRatio.w);
+                        let cH = Math.floor(trueMeta.height * cropRatio.h);
+
+                        oX = Math.max(0, Math.min(oX, trueMeta.width - 1));
+                        oY = Math.max(0, Math.min(oY, trueMeta.height - 1));
+                        cW = Math.max(1, Math.min(cW, trueMeta.width - oX));
+                        cH = Math.max(1, Math.min(cH, trueMeta.height - oY));
+
+                        const croppedRes = await manipulateAsync(
+                            originalUri,
+                            [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],
+                            { compress: 0.98, format: SaveFormat.JPEG }
+                        );
+                        targetPrintUri = croppedRes.uri;
+                    } catch (err) {
+                        console.error(`[4K Crop Error] Index ${i}:`, err);
+                        targetPrintUri = originalUri;
+                    }
+                } else if (!targetPrintUri) {
+                    // 최후의 보루
+                    targetPrintUri = originalUri;
+                }
+
+                // ⭐️ 3. 준비된 사진(필터 구워진 거 OR 방금 4K로 자른 거)을 Storage에 업로드!
                 const printPath = `${storageBasePath}/items/${i}_print.jpg`;
-
-                const [sourceRes, viewRes, printRes] = await Promise.all([
-                    uploadFileUriToStorage(sourcePath, sourceUri),
-                    uploadFileUriToStorage(viewPath, viewUri),
-                    uploadFileUriToStorage(printPath, printUri),
-                ]);
+                const printRes = await uploadFileUriToStorage(printPath, targetPrintUri);
 
                 const itemRef = doc(collection(db, "orders", orderId, "items"));
                 await setDoc(itemRef, stripUndefined({
                     index: i, quantity: p.quantity || 1, filterId: p.edits?.filterId || "original",
-                    filterParams: p.edits?.committed?.filterParams || null, cropPx: p.edits?.committed?.cropPx || null,
+                    filterParams: p.edits?.committed?.filterParams || null,
                     unitPrice: totals.subtotal / safePhotosCount, lineTotal: (totals.subtotal / safePhotosCount) * (p.quantity || 1),
-                    size: "20x20", assets: { sourcePath: sourceRes.path, sourceUrl: sourceRes.downloadUrl, viewPath: viewRes.path, viewUrl: viewRes.downloadUrl, printPath: printRes.path, printUrl: printRes.downloadUrl },
-                    printUrl: printRes.downloadUrl, previewUrl: viewRes.downloadUrl, createdAt: serverTimestamp(),
+                    size: "20x20",
+                    assets: { printPath: printRes.path, printUrl: printRes.downloadUrl },
+                    printUrl: printRes.downloadUrl,
+                    previewUrl: printRes.downloadUrl, // 엑박 방지: 인터넷 주소 그대로 삽입
+                    createdAt: serverTimestamp(),
                 }));
-                return viewRes.downloadUrl; // 썸네일 URL 리턴
-            });
+                results.push(printRes.downloadUrl);
 
-            const results = await Promise.all(uploadTasks);
+                if (onProgress) onProgress(i + 1, appPhotos.length);
+            }
+
             const previewImages = results.filter((url): url is string => url !== null).slice(0, 5);
             if (previewImages.length > 0) await updateDoc(orderRef, { previewImages, updatedAt: serverTimestamp() });
         }
     } catch (err) {
         console.error("Upload Error:", err);
+        throw err;
     }
 
-    // =========================================================
-    // ✨ [추가됨] 주문 완료 시: 쿠폰 사용 횟수 진짜 차감하기
-    // =========================================================
+    // 3. 쿠폰 처리 로직
     if (promoCode && promoCode.code) {
         try {
             const promoRef = doc(db, 'promoCodes', promoCode.code.toUpperCase());
@@ -244,33 +268,19 @@ export async function createDevOrder(params: {
                 const promoSnap = await tx.get(promoRef);
                 const redSnap = await tx.get(redemptionRef);
 
-                // 전체 쿠폰의 redeemedCount +1
                 if (promoSnap.exists()) {
                     const currentTotal = promoSnap.data().redeemedCount || 0;
                     tx.update(promoRef, { redeemedCount: currentTotal + 1 });
                 }
-
-                // 내 계정의 usageCount +1
                 if (redSnap.exists()) {
                     const currentUsage = redSnap.data().usageCount || 0;
-                    tx.update(redemptionRef, {
-                        usageCount: currentUsage + 1,
-                        lastUsedAt: serverTimestamp()
-                    });
+                    tx.update(redemptionRef, { usageCount: currentUsage + 1, lastUsedAt: serverTimestamp() });
                 } else {
-                    tx.set(redemptionRef, {
-                        code: promoCode.code.toUpperCase(),
-                        uid: authedUid,
-                        usageCount: 1,
-                        createdAt: serverTimestamp(),
-                        lastUsedAt: serverTimestamp()
-                    });
+                    tx.set(redemptionRef, { code: promoCode.code.toUpperCase(), uid: authedUid, usageCount: 1, createdAt: serverTimestamp(), lastUsedAt: serverTimestamp() });
                 }
             });
-            console.log(`[Checkout] Promo code ${promoCode.code} successfully redeemed.`);
         } catch (e) {
-            console.error("[Checkout] Failed to redeem promo code after order creation:", e);
-            // 쿠폰 횟수 깎기에 실패하더라도 이미 생성된 주문을 막지는 않음 (고객 경험 보호)
+            console.error("[Checkout] Failed to redeem promo code:", e);
         }
     }
 

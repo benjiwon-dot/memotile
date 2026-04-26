@@ -22,7 +22,6 @@ import {
     Link as LinkIcon,
 } from "lucide-react";
 
-// ✨ [수정] getDoc 추가
 import { getFirestore, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -34,6 +33,7 @@ import { app } from "@/lib/firebase";
 
 const isWeb = typeof window !== "undefined";
 
+// ⭐️ 핵심 수정 부위: 미리보기 파일이 없으면 4K 인쇄용 파일(printUrl)을 썸네일로 사용!
 function pickAdminThumb(item: any): string | null {
     const uri =
         item?.assets?.previewUrl ||
@@ -42,6 +42,8 @@ function pickAdminThumb(item: any): string | null {
         item?.output?.viewUri ||
         item?.previewUrl ||
         item?.previewUri ||
+        item?.printUrl ||         // 👈 추가됨
+        item?.assets?.printUrl || // 👈 추가됨
         null;
 
     return typeof uri === "string" && uri.length > 8 ? uri : null;
@@ -286,7 +288,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         URL.revokeObjectURL(url);
     };
 
-    // ✨ [수정] 푸시 알림 발송 함수
     const sendOrderPushNotification = async (userId: string, newStatus: string) => {
         console.log(`[Push] Attempting to find token for User: ${userId}`);
         try {
@@ -346,7 +347,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✨ [수정] 유저 ID 찾기 강화 버전
     const handleUpdateStatus = async (status: string) => {
         if (!order) return;
         setBusy(true);
@@ -357,7 +357,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             await fn({ orderId, status });
 
             if (status === "processing" || status === "shipping") {
-                // 🔍 다양한 경로로 유저 ID 검색
                 const customerId =
                     (order as any).userId ||
                     (order as any).uid ||

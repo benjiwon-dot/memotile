@@ -1,4 +1,3 @@
-// src/utils/storageUpload.ts
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -89,7 +88,7 @@ async function fetchBlobWithRetry(uri: string, tries = 6) {
 }
 
 export async function uploadFileUriToStorage(path: string, fileUri: string) {
-    console.log("🟦 [upload] enter", { path, fileUri });
+    console.log("🟦 [upload] enter", { path });
 
     if (Platform.OS === 'web') {
         try {
@@ -113,32 +112,14 @@ export async function uploadFileUriToStorage(path: string, fileUri: string) {
     }
 
     let uploadUri = normalizeFileUri(fileUri);
-
     const ext = guessExt(fileUri);
     const likelyNotJpeg = ext && !["jpg", "jpeg"].includes(ext);
 
     try {
-        if (
-            likelyNotJpeg ||
-            fileUri.startsWith("ph://") ||
-            fileUri.startsWith("assets-library://")
-        ) {
-            console.log("🟦 [upload] converting to JPEG", {
-                path,
-                ext,
-                uriPrefix: fileUri.slice(0, 20),
-                platform: Platform.OS,
-            });
-
-            const converted = await manipulateAsync(
-                fileUri,
-                [],
-                // ⭐️ 변경포인트: 변환 시에도 고화질 인쇄를 위해 품질을 0.98로 상향
-                { compress: 0.98, format: SaveFormat.JPEG }
-            );
-
+        if (likelyNotJpeg || fileUri.startsWith("ph://") || fileUri.startsWith("assets-library://")) {
+            console.log("🟦 [upload] converting to JPEG", { path });
+            const converted = await manipulateAsync(fileUri, [], { compress: 0.98, format: SaveFormat.JPEG });
             uploadUri = normalizeFileUri(converted.uri);
-
             console.log("🟩 [upload] converted", { path });
         }
     } catch (e) {
@@ -146,23 +127,16 @@ export async function uploadFileUriToStorage(path: string, fileUri: string) {
         uploadUri = normalizeFileUri(fileUri);
     }
 
-    console.log("🟦 [upload] before waitForFileStable", { path });
     await waitForFileStable(uploadUri);
-    console.log("🟩 [upload] after waitForFileStable", { path });
 
-    console.log("🟦 [upload] before fetchBlobWithRetry", { path });
+    // 순차 처리를 통해 Blob(찰흙)이 한 번에 하나씩만 메모리에 올라갑니다!
     const blob = await fetchBlobWithRetry(uploadUri, 6);
-    // @ts-ignore
-    console.log("🟩 [upload] blob ok", { path, size: (blob as any)?.size ?? null });
 
     const storageRef = ref(storage, path);
-
-    console.log("📦 [upload] Before uploadBytes", { path });
     await uploadBytes(storageRef, blob, {
         cacheControl: "public,max-age=31536000",
         contentType: "image/jpeg",
     });
-    console.log("✅ [upload] After uploadBytes", { path });
 
     const downloadUrl = await getDownloadURL(storageRef);
     console.log("✅ [upload] done", { path });

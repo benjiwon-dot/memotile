@@ -59,10 +59,15 @@ export const signInWithGoogleIdToken = async (idToken: string): Promise<UserCred
         // 기존 정상 로그인 처리
         return await signInWithCredential(auth, credential);
     } catch (error: any) {
-        // 🔥 심사역 비정상 테스트(캐시 꼬임) 방어선
+        // 🔥 핵심 수술 부위: 이미 가입된 구글 계정이 익명 계정과 충돌(Link 실패)할 때 발생하는 에러 방어
         if (error.code === 'auth/duplicate-raw-id' || error.code === 'auth/credential-already-in-use') {
-            console.log("⚠️ [GoogleAuth] 심사역 중복 로그인 감지 -> 정상 로그인으로 간주하고 패스");
-            if (auth.currentUser) return { user: auth.currentUser }; // 앱 뻗지 않게 강제 성공 처리
+            console.log("⚠️ [GoogleAuth] 계정 충돌 감지 -> 기존 익명 계정 로그아웃 후 진짜 구글 계정으로 강제 로그인");
+
+            // 1. 방해물이 되는 현재 껍데기 세션(익명 계정)을 끊어버립니다.
+            await auth.signOut();
+
+            // 2. 에러창을 띄우지 않고 묻지도 따지지도 않고 그 구글 계정으로 다이렉트 로그인 시킵니다.
+            return await signInWithCredential(auth, credential);
         }
 
         // 진짜 에러는 그대로 던짐
