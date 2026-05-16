@@ -18,9 +18,10 @@ import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 
-// Firebase / Auth
+// Firebase / Auth / Firestore
 import { auth } from "../lib/firebase";
 import { User, GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { doc, getDoc, getFirestore } from "firebase/firestore"; // ✨ Firestore 추가
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
 
 // ✨ Apple Auth Imports
@@ -97,7 +98,31 @@ export default function CheckoutStepOneScreen() {
     const [isWebLoggingIn, setIsWebLoggingIn] = useState(false);
     const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
 
-    const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
+    // ✨ Firebase에서 불러올 가격 (기본값 세팅으로 화면 깜빡임 방지)
+    const [pricePerTile, setPricePerTile] = useState<number>(locale === "TH" ? 300 : 8.85);
+
+    // ✨ Firebase Firestore 가격 불러오기 로직
+    useEffect(() => {
+        const fetchPrice = async () => {
+            try {
+                const db = getFirestore();
+                const docRef = doc(db, "config", "prices");
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const remotePrice = locale === "TH" ? data.price_thb : data.price_usd;
+                    setPricePerTile(remotePrice);
+                }
+            } catch (error) {
+                console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
+            }
+        };
+
+        fetchPrice();
+    }, [locale]);
+
+    const PRICE_PER_TILE = pricePerTile;
     const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
 
     const { promptAsync, isReady, isSigningIn, error: authError, response } = useGoogleAuthRequest();
@@ -133,7 +158,7 @@ export default function CheckoutStepOneScreen() {
         return unsub;
     }, []);
 
-    const subtotal = useMemo(() => safePhotos.length * PRICE_PER_TILE, [safePhotos.length, locale]);
+    const subtotal = useMemo(() => safePhotos.length * PRICE_PER_TILE, [safePhotos.length, PRICE_PER_TILE]);
     const total = subtotal;
 
     const handleGoogleLogin = async () => {

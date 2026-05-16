@@ -135,11 +135,12 @@ export default function Index() {
             }
         }
 
+        // ✨ 핵심 수정: iOS는 1 (기존과 동일), 안드로이드는 undefined로 설정하여 강제 압축 엔진 우회!
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsMultipleSelection: true,
             selectionLimit: 20,
-            quality: 1,
+            quality: Platform.OS === 'ios' ? 1 : undefined,
         });
 
         if (!result.canceled && result.assets?.length) {

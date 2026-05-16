@@ -8,6 +8,8 @@ import {
   Alert,
   Image as RNImage,
   Platform,
+  Dimensions,
+  PixelRatio,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -276,14 +278,42 @@ export default function EditorScreen() {
           inputUri = dest;
         }
 
-        const targetPreviewW = 1280;
-        const result = await manipulateAsync(
-          inputUri,
-          [{ resize: { width: targetPreviewW } }],
-          { compress: 0.9, format: SaveFormat.JPEG }
-        );
+        // ---------------------------------------------------------
+        // ✨ 애플(iOS) / 안드로이드(Android) 분리 처리 로직
+        // ---------------------------------------------------------
+        let info: ResolvedInfo;
 
-        const info: ResolvedInfo = { uri: result.uri, width: result.width, height: result.height };
+        if (Platform.OS === 'ios') {
+          // 🍎 애플: 기존에 잘 되던 로직 100% 유지 (절대 건드리지 않음)
+          const result = await manipulateAsync(
+            inputUri,
+            [{ resize: { width: 1280 } }],
+            { compress: 0.9, format: SaveFormat.JPEG }
+          );
+          info = { uri: result.uri, width: result.width, height: result.height };
+        } else {
+          // 🤖 안드로이드: Skia 화질 뭉개짐 완벽 방지 로직
+          const actualSize = await getImageSizeAsync(inputUri);
+          const MAX_SAFE_SIZE = 2560; // Skia가 OOM 없이 소화할 수 있는 안전한 고화질 한계치
+
+          // 사진이 2560px 이하라면, 안드로이드의 저품질 압축 엔진을 아예 거치지 않고 원본 그대로 패스!
+          if (actualSize.width <= MAX_SAFE_SIZE && actualSize.height <= MAX_SAFE_SIZE) {
+            info = { uri: inputUri, width: actualSize.width, height: actualSize.height };
+          } else {
+            // 원본이 너무 거대할 때만(OOM 위험) 비율을 유지하며 2560px로 축소
+            const scale = MAX_SAFE_SIZE / Math.max(actualSize.width, actualSize.height);
+            const targetW = Math.max(1, Math.round(actualSize.width * scale));
+
+            const result = await manipulateAsync(
+              inputUri,
+              [{ resize: { width: targetW } }],
+              // 🌟 JPEG 대신 무손실 PNG 포맷을 사용하여 안드로이드 특유의 압축 열화 완벽 차단
+              { compress: 1.0, format: SaveFormat.PNG }
+            );
+            info = { uri: result.uri, width: result.width, height: result.height };
+          }
+        }
+
         if (!alive) return;
 
         resolvedCache.current[uri] = info;
@@ -532,9 +562,8 @@ export default function EditorScreen() {
 
       const previewRes = await generatePreviewExport(currentPhotoUri, finalCropUI);
       let finalPreviewUri = previewRes.uri;
-      let finalPrintUri = ""; // ⭐️ 필터가 없으면 비워둡니다 (orders.ts에서 4K로 자르기 위함)
+      let finalPrintUri = "";
 
-      // ⭐️ 핵심: 필터를 골랐다면 앱이 죽지 않는 한도(2048px) 내에서 고화질 필터를 구워서 저장합니다!
       if (currentUi.filterId !== "original") {
         try {
           const originalSourceUri = photo.originalUri || photo.sourceUri || photo.uri;
@@ -545,14 +574,12 @@ export default function EditorScreen() {
           let cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
           let cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
 
-          // 원본에서 정확하게 크롭
           const hrCrop = await manipulateAsync(
             originalSourceUri,
             [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],
             { compress: 1, format: SaveFormat.JPEG }
           );
 
-          // Skia를 이용해 2048px(안전 인쇄 해상도)로 흑백 등의 필터를 굽습니다.
           const bakedPrint = await requestSkiaBake(hrCrop.uri, hrCrop.width, hrCrop.height, matrix, {
             maxSide: 2048,
             overlayColor: activeFilter.overlayColor,
@@ -560,8 +587,8 @@ export default function EditorScreen() {
           });
 
           if (bakedPrint) {
-            finalPrintUri = bakedPrint;     // 필터가 구워진 인쇄용 고화질 사진!
-            finalPreviewUri = bakedPrint;   // 미리보기도 이걸로 씁니다.
+            finalPrintUri = bakedPrint;
+            finalPreviewUri = bakedPrint;
           }
         } catch (e) {
           console.error("Filter bake error:", e);
@@ -588,7 +615,7 @@ export default function EditorScreen() {
           ...(photo.output || {}),
           previewUri: finalPreviewUri || null,
           viewUri: finalPreviewUri || null,
-          printUri: finalPrintUri // ⭐️ 필터가 있으면 여기서 구운 사진이, 원본이면 빈 문자열이 넘어갑니다.
+          printUri: finalPrintUri
         },
       });
 

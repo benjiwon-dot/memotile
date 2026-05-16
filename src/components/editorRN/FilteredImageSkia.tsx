@@ -8,6 +8,9 @@ import {
     Skia,
     useImage,
     useCanvasRef,
+    // ✨ [해결의 열쇠 1] 안드로이드 Skia 픽셀 깨짐을 막아주는 마법의 엔진
+    FilterMode,
+    MipmapMode
 } from "@shopify/react-native-skia";
 import { IDENTITY, type ColorMatrix as M } from "../../utils/colorMatrix";
 
@@ -70,14 +73,11 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
                 if (!img && uri) return null;
 
                 try {
-                    // ✅ [핵심 최적화] 기기 디스플레이 배율(3x 등) 뻥튀기 원천 차단!
-                    // 눈에 보이는 캔버스 캡처가 아닌, 메모리 상의 가상 도화지(Offscreen)에 W x H 정확한 사이즈로 그립니다.
                     const surface = Skia.Surface.Make(W, H);
 
                     if (surface) {
                         const canvas = surface.getCanvas();
 
-                        // fit="cover"와 동일한 비율 계산 로직
                         const imgW = img!.width();
                         const imgH = img!.height();
                         const scale = Math.max(W / imgW, H / imgH);
@@ -93,10 +93,8 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
                         );
                         const dstRect = Skia.XYWHRect(0, 0, W, H);
 
-                        // 필터 페인트를 묻혀서 정확한 사이즈로 그리기
                         canvas.drawImageRect(img!, srcRect, dstRect, imagePaint);
 
-                        // 오버레이 컬러가 있다면 그리기
                         if (overlayPaint) {
                             canvas.drawRect(dstRect, overlayPaint);
                         }
@@ -105,7 +103,6 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
                         return surface.makeImageSnapshot();
                     }
 
-                    // 만약 가상 도화지 생성이 실패하면 기존 방식(Fallback) 사용
                     return canvasRef.current?.makeImageSnapshot() || null;
                 } catch (e) {
                     console.warn("[FilteredImageSkia] Snapshot not ready yet, retrying...", e);
@@ -129,6 +126,8 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
                             height={H}
                             fit="cover"
                             paint={imagePaint}
+                            // ✨ [해결의 열쇠 2] 강제로 "고화질 스무딩" 옵션을 먹여서 계단 현상(자글자글)을 없앱니다!
+                            sampling={{ filter: FilterMode.Linear, mipmap: MipmapMode.Linear }}
                         />
                     ) : (
                         <Rect x={0} y={0} width={W} height={H} color="transparent" />

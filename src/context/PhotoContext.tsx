@@ -7,7 +7,7 @@ import React, {
     useState,
     ReactNode,
 } from "react";
-import { Platform } from "react-native";
+import { Platform, Dimensions, PixelRatio } from "react-native"; // ✨ Dimensions, PixelRatio 추가
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -134,6 +134,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const generationQueue = React.useRef<Set<string>>(new Set());
     const saveDraftTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // ✨ [핵심 수정됨] 모든 안드로이드 기기 화면 비율 1:1 자동 매칭
     const generatePreview = async (asset: ImagePickerAsset, index: number) => {
         const id = asset.assetId || asset.uri;
         if (generationQueue.current.has(id)) return;
@@ -143,6 +144,8 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         generationQueue.current.add(id);
         try {
             let inputUri = (asset as any).originalUri || asset.uri;
+            if (!inputUri) throw new Error("No input URI provided");
+
             if (typeof inputUri === "string" && inputUri.startsWith("content://")) {
                 const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
                 const dest = `${base}cache_org_${Date.now()}.jpg`;
@@ -150,16 +153,30 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 inputUri = dest;
             }
 
+            // ✨ 플랫폼별 다이나믹 최적화
+            const isIOS = Platform.OS === 'ios';
+            let previewW = 1280;
+            let previewCompress = 0.8;
+
+            if (!isIOS) {
+                // 안드로이드는 현재 켜진 기기의 화면 너비(픽셀 단위)를 실시간으로 가져옵니다.
+                const screenW = Dimensions.get('window').width;
+                const pr = PixelRatio.get();
+                // 1:1 매칭을 하되, 최신 폰의 과도한 메모리 점유(OOM)를 막기 위해 최대 1440px로 상한선(Cap)을 둡니다.
+                previewW = Math.min(Math.round(screenW * pr), 1440);
+                previewCompress = 1.0; // 뭉개짐을 완벽 방지하는 무손실
+            }
+
             const previewResult = await manipulateAsync(
                 inputUri,
-                [{ resize: { width: 1280 } }],
-                { compress: 0.9, format: SaveFormat.JPEG }
+                [{ resize: { width: previewW } }],
+                { compress: previewCompress, format: SaveFormat.JPEG }
             );
 
             const thumbResult = await manipulateAsync(
                 inputUri,
                 [{ resize: { width: 200 } }],
-                { compress: 0.7, format: SaveFormat.JPEG }
+                { compress: 0.6, format: SaveFormat.JPEG } // 썸네일은 작게 유지
             );
 
             setPhotosState((prev) => {
@@ -181,6 +198,8 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             console.warn("Background preview generation failed", e);
         } finally {
             generationQueue.current.delete(id);
+            // ✨ 한 장 처리 후 GC(가비지 컬렉터)가 일할 시간을 줌 (메모리 찌꺼기 청소)
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
     };
 
@@ -194,7 +213,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     const age = now - (draft.timestamp || 0);
                     const TTL = 48 * 3600 * 1000;
 
-                    // ✨ [핵심 방어 1] 만료되었거나, "사진이 0장인 빈 껍데기"면 아예 지워버리기!
                     if (age > TTL || !draft.photos || draft.photos.length === 0) {
                         await AsyncStorage.removeItem(DRAFT_KEY);
                         setHasDraft(false);
@@ -218,7 +236,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 try {
                     const usePhotos = override?.photos ?? photos;
 
-                    // ✨ [핵심 방어 2] 저장하려고 봤더니 사진이 0장이면? 빈 껍데기 만들지 말고 흔적 지우기!
                     if (!usePhotos || usePhotos.length === 0) {
                         await AsyncStorage.removeItem(DRAFT_KEY);
                         setHasDraft(false);
@@ -235,7 +252,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     };
 
                     if (Platform.OS === 'web') {
-                        console.warn("웹 브라우저 환경에서는 용량 초과 방지를 위해 AsyncStorage 저장을 생략합니다.");
                         setHasDraft(true);
                         resolve();
                         return;
@@ -245,7 +261,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     setHasDraft(true);
                     resolve();
                 } catch (e) {
-                    console.warn("임시 저장 실패 (용량 초과 등):", e);
+                    console.warn("임시 저장 실패:", e);
                     resolve();
                 }
             }, 250);
@@ -291,7 +307,15 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             setPhotosState(restored as any);
             setCurrentIndexState(draft.currentIndex || 0);
             setHasDraft(true);
-            restored.slice(0, 5).forEach((p, i) => generatePreview(p as any, i));
+
+            // ✨ 직렬화 처리
+            const toProcess = restored.slice(0, 5);
+            (async () => {
+                for (let i = 0; i < toProcess.length; i++) {
+                    await generatePreview(toProcess[i] as any, i);
+                }
+            })();
+
             return true;
         } catch (e) {
             console.error("Failed to load draft", e);
@@ -307,7 +331,14 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         if (opts?.persist) {
             await saveDraft(opts.step ?? "select", { photos: normalized, currentIndex: 0 });
         }
-        normalized.slice(0, 5).forEach((p, i) => generatePreview(p, i));
+
+        // ✨ 직렬화 처리
+        const toProcess = normalized.slice(0, 5);
+        (async () => {
+            for (let i = 0; i < toProcess.length; i++) {
+                await generatePreview(toProcess[i], i);
+            }
+        })();
     };
 
     const addPhotos: PhotoContextType["addPhotos"] = async (newPhotos, opts) => {
@@ -316,11 +347,20 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             const existing = new Set(prev.map((p) => (p as any).originalUri || p.assetId || p.uri));
             const filtered = normalizedNew.filter((p) => !existing.has((p as any).originalUri || p.assetId || p.uri));
             const merged = [...prev, ...filtered];
+
             if (opts?.persist) {
                 saveDraft(opts.step ?? "select", { photos: merged, currentIndex });
             }
+
             const startIdx = prev.length;
-            filtered.forEach((p, i) => generatePreview(p, startIdx + i));
+
+            // ✨ 비동기 직렬화 처리
+            (async () => {
+                for (let i = 0; i < filtered.length; i++) {
+                    await generatePreview(filtered[i], startIdx + i);
+                }
+            })();
+
             return merged;
         });
     };

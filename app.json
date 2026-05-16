@@ -1,118 +1,121 @@
 {
-  "expo": {
-    "name": "MemoTile",
-    "slug": "memotile-app-anti",
-    "version": "1.1.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
-    "scheme": "memotile",
-    "plugins": [
-      "expo-router",
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "useFrameworks": "static",
-            "buildReactNativeFromSource": false
-          }
-        }
-      ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
-          "cameraPermission": "We need camera access to let you take new photos for your custom photo tiles."
-        }
-      ],
-      "expo-apple-authentication"
-    ],
-    "ios": {
-      "buildNumber": "24",
-      "supportsTablet": true,
-      "bundleIdentifier": "com.benjiwon.memotileappanti",
-      "googleServicesFile": "./GoogleService-Info.plist",
-      "usesAppleSignIn": true,
-      "associatedDomains": [
-        "applinks:memotile.com",
-        "applinks:www.memotile.com"
-      ],
-      "locales": {
-        "en": "./languages/en.json",
-        "th": "./languages/th.json"
-      },
-      "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
-        "CFBundleAllowMixedLocalizations": true,
-        "CFBundleURLTypes": [
-          {
-            "CFBundleURLSchemes": [
-              "memotile",
-              "com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm"
-            ]
-          }
+    "expo": {
+        "name": "MemoTile",
+        "slug": "memotile-app-anti",
+        "version": "1.1.4",
+        "orientation": "portrait",
+        "icon": "./assets/icon.png",
+        "userInterfaceStyle": "light",
+        "splash": {
+            "image": "./assets/splash.png",
+            "resizeMode": "contain",
+            "backgroundColor": "#ffffff"
+        },
+        "assetBundlePatterns": [
+            "**/*"
         ],
-        "ITSAppUsesNonExemptEncryption": false
-      }
-    },
-    "android": {
-      "versionCode": 3,
-      "package": "com.benjiwon.memotileappanti",
-      "googleServicesFile": "./google-services.json",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "permissions": [
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.RECORD_AUDIO"
-      ],
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [
-            {
-              "scheme": "https",
-              "host": "memotile.com",
-              "pathPrefix": "/"
+        "scheme": "memotile",
+        "plugins": [
+            "expo-router",
+            [
+                "expo-build-properties",
+                {
+                    "ios": {
+                        "useFrameworks": "static",
+                        "buildReactNativeFromSource": false
+                    },
+                    "android": {
+                        "targetSdkVersion": 35,
+                        "compileSdkVersion": 35
+                    }
+                }
+            ],
+            "@react-native-firebase/app",
+            "@react-native-firebase/auth",
+            [
+                "expo-image-picker",
+                {
+                    "photosPermission": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
+                    "cameraPermission": "We need camera access to let you take new photos for your custom photo tiles."
+                }
+            ],
+            "expo-apple-authentication",
+            "@react-native-firebase/crashlytics"
+        ],
+        "ios": {
+            "buildNumber": "29",
+            "supportsTablet": true,
+            "bundleIdentifier": "com.benjiwon.memotileappanti",
+            "googleServicesFile": "./GoogleService-Info.plist",
+            "usesAppleSignIn": true,
+            "associatedDomains": [
+                "applinks:memotile.com",
+                "applinks:www.memotile.com"
+            ],
+            "locales": {
+                "en": "./languages/en.json",
+                "th": "./languages/th.json"
             },
-            {
-              "scheme": "https",
-              "host": "www.memotile.com",
-              "pathPrefix": "/"
+            "infoPlist": {
+                "NSPhotoLibraryUsageDescription": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
+                "CFBundleAllowMixedLocalizations": true,
+                "CFBundleURLTypes": [
+                    {
+                        "CFBundleURLSchemes": [
+                            "memotile",
+                            "com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm"
+                        ]
+                    }
+                ],
+                "ITSAppUsesNonExemptEncryption": false
             }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
+        },
+        "android": {
+            "versionCode": 4,
+            "package": "com.memotile.android",
+            "googleServicesFile": "./google-services.json",
+            "adaptiveIcon": {
+                "foregroundImage": "./assets/adaptive-icon.png",
+                "backgroundColor": "#ffffff"
+            },
+            "permissions": [
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.READ_MEDIA_IMAGES",
+                "android.permission.CAMERA"
+            ],
+            "intentFilters": [
+                {
+                    "action": "VIEW",
+                    "autoVerify": true,
+                    "data": [
+                        {
+                            "scheme": "https",
+                            "host": "memotile.com",
+                            "pathPrefix": "/"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "www.memotile.com",
+                            "pathPrefix": "/"
+                        }
+                    ],
+                    "category": [
+                        "BROWSABLE",
+                        "DEFAULT"
+                    ]
+                }
+            ]
+        },
+        "web": {
+            "favicon": "./assets/favicon.png",
+            "bundler": "metro"
+        },
+        "extra": {
+            "eas": {
+                "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
+            },
+            "googleExpoClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+            "googleIosClientId": "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com",
+            "googleAndroidClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+            "googleWebClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com"
         }
-      ]
-    },
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
-      },
-      "googleExpoClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
-      "googleIosClientId": "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com",
-      "googleAndroidClientId": "459952418126-8v20ioolgpoksmprtogbb2vor9opr8f6.apps.googleusercontent.com",
-      "googleWebClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com"
-    }
-  }
-}

@@ -1,13 +1,11 @@
-//app/marketing.tsx
-
 import React, { useState } from "react";
-import { Send, AlertTriangle, CheckCircle2, Loader2, Users, Smartphone, Globe, ShoppingBag, Star, Zap } from "lucide-react";
+import { Send, Loader2, Users, Star, Zap, MessageSquare } from "lucide-react";
 import { getFirestore, collection, addDoc } from "firebase/firestore";
 import { app } from "@/lib/firebase";
 
 export default function MarketingPage() {
     const [loading, setLoading] = useState(false);
-    const [target, setTarget] = useState("all"); // test_token, all_users, admins
+    const [target, setTarget] = useState("test_token");
 
     // ✨ 핵심 마케팅 필터
     const [filters, setFilters] = useState({
@@ -16,15 +14,17 @@ export default function MarketingPage() {
     });
 
     const [testToken, setTestToken] = useState("ExponentPushToken[1M62-BNiaxIBwyBWA0iEOe]");
+
+    // ✨ 통합된 텍스트 상태 관리 (언어 구분 제거)
     const [pushData, setPushData] = useState({
-        enTitle: "", enBody: "", thTitle: "", thBody: "",
+        title: "", body: "",
     });
 
     const db = getFirestore(app);
 
     const handleSendPush = async () => {
-        if (!pushData.enTitle && !pushData.thTitle) {
-            alert("최소 한 개 언어의 메시지는 입력해야 합니다!");
+        if (!pushData.title || !pushData.body) {
+            alert("푸시 제목과 내용을 모두 입력해주세요!");
             return;
         }
 
@@ -40,15 +40,17 @@ export default function MarketingPage() {
                     target: target,
                     filters: filters,
                     testToken: target === "test_token" ? testToken.trim() : null,
-                    en: { title: pushData.enTitle, body: pushData.enBody },
-                    th: { title: pushData.thTitle, body: pushData.thBody },
+                    // ✨ 꿀팁: 기존 백엔드 에러 방지를 위해 작성한 텍스트를 en, th 양쪽에 동일하게 복사해서 전송합니다.
+                    en: { title: pushData.title, body: pushData.body },
+                    th: { title: pushData.title, body: pushData.body },
+                    badge: 0, // 배지 숫자 안 올라가게 0으로 고정
                     uid: "admin",
                 },
                 createdAt: new Date(),
                 status: "pending"
             });
-            alert("마케팅 지시서가 전달되었습니다!");
-            setPushData({ enTitle: "", enBody: "", thTitle: "", thBody: "" });
+            alert("마케팅 지시서가 전달되었습니다! (배지 제외)");
+            setPushData({ title: "", body: "" });
         } catch (error) {
             alert("에러가 발생했습니다.");
         } finally {
@@ -64,7 +66,7 @@ export default function MarketingPage() {
             </h1>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* 왼쪽: 필터 영역 */}
+                {/* 왼쪽: 필터 영역 (기존과 동일) */}
                 <div className="lg:col-span-1 space-y-6">
                     <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-200">
                         <h2 className="text-sm font-bold mb-4 flex items-center gap-2"><Users size={16} /> 1. 발송 모드</h2>
@@ -104,18 +106,30 @@ export default function MarketingPage() {
                     </div>
                 </div>
 
-                {/* 오른쪽: 메시지 작성 */}
+                {/* 오른쪽: 통합된 메시지 작성 영역 */}
                 <div className="lg:col-span-2 space-y-6">
-                    <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
-                        <h2 className="font-bold text-blue-700 mb-4 flex items-center gap-2">🇺🇸 English Content</h2>
-                        <input name="enTitle" value={pushData.enTitle} onChange={(e) => setPushData({ ...pushData, enTitle: e.target.value })} placeholder="Title" className="w-full p-3 border rounded-xl mb-3 outline-none" />
-                        <textarea name="enBody" value={pushData.enBody} onChange={(e) => setPushData({ ...pushData, enBody: e.target.value })} placeholder="Message content..." rows={2} className="w-full p-3 border rounded-xl outline-none resize-none" />
-                    </div>
+                    <div className="bg-purple-50/50 p-8 rounded-2xl border border-purple-100 shadow-sm">
+                        <h2 className="font-bold text-purple-800 mb-2 flex items-center gap-2 text-lg">
+                            <MessageSquare size={20} />
+                            메시지 작성
+                        </h2>
+                        <p className="text-xs text-purple-600 mb-6">입력하신 언어 그대로 모든 타겟 고객에게 푸시 알림이 발송됩니다.</p>
 
-                    <div className="bg-orange-50/50 p-6 rounded-2xl border border-orange-100">
-                        <h2 className="font-bold text-orange-700 mb-4 flex items-center gap-2">🇹🇭 Thai Content</h2>
-                        <input name="thTitle" value={pushData.thTitle} onChange={(e) => setPushData({ ...pushData, thTitle: e.target.value })} placeholder="หัวข้อ" className="w-full p-3 border rounded-xl mb-3 outline-none" />
-                        <textarea name="thBody" value={pushData.thBody} onChange={(e) => setPushData({ ...pushData, thBody: e.target.value })} placeholder="เนื้อหา..." rows={2} className="w-full p-3 border rounded-xl outline-none resize-none" />
+                        <input
+                            name="title"
+                            value={pushData.title}
+                            onChange={(e) => setPushData({ ...pushData, title: e.target.value })}
+                            placeholder="푸시 제목 (예: 깜짝 할인 쿠폰 도착! 🎉)"
+                            className="w-full p-4 border border-purple-200 rounded-xl mb-4 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all text-sm font-semibold bg-white"
+                        />
+                        <textarea
+                            name="body"
+                            value={pushData.body}
+                            onChange={(e) => setPushData({ ...pushData, body: e.target.value })}
+                            placeholder="푸시 내용 (예: 지금 바로 앱에 접속해서 혜택을 확인해보세요.)"
+                            rows={5}
+                            className="w-full p-4 border border-purple-200 rounded-xl outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all resize-none text-sm bg-white"
+                        />
                     </div>
 
                     <button onClick={handleSendPush} disabled={loading} className="w-full bg-pink-600 hover:bg-pink-700 text-white font-black py-5 rounded-2xl text-xl shadow-lg transition-all flex items-center justify-center gap-2">

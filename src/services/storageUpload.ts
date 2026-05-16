@@ -123,13 +123,27 @@ export async function uploadFileUriToStorage(path: string, fileUri: string) {
             console.log("🟩 [upload] converted", { path });
         }
     } catch (e) {
-        console.warn("[upload] manipulateAsync failed (continue):", { path }, e);
-        uploadUri = normalizeFileUri(fileUri);
+        console.warn("⚠️ [upload] manipulateAsync failed:", e);
+
+        // ✨ [핵심 방어 코드] iOS의 특수 주소는 fetch가 터지므로 강제로 로컬 파일로 복사합니다.
+        if (fileUri.startsWith("ph://") || fileUri.startsWith("assets-library://")) {
+            try {
+                const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
+                const tempDest = `${baseDir}ios_fallback_${Date.now()}.jpg`;
+                await FileSystem.copyAsync({ from: fileUri, to: tempDest });
+                uploadUri = tempDest;
+                console.log("🟩 [upload] ph:// safely copied to local cache:", tempDest);
+            } catch (copyErr) {
+                console.error("❌ [upload] Fallback copy failed:", copyErr);
+                uploadUri = normalizeFileUri(fileUri); // 마지막 기도...
+            }
+        } else {
+            uploadUri = normalizeFileUri(fileUri);
+        }
     }
 
     await waitForFileStable(uploadUri);
 
-    // 순차 처리를 통해 Blob(찰흙)이 한 번에 하나씩만 메모리에 올라갑니다!
     const blob = await fetchBlobWithRetry(uploadUri, 6);
 
     const storageRef = ref(storage, path);

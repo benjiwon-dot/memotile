@@ -2,13 +2,10 @@ import * as admin from "firebase-admin";
 
 // ✅ Gen2 (v2) imports
 import { setGlobalOptions } from "firebase-functions/v2";
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
-// ✨ 스케줄러 추가
 import { onSchedule } from "firebase-functions/v2/scheduler";
-// ✨ 페이레터 웹훅 및 리턴을 위한 HTTP 요청 처리 추가
-import { onRequest } from "firebase-functions/v2/https";
 
 // ✅ Firebase Admin SDK imports
 import { getStorage } from "firebase-admin/storage";
@@ -38,7 +35,6 @@ const SLACK_WEBHOOK_URL = part1 + part2;
    HELPER FUNCTIONS 
    ========================================================================= */
 
-// ✨ Expo 푸시 알림 발송용 헬퍼 함수
 async function sendExpoPushNotification(userId: string, title: string, body: string) {
     if (!userId) return;
     try {
@@ -70,7 +66,6 @@ function clamp255(v: number) {
     return Math.max(0, Math.min(255, v));
 }
 
-// ✨ Skia 필터를 서버에서 완벽히 재현하는 고연산 함수
 async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise<Buffer> {
     const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const out = Buffer.alloc(data.length);
@@ -287,7 +282,7 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
         const db = getFirestore();
         const bucket = getStorage().bucket();
 
-        const { orderId, itemId } = event.params as any;
+        const { orderId } = event.params as any;
 
         const item = snap.data() as any;
         const index = item?.index ?? 0;
@@ -385,8 +380,7 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
     }
 );
 
-
-// ✨ [다국어 + 스마트 마케팅] DB를 감지하여 실행되는 통합 트리거 함수
+// ✨ 여기가 완벽하게 수정된 알림 로직입니다.
 export const processAdminTask = onDocumentCreated(
     { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
     async (event) => {
@@ -398,14 +392,12 @@ export const processAdminTask = onDocumentCreated(
         const timestamp = FieldValue.serverTimestamp();
 
         try {
-            // ====================================================================
-            // 1. 주문 상태 및 운송장 일괄 변경 로직
-            // ====================================================================
+            // 상태 변경 & 운송장 입력
             if (task.type === "BATCH_UPDATE_STATUS" || task.type === "UPDATE_ORDER_OPS") {
                 const isBatch = task.type === "BATCH_UPDATE_STATUS";
                 const { orderIds, orderId, status, trackingNumber, adminNote, uid, email } = task.payload || {};
 
-                const targetIds = isBatch ? orderIds : [orderId];
+                const targetIds = isBatch ? orderIds : (orderId ? [orderId] : []);
                 if (!Array.isArray(targetIds) || targetIds.length === 0) {
                     throw new Error("No target order IDs provided.");
                 }
@@ -419,74 +411,80 @@ export const processAdminTask = onDocumentCreated(
                     const docSnap = await ref.get();
                     const orderData = docSnap.data();
 
+                    if (!orderData) continue;
+
                     const userId = orderData?.userId || orderData?.uid || orderData?.customer?.uid || orderData?.customer?.id || orderData?.createdBy;
 
-                    if (isBatch) {
-                        batch.set(ref, { status, updatedAt: timestamp, statusUpdatedAt: timestamp }, { merge: true });
-                    } else {
-                        const updates: any = { updatedAt: timestamp };
-                        if (status !== undefined) { updates.status = status; updates.statusUpdatedAt = timestamp; }
-                        if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
-                        if (adminNote !== undefined) updates.adminNote = adminNote;
-                        batch.update(ref, updates);
+                    // 1. DB 업데이트 세팅
+                    const updates: any = { updatedAt: timestamp };
+                    if (status !== undefined) {
+                        updates.status = status;
+                        updates.statusUpdatedAt = timestamp;
                     }
+                    if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
+                    if (adminNote !== undefined) updates.adminNote = adminNote;
 
+                    batch.set(ref, updates, { merge: true });
+
+                    // 2. 이벤트 히스토리 저장
                     batch.set(ref.collection("events").doc(), {
                         type: status ? "STATUS_CHANGED" : "OPS_UPDATE",
                         to: status || undefined,
-                        changes: isBatch ? undefined : { trackingNumber, adminNote },
+                        changes: { trackingNumber, adminNote },
                         byUid: uid || "admin",
                         byEmail: email || "unknown",
                         createdAt: timestamp,
                     });
 
-                    if (userId && status) {
+                    // 3. 상태별 맞춤 푸시 알림 세팅
+                    if (userId) {
                         const userSnap = await db.collection("users").doc(String(userId)).get();
                         const userLang = userSnap.data()?.language || "en";
 
                         let pushTitle = "";
                         let pushBody = "";
 
-                        if (status === "processing") {
-                            if (userLang === "th") {
-                                pushTitle = "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!";
-                                pushBody = "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด";
+                        if (status) {
+                            const s = status.toLowerCase();
+                            if (s === "processing") {
+                                pushTitle = userLang === "th" ? "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!" : "🎨 We started crafting your tiles!";
+                                pushBody = userLang === "th" ? "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด" : "Our team is carefully printing your photos.";
+                            } else if (s === "printed") {
+                                pushTitle = userLang === "th" ? "📸 พิมพ์ภาพเสร็จเรียบร้อย!" : "📸 Your photos are printed!";
+                                pushBody = userLang === "th" ? "ภาพของคุณถูกพิมพ์อย่างสวยงามและกำลังเตรียมจัดส่ง" : "Your photos have been beautifully printed and are getting ready to ship.";
+                            } else if (s === "shipping") {
+                                pushTitle = userLang === "th" ? "🚚 ความทรงจำของคุณกำลังเดินทางไปหา!" : "🚚 Your memories are on the way!";
+                                pushBody = userLang === "th" ? "ข่าวดี! MemoTile ของคุณถูกจัดส่งเรียบร้อยแล้ว" : "Good news! Your MemoTiles have been shipped.";
+                            } else if (s === "delivered") {
+                                pushTitle = userLang === "th" ? "🎁 พัสดุของคุณจัดส่งสำเร็จแล้ว!" : "🎁 Your MemoTiles have arrived!";
+                                pushBody = userLang === "th" ? "หวังว่าคุณจะชอบ MemoTile ของคุณนะ!" : "We hope you love your new MemoTiles!";
                             } else {
-                                pushTitle = "🎨 We started crafting your tiles!";
-                                pushBody = "Our team is carefully printing your photos.";
+                                pushTitle = userLang === "th" ? "อัปเดตสถานะการสั่งซื้อ" : "Order Status Updated";
+                                pushBody = userLang === "th" ? `คำสั่งซื้อของคุณอยู่ในสถานะ [${status.toUpperCase()}]` : `Your order is now in [${status.toUpperCase()}] status.`;
                             }
-                        } else if (status === "shipping") {
-                            if (userLang === "th") {
-                                pushTitle = "🚚 ความทรงจำของคุณกำลังเดินทางไปหา!";
-                                pushBody = "ข่าวดี! MemoTile ของคุณถูกจัดส่งเรียบร้อยแล้ว";
-                            } else {
-                                pushTitle = "🚚 Your memories are on the way!";
-                                pushBody = "Good news! Your MemoTiles have been shipped.";
-                            }
-                        } else {
-                            pushTitle = userLang === "th" ? "อัปเดตสถานะการสั่งซื้อ" : "Order Status Updated";
-                            pushBody = userLang === "th" ? `คำสั่งซื้อของคุณอยู่ในสถานะ [${status}]` : `Your order is now in [${status}] status.`;
                         }
 
-                        if (pushTitle) notifications.push({ userId, title: pushTitle, body: pushBody });
-                    } else if (userId && !isBatch && trackingNumber && trackingNumber !== orderData?.trackingNumber) {
-                        const userSnap = await db.collection("users").doc(String(userId)).get();
-                        const userLang = userSnap.data()?.language || "en";
-                        const title = userLang === "th" ? "🚚 อัปเดตการจัดส่ง" : "🚚 Shipping Update";
-                        const body = userLang === "th" ? `หมายเลขติดตามพัสดุของคุณคือ: ${trackingNumber}` : `Your tracking number: ${trackingNumber}`;
-                        notifications.push({ userId, title, body });
+                        // 운송장이 방금 입력된 경우 (상태 변경 알림을 덮어씀)
+                        if (trackingNumber && trackingNumber !== orderData.trackingNumber) {
+                            pushTitle = userLang === "th" ? "🚚 อัปเดตการจัดส่ง" : "🚚 Shipping Update";
+                            pushBody = userLang === "th" ? `หมายเลขติดตามพัสดุของคุณคือ: ${trackingNumber}` : `Your tracking number: ${trackingNumber}`;
+                        }
+
+                        if (pushTitle) {
+                            notifications.push({ userId, title: pushTitle, body: pushBody });
+                        }
                     }
                 }
+
                 await batch.commit();
 
+                // 푸시 일괄 발송
                 for (const noti of notifications) {
                     await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                 }
             }
 
-            // ====================================================================
-            // 2. ✨ 스마트 마케팅 푸시 발송 로직 (타겟팅 + 언어 우선순위)
-            // ====================================================================
+            // 마케팅 푸시
             else if (task.type === "MARKETING_PUSH") {
                 const { target, filters, testToken, en, th } = task.payload || {};
                 const titleEn = en?.title;
@@ -496,10 +494,8 @@ export const processAdminTask = onDocumentCreated(
 
                 if (!titleEn && !titleTh) throw new Error("No message content provided.");
 
-                // ✨ 특정 기기로 테스트 발송
                 if (target === "test_token" && testToken) {
                     console.log(`[Marketing Push] Direct test to token: ${testToken}`);
-                    // 필터에 설정된 언어에 맞춰서 최적의 메시지를 조합
                     const finalTitle = filters?.language === 'th' ? (titleTh || titleEn) : (titleEn || titleTh);
                     const finalBody = filters?.language === 'th' ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
 
@@ -510,23 +506,23 @@ export const processAdminTask = onDocumentCreated(
                         body: finalBody,
                     });
                 }
-                // ✨ 실제 유저 또는 관리자 그룹 발송 (필터링 적용)
                 else {
                     const usersSnap = await db.collection("users").get();
                     const notifications: { userId: string, title: string, body: string }[] = [];
 
+                    const uniqueTokens = new Set<string>();
+
                     for (const userDoc of usersSnap.docs) {
                         const userData = userDoc.data();
                         const pushToken = userData?.expoPushToken || userData?.pushToken;
-                        if (!pushToken) continue;
+
+                        if (!pushToken || uniqueTokens.has(pushToken)) continue;
 
                         const userId = userDoc.id;
                         const userLang = userData?.language || "en";
 
-                        // 1. 타겟 그룹 체크
                         if (target === "admins" && userData.isAdmin !== true) continue;
 
-                        // 2. 가입 시기 필터링
                         if (filters?.joinPeriod && filters.joinPeriod !== "all") {
                             const createdAt = userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date();
                             const diffDays = (new Date().getTime() - createdAt.getTime()) / (1000 * 3600 * 24);
@@ -534,7 +530,6 @@ export const processAdminTask = onDocumentCreated(
                             if (filters.joinPeriod === "recent_30" && diffDays > 30) continue;
                         }
 
-                        // 3. 고객 그룹(Behavior) 필터링 - 주문 DB 조회
                         if (filters?.userGroup && filters.userGroup !== "all") {
                             const ordersSnap = await db.collection("orders").where("userId", "==", userId).get();
                             const orderCount = ordersSnap.size;
@@ -545,9 +540,6 @@ export const processAdminTask = onDocumentCreated(
                             if (filters.userGroup === "abandoned" && !hasAbandoned) continue;
                         }
 
-                        // 4. 언어 우선순위 결정
-                        // 유저 언어가 태국어면 태국어 최우선 (없으면 영어)
-                        // 유저 언어가 영어나 그 외면 영어 최우선 (없으면 태국어)
                         let finalTitle, finalBody;
                         if (userLang === "th") {
                             finalTitle = titleTh || titleEn;
@@ -558,18 +550,18 @@ export const processAdminTask = onDocumentCreated(
                         }
 
                         if (finalTitle && finalBody) {
+                            uniqueTokens.add(pushToken);
                             notifications.push({ userId, title: finalTitle, body: finalBody });
                         }
                     }
 
-                    console.log(`[Smart CRM] 총 ${notifications.length}명에게 타겟팅 푸시 발송`);
+                    console.log(`[Smart CRM] 총 ${notifications.length}개의 고유 기기에 타겟팅 푸시 발송 시도`);
                     for (const noti of notifications) {
                         await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                     }
                 }
             }
 
-            // 작업 지시서 처리 완료 상태로 업데이트
             await snap.ref.update({ status: "completed", completedAt: timestamp });
 
         } catch (error) {
@@ -1062,19 +1054,26 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
 });
 
 /* =========================================================================
-   ✨ PAYLETTER 결제 연동 
+   ✨ PAYLETTER 통합 결제 연동 (LIVE 운영 서버)
    ========================================================================= */
 
-const PAYLETTER_API_KEY = "PL_Merchant";
-const PAYLETTER_CLIENT_ID = "PL_Merchant";
+// ✅ 실결제용 API Key
+const PAYLETTER_API_KEY = "5955a60454daa331f178229f2337804f";
+
+// 🚨 주의: 반드시 발급받으신 진짜 상점 ID(Store ID)로 변경하세요!
+const PAYLETTER_CLIENT_ID = "memotile";
+
 const PROJECT_REGION = "us-central1";
 const PROJECT_ID = "memotile-app-anti-demo";
 const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
 
+// ✅ 라이브 서버 URL
+const PAYLETTER_URL = "https://api.payletter.com/api/payment/request";
+
 export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
 
-    const { orderId, amount, email, pgcode, platform, webUrl, appScheme } = req.data || {};
+    const { orderId, amount, email, fullName, pgcode, platform, webUrl, appScheme } = req.data || {};
     if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
 
     const returnQuery = `?platform=${platform || ''}&webUrl=${encodeURIComponent(webUrl || '')}&appScheme=${encodeURIComponent(appScheme || '')}`;
@@ -1087,12 +1086,14 @@ export const payletterRequestPayment = onCall({ region: "us-central1", cors: tru
         amount: Number(amount).toFixed(2),
         payerid: req.auth.uid,
         payeremail: email || "",
+        payername: fullName || "Guest",
+        servicename: "MemoTile",
         returnurl: `${BASE_URL}/payletterReturn${returnQuery}`,
         notiurl: `${BASE_URL}/payletterWebhook`
     };
 
     try {
-        const response = await axios.post("https://dev-api.payletter.com/api/payment/request", paymentData, {
+        const response = await axios.post(PAYLETTER_URL, paymentData, {
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `GPLKEY ${PAYLETTER_API_KEY}`
@@ -1147,9 +1148,15 @@ export const payletterReturn = onRequest({ region: "us-central1" }, async (req, 
     const platform = req.query.platform as string;
     const webUrl = req.query.webUrl as string;
     const appScheme = req.query.appScheme as string;
+    const retcode = req.body?.retcode;
 
     if (platform === 'web' && webUrl) {
-        res.redirect(302, webUrl);
+        if (String(retcode) === "0") {
+            res.redirect(302, webUrl);
+        } else {
+            const fallbackWebUrl = webUrl.split('/myorder/success')[0] || "/";
+            res.redirect(302, fallbackWebUrl);
+        }
         return;
     }
 
@@ -1162,17 +1169,17 @@ export const payletterReturn = onRequest({ region: "us-central1" }, async (req, 
         <head>
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Payment Successful</title>
+            <title>Payment Processed</title>
             <style>
                 body { text-align: center; padding-top: 60px; font-family: -apple-system, sans-serif; background: #fff; color: #111; }
-                h2 { color: #10B981; font-size: 24px; margin-bottom: 12px; }
+                h2 { color: #111; font-size: 24px; margin-bottom: 12px; }
                 p { color: #6B7280; font-size: 15px; margin-bottom: 30px; line-height: 1.5; padding: 0 20px; }
                 .btn { display: inline-block; padding: 14px 28px; background: #111; color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; }
             </style>
         </head>
         <body>
-            <h2>Payment Successful!</h2>
-            <p>Your payment has been processed.<br/><br/>If the app doesn't open automatically, please tap <b>"Done"</b> or <b>"Close"</b> in your browser to return.</p>
+            <h2>Payment Processed</h2>
+            <p>If the app doesn't open automatically, please tap <b>"Return to App"</b>.</p>
             <a href="${targetScheme}" class="btn">Return to App</a>
             <script>
                 setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);

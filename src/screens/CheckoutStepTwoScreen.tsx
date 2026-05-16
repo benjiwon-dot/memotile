@@ -32,8 +32,9 @@ import { shadows } from "../theme/shadows";
 
 import { auth, db } from "../lib/firebase";
 import { User } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { createDevOrder } from "../services/orders";
+// ✨ updateDoc 추가 (0원 결제 상태 변경용)
+import { doc, getDoc, getFirestore, updateDoc } from "firebase/firestore";
+import { createOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 
 // ✨ Firebase Functions 연동 및 ExportQueue 가져오기
@@ -51,6 +52,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
     const scrollViewRef = useRef<ScrollView>(null);
+
+    // 🚨 [애플 심사 모드 스위치] 
+    // 우리가 내부 테스트할 때는 false로 둡니다. (모든 결제수단 노출)
+    // 애플에 심사를 올릴 때는 무조건 true로 바꿉니다. (래빗페이 숨김)
+    const IS_APPLE_REVIEW_MODE = false;
 
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
@@ -95,13 +101,40 @@ export default function CheckoutStepTwoScreen() {
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-    const [progressCount, setProgressCount] = useState(0); // ⭐️ 초기값 0으로 시작
+    const [progressCount, setProgressCount] = useState(0);
 
     const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
 
     const [promoCode, setPromoCode] = useState("");
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
+
+    // ✨ Firebase에서 불러올 가격 상태
+    const safeLocale = locale || "EN";
+    const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 300 : 8.85);
+    const [basePriceUSD, setBasePriceUSD] = useState<number>(8.85);
+
+    // ✨ Firebase Firestore 가격 실시간 불러오기
+    useEffect(() => {
+        const fetchPrice = async () => {
+            try {
+                const firestoreDb = getFirestore();
+                const docRef = doc(firestoreDb, "config", "prices");
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const remotePrice = safeLocale === "TH" ? data.price_thb : data.price_usd;
+                    setPricePerTile(remotePrice);
+                    setBasePriceUSD(data.price_usd || 8.85);
+                }
+            } catch (error) {
+                console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
+            }
+        };
+
+        fetchPrice();
+    }, [safeLocale]);
 
     useEffect(() => {
         if (!auth) return;
@@ -174,10 +207,10 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    const safeLocale = locale || "EN";
-    const PRICE_PER_TILE = safeLocale === "TH" ? 200 : 6.45;
+    // ✨ 서버에서 받아온 가격(state) 적용
+    const PRICE_PER_TILE = pricePerTile;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
-    const BASE_PRICE_USD = 6.45;
+    const BASE_PRICE_USD = basePriceUSD;
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
     const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
@@ -205,6 +238,8 @@ export default function CheckoutStepTwoScreen() {
         discountRatio = discount / subtotal;
     }
     const discountUSD = Number((subtotalUSD * discountRatio).toFixed(2));
+
+    // ✨ 수량에 맞춰서 정상적으로 달러가 결제됩니다.
     const totalInUSD = Math.max(0, Number((subtotalUSD - discountUSD).toFixed(2)));
 
     const handleApplyPromo = async () => {
@@ -301,7 +336,11 @@ export default function CheckoutStepTwoScreen() {
 
     const requestPayletterPayment = async (orderId: string, method: string) => {
         try {
-            let pgcode = "PLCreditCard";
+            let pgcode = "PLCreditCardMpi";
+            if (method === "RABBIT_LINE_PAY") {
+                pgcode = "AlipayPlusRabbitLinePay";
+            }
+
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
 
@@ -315,6 +354,7 @@ export default function CheckoutStepTwoScreen() {
                 orderId,
                 amount: totalInUSD,
                 email: formData.email,
+                fullName: formData.fullName,
                 pgcode: pgcode,
                 platform: Platform.OS,
                 webUrl: webUrl,
@@ -390,22 +430,8 @@ export default function CheckoutStepTwoScreen() {
         }
     };
 
-    const handlePlaceOrder = async (provider: "DEV_FREE" | "RABBIT_LINE_PAY" | "TRUEMONEY" | "PROMO_FREE" | "CREDIT_CARD") => {
+    const handlePlaceOrder = async (provider: "RABBIT_LINE_PAY" | "TRUEMONEY" | "CREDIT_CARD" | "PROMO_FREE") => {
         Keyboard.dismiss();
-
-        if (provider === "TRUEMONEY" || provider === "RABBIT_LINE_PAY") {
-            const title = (t as any)?.["comingSoon"] || "Coming Soon";
-            const msg = provider === "TRUEMONEY"
-                ? ((t as any)?.["trueMoneySoon"] || "TrueMoney payment is coming soon.")
-                : ((t as any)?.["rabbitLinePaySoon"] || "Rabbit LINE Pay is coming soon.");
-
-            if (Platform.OS === 'web') {
-                window.alert(`${title}\n\n${msg}`);
-            } else {
-                Alert.alert(title, msg);
-            }
-            return;
-        }
 
         const user = currentUser;
         if (!validateShipping()) return;
@@ -420,7 +446,7 @@ export default function CheckoutStepTwoScreen() {
 
         setIsCreatingOrder(true);
         setIsVerifyingPayment(false);
-        setProgressCount(0); // ⭐️ 가짜 타이머 대신 0부터 시작합니다.
+        setProgressCount(0);
 
         try {
             await exportQueue.waitForIdle(60000);
@@ -428,7 +454,7 @@ export default function CheckoutStepTwoScreen() {
 
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
-            const orderId = await createDevOrder({
+            const orderId = await createOrder({
                 uid: user!.uid,
                 shipping: {
                     fullName: formData.fullName,
@@ -454,14 +480,25 @@ export default function CheckoutStepTwoScreen() {
                 currency: CURRENCY_CODE,
                 instagram: formData.instagram,
                 onProgress: (current) => {
-                    setProgressCount(current); // ⭐️ 진짜 사진이 올라갈 때마다 UI 업데이트
+                    setProgressCount(current);
                 }
             });
 
-            // ✨ 정확한 0원 체크
-            const isFreeOrder = provider === "DEV_FREE" || provider === "PROMO_FREE" || total <= 0;
+            // 0원 결제 확인 (무료 이벤트)
+            const isFreeOrder = provider === "PROMO_FREE" || total <= 0;
 
             if (isFreeOrder) {
+                // ✨ 핵심 수정: 0원 결제일 경우 DB(Firestore) 상태를 강제로 'paid'로 업데이트!
+                try {
+                    await updateDoc(doc(db, "orders", orderId), {
+                        status: "paid",
+                        paymentMethod: "PROMO_FREE",
+                        paidAt: new Date().toISOString()
+                    });
+                } catch (updateErr) {
+                    console.error("Failed to update free order status:", updateErr);
+                }
+
                 setProgressCount(safePhotosCount);
                 setTimeout(async () => {
                     setIsCreatingOrder(false);
@@ -706,38 +743,33 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         ) : (
                             <>
-                                {/* 🚨 심사용 숨김 처리: TrueMoney 🚨 */}
-                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF6F00", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
-                                    <View style={styles.paymentItemLeft}>
-                                        {Platform.OS !== 'web' ? (
-                                            <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                        ) : (
-                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>TrueMoney</Text></View>
-                                        )}
-                                        <Text style={styles.paymentItemText}>{(t as any)?.["payTrueMoney"] || "TrueMoney Wallet"}</Text>
-                                    </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#FF6F00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                    </View>
-                                </TouchableOpacity>
+                                {/* ✨ 애플 심사 모드가 아닐 때만 Rabbit LINE Pay 노출 ✨ */}
+                                {!IS_APPLE_REVIEW_MODE && (
+                                    <TouchableOpacity
+                                        style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
+                                        onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")}
+                                        disabled={!currentUser || isCreatingOrder}
+                                    >
+                                        <View style={styles.paymentItemLeft}>
+                                            {Platform.OS !== 'web' ? (
+                                                <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                            ) : (
+                                                <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
+                                            )}
+                                            <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
+                                        </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                            {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                        </View>
+                                    </TouchableOpacity>
+                                )}
 
-                                {/* 🚨 심사용 숨김 처리: Rabbit LINE Pay 🚨 */}
-                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300", display: 'none' }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
-                                    <View style={styles.paymentItemLeft}>
-                                        {Platform.OS !== 'web' ? (
-                                            <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                        ) : (
-                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
-                                        )}
-                                        <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
-                                    </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                    </View>
-                                </TouchableOpacity>
-
-                                {/* ✅ 정식 앱/심사용 활성화 버튼: Credit/Debit Card ✅ */}
-                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
+                                {/* ✅ Credit/Debit Card는 심사/운영 상관없이 항상 노출 ✅ */}
+                                <TouchableOpacity
+                                    style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
+                                    onPress={() => handlePlaceOrder("CREDIT_CARD")}
+                                    disabled={!currentUser || isCreatingOrder}
+                                >
                                     <View style={styles.paymentItemLeft}>
                                         {Platform.OS !== 'web' ? (
                                             <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" />

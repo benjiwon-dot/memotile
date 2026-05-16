@@ -81,7 +81,7 @@ async function reserveOrderCode(dateKey: string): Promise<string> {
     return `${dateKey}-${String(seq).padStart(4, "0")}`;
 }
 
-export async function createDevOrder(params: {
+export async function createOrder(params: {
     uid: string;
     shipping: OrderDoc["shipping"];
     photos: any[];
@@ -107,6 +107,7 @@ export async function createDevOrder(params: {
 
     const safePhotosCount = Array.isArray(photos) && photos.length > 0 ? photos.length : 1;
 
+    // 1. 주문서 먼저 생성 (에러가 나면 이 주문서는 Pending 상태로 버려집니다)
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -114,7 +115,7 @@ export async function createDevOrder(params: {
         storageBasePath,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        status: "paid",
+        status: "pending",
         currency: currency,
         subtotal: totals.subtotal,
         discount: totals.discount,
@@ -126,7 +127,7 @@ export async function createDevOrder(params: {
             provider: totals.total === 0 ? "PROMO_FREE" : "CREDIT_CARD",
             transactionId: `SIM_${orderCode}`,
             method: "CARD",
-            paidAt: serverTimestamp()
+            paidAt: null
         },
         paymentMethod: "CARD",
         locale,
@@ -168,7 +169,14 @@ export async function createDevOrder(params: {
                 }
 
                 const printPath = `${storageBasePath}/items/${i}_print.jpg`;
-                const uploadRes = await uploadFileUriToStorage(printPath, targetUri);
+                let uploadRes;
+
+                try {
+                    uploadRes = await uploadFileUriToStorage(printPath, targetUri);
+                } catch (uploadErr) {
+                    console.error(`❌ [Upload Critical Error - Web] Index ${i} failed. Aborting order.`, uploadErr);
+                    throw new Error(`Failed to upload photo ${i + 1}. Please check your connection or try again using Wi-Fi.`);
+                }
 
                 const itemRef = doc(collection(db, "orders", orderId, "items"));
                 await setDoc(itemRef, stripUndefined({
@@ -195,13 +203,10 @@ export async function createDevOrder(params: {
             for (let i = 0; i < appPhotos.length; i++) {
                 const p = appPhotos[i];
 
-                // ⭐️ 1. 에디터가 필터를 2048px로 정성껏 구워서 보내줬는지 확인! (있으면 이거 그대로 씀)
                 let targetPrintUri = p?.output?.printUri;
-
                 const cropRatio = p?.edits?.committed?.cropRatio;
                 const originalUri = p?.originalUri || p?.sourceUri || p?.uri;
 
-                // ⭐️ 2. 에디터가 필터 안 구워줬네? (일반 사진임) -> 그럼 여기서 4K 쌩원본 불러와서 비율대로 자름!
                 if (!targetPrintUri && cropRatio && originalUri) {
                     try {
                         const trueMeta = await manipulateAsync(originalUri, []);
@@ -226,14 +231,24 @@ export async function createDevOrder(params: {
                         targetPrintUri = originalUri;
                     }
                 } else if (!targetPrintUri) {
-                    // 최후의 보루
                     targetPrintUri = originalUri;
                 }
 
-                // ⭐️ 3. 준비된 사진(필터 구워진 거 OR 방금 4K로 자른 거)을 Storage에 업로드!
+                // ⭐️ 사진 업로드
                 const printPath = `${storageBasePath}/items/${i}_print.jpg`;
-                const printRes = await uploadFileUriToStorage(printPath, targetPrintUri);
+                let printRes;
 
+                try {
+                    printRes = await uploadFileUriToStorage(printPath, targetPrintUri);
+                } catch (uploadErr) {
+                    // 🚨 [핵심 방어 로직] 업로드에 실패하면 꼼수 쓰지 않고 즉시 폭파시킵니다.
+                    // 이렇게 에러를 던지면 결제창을 띄우지 않고 멈추게 되어 돈을 보호합니다.
+                    // ✨ 와이파이 권장 및 실패한 사진 번호 명시
+                    console.error(`❌ [Upload Critical Error] Index ${i} failed. Aborting order.`, uploadErr);
+                    throw new Error(`Failed to upload photo ${i + 1}. Please check your connection or try again using Wi-Fi.`);
+                }
+
+                // ⭐️ 성공 시에만 파이어베이스에 개별 아이템 기록
                 const itemRef = doc(collection(db, "orders", orderId, "items"));
                 await setDoc(itemRef, stripUndefined({
                     index: i, quantity: p.quantity || 1, filterId: p.edits?.filterId || "original",
@@ -242,15 +257,16 @@ export async function createDevOrder(params: {
                     size: "20x20",
                     assets: { printPath: printRes.path, printUrl: printRes.downloadUrl },
                     printUrl: printRes.downloadUrl,
-                    previewUrl: printRes.downloadUrl, // 엑박 방지: 인터넷 주소 그대로 삽입
+                    previewUrl: printRes.downloadUrl,
                     createdAt: serverTimestamp(),
                 }));
+
                 results.push(printRes.downloadUrl);
 
                 if (onProgress) onProgress(i + 1, appPhotos.length);
             }
 
-            const previewImages = results.filter((url): url is string => url !== null).slice(0, 5);
+            const previewImages = results.slice(0, 5);
             if (previewImages.length > 0) await updateDoc(orderRef, { previewImages, updatedAt: serverTimestamp() });
         }
     } catch (err) {
@@ -258,7 +274,7 @@ export async function createDevOrder(params: {
         throw err;
     }
 
-    // 3. 쿠폰 처리 로직
+    // 쿠폰 처리
     if (promoCode && promoCode.code) {
         try {
             const promoRef = doc(db, 'promoCodes', promoCode.code.toUpperCase());

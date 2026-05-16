@@ -76,6 +76,50 @@
           ]
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:459952418126:android:23ba298498f59b3896421f",
+        "android_client_info": {
+          "package_name": "com.memotile.android"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "459952418126-4ar6bghjqic2q3e76hnftnp51al6vl5l.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.memotile.android",
+            "certificate_hash": "901f84bbe7485cbe493732979e93d043ff0424a6"
+          }
+        },
+        {
+          "client_id": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcqIed_xBLYuaOas8TytJL9ya0cqVLb5Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.benjiwon.memotileappanti"
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "configuration_version": "1"
