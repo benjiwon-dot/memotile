@@ -249,7 +249,9 @@ export default function EditorScreen() {
 
     const resolve = async () => {
       const cachedPreview = (currentPhoto as any)?.cachedPreviewUri;
-      if (cachedPreview) {
+
+      // ✨ [수정됨] 안드로이드는 저화질 미리보기를 무시하고 무조건 고화질 변환 로직을 타게 합니다.
+      if (cachedPreview && Platform.OS === 'ios') {
         let w = 1080; let h = 1080;
         try {
           const s = await getImageSizeAsync(cachedPreview);
@@ -284,7 +286,7 @@ export default function EditorScreen() {
         let info: ResolvedInfo;
 
         if (Platform.OS === 'ios') {
-          // 🍎 애플: 기존에 잘 되던 로직 100% 유지 (절대 건드리지 않음)
+          // 🍎 애플: 기존에 잘 되던 로직 100% 유지
           const result = await manipulateAsync(
             inputUri,
             [{ resize: { width: 1280 } }],
@@ -292,22 +294,19 @@ export default function EditorScreen() {
           );
           info = { uri: result.uri, width: result.width, height: result.height };
         } else {
-          // 🤖 안드로이드: Skia 화질 뭉개짐 완벽 방지 로직
+          // 🤖 안드로이드: Skia 화질 뭉개짐 완벽 방지 로직 (무손실 PNG)
           const actualSize = await getImageSizeAsync(inputUri);
-          const MAX_SAFE_SIZE = 2560; // Skia가 OOM 없이 소화할 수 있는 안전한 고화질 한계치
+          const MAX_SAFE_SIZE = 2560;
 
-          // 사진이 2560px 이하라면, 안드로이드의 저품질 압축 엔진을 아예 거치지 않고 원본 그대로 패스!
           if (actualSize.width <= MAX_SAFE_SIZE && actualSize.height <= MAX_SAFE_SIZE) {
             info = { uri: inputUri, width: actualSize.width, height: actualSize.height };
           } else {
-            // 원본이 너무 거대할 때만(OOM 위험) 비율을 유지하며 2560px로 축소
             const scale = MAX_SAFE_SIZE / Math.max(actualSize.width, actualSize.height);
             const targetW = Math.max(1, Math.round(actualSize.width * scale));
 
             const result = await manipulateAsync(
               inputUri,
               [{ resize: { width: targetW } }],
-              // 🌟 JPEG 대신 무손실 PNG 포맷을 사용하여 안드로이드 특유의 압축 열화 완벽 차단
               { compress: 1.0, format: SaveFormat.PNG }
             );
             info = { uri: result.uri, width: result.width, height: result.height };
