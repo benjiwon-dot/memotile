@@ -135,11 +135,11 @@ export default function Index() {
             }
         }
 
-        // ✨ 핵심 수정: iOS는 1 (기존과 동일), 안드로이드는 undefined로 설정하여 강제 압축 엔진 우회!
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsMultipleSelection: true,
             selectionLimit: 20,
+            // 안드로이드는 undefined로 설정해 강제 압축을 1차 우회합니다.
             quality: Platform.OS === 'ios' ? 1 : undefined,
         });
 
@@ -151,19 +151,43 @@ export default function Index() {
                 const originalWidth = asset.width;
                 const originalHeight = asset.height;
 
-                const targetWidth = Platform.OS === 'web' ? 1200 : 2000;
+                let finalUri = originalUri;
+                let finalWidth = originalWidth;
+                let finalHeight = originalHeight;
 
-                const manipulated = await manipulateAsync(
-                    originalUri,
-                    [{ resize: { width: targetWidth } }],
-                    { compress: 0.8, format: SaveFormat.JPEG }
-                );
+                // ✨ 애플과 갤럭시 완벽 분리 (여기가 핵심입니다!)
+                if (Platform.OS === 'ios') {
+                    // 🍎 애플: 기존에 잘 돌아가던 코드 그대로 유지
+                    const manipulated = await manipulateAsync(
+                        originalUri,
+                        [{ resize: { width: 2000 } }],
+                        { compress: 0.8, format: SaveFormat.JPEG }
+                    );
+                    finalUri = manipulated.uri;
+                    finalWidth = manipulated.width;
+                    finalHeight = manipulated.height;
+
+                } else if (Platform.OS === 'web') {
+                    // 🌐 웹: 기존 코드 유지
+                    const manipulated = await manipulateAsync(
+                        originalUri,
+                        [{ resize: { width: 1200 } }],
+                        { compress: 0.8, format: SaveFormat.JPEG }
+                    );
+                    finalUri = manipulated.uri;
+                    finalWidth = manipulated.width;
+                    finalHeight = manipulated.height;
+
+                } else {
+                    // 🤖 안드로이드(갤럭시): 이 부분으로 들어옵니다.
+                    // 아무런 'manipulateAsync(압축)' 처리를 하지 않고 원본(100%) 그대로 통과시킵니다!
+                }
 
                 processedAssets.push({
                     ...asset,
-                    uri: manipulated.uri,
-                    width: manipulated.width,
-                    height: manipulated.height,
+                    uri: finalUri,
+                    width: finalWidth,
+                    height: finalHeight,
                     originalUri: originalUri,
                     originalWidth: originalWidth,
                     originalHeight: originalHeight

@@ -7,7 +7,7 @@ import React, {
     useState,
     ReactNode,
 } from "react";
-import { Platform, Dimensions, PixelRatio } from "react-native"; // ✨ Dimensions, PixelRatio 추가
+import { Platform, Dimensions, PixelRatio } from "react-native";
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -134,7 +134,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const generationQueue = React.useRef<Set<string>>(new Set());
     const saveDraftTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ✨ [핵심 수정됨] 모든 안드로이드 기기 화면 비율 1:1 자동 매칭
     const generatePreview = async (asset: ImagePickerAsset, index: number) => {
         const id = asset.assetId || asset.uri;
         if (generationQueue.current.has(id)) return;
@@ -153,30 +152,31 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 inputUri = dest;
             }
 
-            // ✨ 플랫폼별 다이나믹 최적화
             const isIOS = Platform.OS === 'ios';
             let previewW = 1280;
             let previewCompress = 0.8;
 
+            // ✨ 핵심 변경: 안드로이드는 무조건 무손실 PNG 포맷을 사용하도록 분기 처리!
+            let previewFormat = SaveFormat.JPEG;
+
             if (!isIOS) {
-                // 안드로이드는 현재 켜진 기기의 화면 너비(픽셀 단위)를 실시간으로 가져옵니다.
                 const screenW = Dimensions.get('window').width;
                 const pr = PixelRatio.get();
-                // 1:1 매칭을 하되, 최신 폰의 과도한 메모리 점유(OOM)를 막기 위해 최대 1440px로 상한선(Cap)을 둡니다.
                 previewW = Math.min(Math.round(screenW * pr), 1440);
-                previewCompress = 1.0; // 뭉개짐을 완벽 방지하는 무손실
+                previewCompress = 1.0;
+                previewFormat = SaveFormat.PNG; // 🌟 안드로이드 JPEG 뭉개짐 원천 차단!
             }
 
             const previewResult = await manipulateAsync(
                 inputUri,
                 [{ resize: { width: previewW } }],
-                { compress: previewCompress, format: SaveFormat.JPEG }
+                { compress: previewCompress, format: previewFormat }
             );
 
             const thumbResult = await manipulateAsync(
                 inputUri,
                 [{ resize: { width: 200 } }],
-                { compress: 0.6, format: SaveFormat.JPEG } // 썸네일은 작게 유지
+                { compress: 0.6, format: SaveFormat.JPEG }
             );
 
             setPhotosState((prev) => {
@@ -198,7 +198,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             console.warn("Background preview generation failed", e);
         } finally {
             generationQueue.current.delete(id);
-            // ✨ 한 장 처리 후 GC(가비지 컬렉터)가 일할 시간을 줌 (메모리 찌꺼기 청소)
             await new Promise(resolve => setTimeout(resolve, 50));
         }
     };
@@ -308,7 +307,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             setCurrentIndexState(draft.currentIndex || 0);
             setHasDraft(true);
 
-            // ✨ 직렬화 처리
             const toProcess = restored.slice(0, 5);
             (async () => {
                 for (let i = 0; i < toProcess.length; i++) {
@@ -332,7 +330,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             await saveDraft(opts.step ?? "select", { photos: normalized, currentIndex: 0 });
         }
 
-        // ✨ 직렬화 처리
         const toProcess = normalized.slice(0, 5);
         (async () => {
             for (let i = 0; i < toProcess.length; i++) {
@@ -354,7 +351,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
 
             const startIdx = prev.length;
 
-            // ✨ 비동기 직렬화 처리
             (async () => {
                 for (let i = 0; i < filtered.length; i++) {
                     await generatePreview(filtered[i], startIdx + i);
