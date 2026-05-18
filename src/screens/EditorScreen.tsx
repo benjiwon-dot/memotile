@@ -248,83 +248,54 @@ export default function EditorScreen() {
     };
 
     const resolve = async () => {
+      // ✨ [핵심 원리] Skia에 너무 큰 원본을 주면 축소 시 화질이 깨집니다.
+      // 따라서 PhotoContext에서 만들어둔 '기기 화면 픽셀에 딱 맞는 1:1 무손실 PNG'를 UI 전용으로 띄웁니다.
       const cachedPreview = (currentPhoto as any)?.cachedPreviewUri;
+      let targetUri = currentPhoto?.uri;
 
-      // ✨ [수정됨] 안드로이드는 저화질 미리보기를 무시하고 무조건 고화질 변환 로직을 타게 합니다.
-      if (cachedPreview && Platform.OS === 'ios') {
-        let w = 1080; let h = 1080;
-        try {
-          const s = await getImageSizeAsync(cachedPreview);
-          w = s.width; h = s.height;
-        } catch { }
-
-        const info = { uri: cachedPreview, width: w, height: h };
-        if (!alive) return;
-        resolvedCache.current[uri] = info;
-        applyUiForIndex(info);
-        return;
+      if (cachedPreview) {
+        targetUri = cachedPreview;
       }
 
       try {
-        if (resolvedCache.current[uri]) {
+        if (resolvedCache.current[targetUri]) {
           if (!alive) return;
-          applyUiForIndex(resolvedCache.current[uri]);
+          applyUiForIndex(resolvedCache.current[targetUri]);
           return;
         }
 
-        let inputUri = uri;
-        if (uri.startsWith("content://")) {
+        let inputUri = targetUri;
+        if (inputUri.startsWith("content://")) {
           const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
           const dest = `${baseDir}editor_import_${Date.now()}.jpg`;
-          await FileSystem.copyAsync({ from: uri, to: dest });
+          await FileSystem.copyAsync({ from: inputUri, to: dest });
           inputUri = dest;
         }
 
-        // ---------------------------------------------------------
-        // ✨ 애플(iOS) / 안드로이드(Android) 분리 처리 로직
-        // ---------------------------------------------------------
-        let info: ResolvedInfo;
+        // 혹시 캐시가 유실되었을 경우 현장에서 1:1 매칭 이미지를 즉시 생성
+        const screenW = Dimensions.get('window').width;
+        const pr = PixelRatio.get();
+        const targetW = Platform.OS === 'ios' ? 1280 : Math.min(Math.round(screenW * pr), 1440);
 
-        if (Platform.OS === 'ios') {
-          // 🍎 애플: 기존에 잘 되던 로직 100% 유지
-          const result = await manipulateAsync(
-            inputUri,
-            [{ resize: { width: 1280 } }],
-            { compress: 0.9, format: SaveFormat.JPEG }
-          );
-          info = { uri: result.uri, width: result.width, height: result.height };
-        } else {
-          // 🤖 안드로이드: Skia 화질 뭉개짐 완벽 방지 로직 (무손실 PNG)
-          const actualSize = await getImageSizeAsync(inputUri);
-          const MAX_SAFE_SIZE = 2560;
+        const result = await manipulateAsync(
+          inputUri,
+          [{ resize: { width: targetW } }],
+          { compress: 1.0, format: Platform.OS === 'ios' ? SaveFormat.JPEG : SaveFormat.PNG } // 안드로이드 PNG 고정
+        );
 
-          if (actualSize.width <= MAX_SAFE_SIZE && actualSize.height <= MAX_SAFE_SIZE) {
-            info = { uri: inputUri, width: actualSize.width, height: actualSize.height };
-          } else {
-            const scale = MAX_SAFE_SIZE / Math.max(actualSize.width, actualSize.height);
-            const targetW = Math.max(1, Math.round(actualSize.width * scale));
-
-            const result = await manipulateAsync(
-              inputUri,
-              [{ resize: { width: targetW } }],
-              { compress: 1.0, format: SaveFormat.PNG }
-            );
-            info = { uri: result.uri, width: result.width, height: result.height };
-          }
-        }
-
+        const info = { uri: result.uri, width: result.width, height: result.height };
         if (!alive) return;
 
-        resolvedCache.current[uri] = info;
+        resolvedCache.current[targetUri] = info;
         applyUiForIndex(info);
       } catch (e) {
         try {
-          const s = await getImageSizeAsync(uri);
-          const info = { uri, width: s.width, height: s.height };
+          const s = await getImageSizeAsync(targetUri);
+          const info = { uri: targetUri, width: s.width, height: s.height };
           if (!alive) return;
           applyUiForIndex(info);
         } catch {
-          applyUiForIndex({ uri, width: 1000, height: 1000 });
+          applyUiForIndex({ uri: targetUri, width: 1000, height: 1000 });
         }
       }
     };

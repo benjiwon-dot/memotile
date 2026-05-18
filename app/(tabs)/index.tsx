@@ -121,15 +121,11 @@ export default function Index() {
     const handleStart = async () => {
         if (Platform.OS !== "web") {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
             if (status !== ImagePicker.PermissionStatus.GRANTED) {
                 Alert.alert(
                     t.permissionDeniedTitle,
                     t.permissionDeniedBody,
-                    [
-                        { text: t.cancel, style: "cancel" },
-                        { text: t.openSettings, onPress: () => Linking.openSettings() }
-                    ]
+                    [{ text: t.cancel, style: "cancel" }, { text: t.openSettings, onPress: () => Linking.openSettings() }]
                 );
                 return;
             }
@@ -139,60 +135,14 @@ export default function Index() {
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsMultipleSelection: true,
             selectionLimit: 20,
-            // 안드로이드는 undefined로 설정해 강제 압축을 1차 우회합니다.
-            quality: Platform.OS === 'ios' ? 1 : undefined,
+            quality: 1, // 🌟 애플, 안드로이드 모두 '무조건 최고화질 원본' 요청
         });
 
         if (!result.canceled && result.assets?.length) {
-            const processedAssets = [];
-
-            for (const asset of result.assets) {
-                const originalUri = asset.uri;
-                const originalWidth = asset.width;
-                const originalHeight = asset.height;
-
-                let finalUri = originalUri;
-                let finalWidth = originalWidth;
-                let finalHeight = originalHeight;
-
-                // ✨ 애플과 갤럭시 완벽 분리 (여기가 핵심입니다!)
-                if (Platform.OS === 'ios') {
-                    // 🍎 애플: 기존에 잘 돌아가던 코드 그대로 유지
-                    const manipulated = await manipulateAsync(
-                        originalUri,
-                        [{ resize: { width: 2000 } }],
-                        { compress: 0.8, format: SaveFormat.JPEG }
-                    );
-                    finalUri = manipulated.uri;
-                    finalWidth = manipulated.width;
-                    finalHeight = manipulated.height;
-
-                } else if (Platform.OS === 'web') {
-                    // 🌐 웹: 기존 코드 유지
-                    const manipulated = await manipulateAsync(
-                        originalUri,
-                        [{ resize: { width: 1200 } }],
-                        { compress: 0.8, format: SaveFormat.JPEG }
-                    );
-                    finalUri = manipulated.uri;
-                    finalWidth = manipulated.width;
-                    finalHeight = manipulated.height;
-
-                } else {
-                    // 🤖 안드로이드(갤럭시): 이 부분으로 들어옵니다.
-                    // 아무런 'manipulateAsync(압축)' 처리를 하지 않고 원본(100%) 그대로 통과시킵니다!
-                }
-
-                processedAssets.push({
-                    ...asset,
-                    uri: finalUri,
-                    width: finalWidth,
-                    height: finalHeight,
-                    originalUri: originalUri,
-                    originalWidth: originalWidth,
-                    originalHeight: originalHeight
-                });
-            }
+            const processedAssets = result.assets.map(asset => ({
+                ...asset,
+                originalUri: asset.uri, // 🌟 어떤 압축도 하지 않고 원본 주소를 영구 보존하여 다음 화면으로 넘김
+            }));
 
             setPhotos(processedAssets);
             await saveDraft('select');
