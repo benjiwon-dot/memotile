@@ -159,12 +159,14 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             // ✨ 핵심 변경: 안드로이드는 무조건 무손실 PNG 포맷을 사용하도록 분기 처리!
             let previewFormat = SaveFormat.JPEG;
 
+            // ✨ PhotoContext.tsx 중간의 안드로이드 분기 부분 수정
             if (!isIOS) {
                 const screenW = Dimensions.get('window').width;
                 const pr = PixelRatio.get();
                 previewW = Math.min(Math.round(screenW * pr), 1440);
                 previewCompress = 1.0;
-                previewFormat = SaveFormat.PNG; // 🌟 안드로이드 JPEG 뭉개짐 원천 차단!
+                // 🚨 PNG는 안드로이드에서 로딩 과부하를 일으키므로 100% 화질의 JPEG로 변경!
+                previewFormat = SaveFormat.JPEG;
             }
 
             const previewResult = await manipulateAsync(

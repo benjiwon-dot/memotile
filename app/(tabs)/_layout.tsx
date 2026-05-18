@@ -2,11 +2,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Tabs, useRouter } from "expo-router";
 import { BlurView } from "expo-blur";
-import { StyleSheet, View, Platform, Alert, Linking } from "react-native"; // ✨ Alert, Linking 추가
+import { StyleSheet, View, Platform, Alert, Linking } from "react-native";
 import { Home, Package, User } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as SplashScreen from "expo-splash-screen";
-import Constants from "expo-constants"; // ✨ 앱 버전 가져오기용 추가
+import Constants from "expo-constants";
 
 // ✨ 푸시 알림 관련 라이브러리 추가
 import * as Notifications from 'expo-notifications';
@@ -19,7 +19,6 @@ import { doc, setDoc } from "firebase/firestore";
 import { colors } from "../../src/theme/colors";
 import { useLanguage } from "../../src/context/LanguageContext";
 
-// ✨ 앱이 켜져 있을 때도 알림이 오도록 설정 (포그라운드 알림)
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
         shouldShowAlert: true,
@@ -28,10 +27,8 @@ Notifications.setNotificationHandler({
     }),
 });
 
-// ✨ 스플래시 강제 유지
 SplashScreen.preventAutoHideAsync().catch(() => { });
 
-// ✨ 푸시 토큰 발급 함수
 async function registerForPushNotificationsAsync() {
     let token;
 
@@ -55,7 +52,6 @@ async function registerForPushNotificationsAsync() {
             console.log('Failed to get push token for push notification!');
             return;
         }
-        // 토큰 발급
         token = (await Notifications.getExpoPushTokenAsync()).data;
         console.log("🔥 발급된 Expo Push Token:", token);
     } else {
@@ -65,7 +61,6 @@ async function registerForPushNotificationsAsync() {
     return token;
 }
 
-// ✨ [강제 업데이트 추가] 버전 비교 보조 함수
 const isUpdateRequired = (current: string, min: string) => {
     const curParts = current.split('.').map(Number);
     const minParts = min.split('.').map(Number);
@@ -78,7 +73,6 @@ const isUpdateRequired = (current: string, min: string) => {
     return false;
 };
 
-
 export default function TabLayout() {
     const { t } = useLanguage();
     const insets = useSafeAreaInsets();
@@ -86,18 +80,16 @@ export default function TabLayout() {
 
     const [appIsReady, setAppIsReady] = useState(false);
 
-    // 🚀 [강제 업데이트 추가] 앱 실행 시 버전 체크
+    // 🚀 [강제 업데이트] 나중을 위해 기능은 살려두고 주석 처리(무력화)만 했습니다!
+    /*
     useEffect(() => {
         const checkAppVersion = async () => {
             try {
-                // 현재 앱 버전 (app.json에 적힌 version 값)
                 const CURRENT_VERSION = Constants.expoConfig?.version || "1.0.0";
-
-                // TODO: 실제 사용하시는 백엔드 API 주소나 Firebase 데이터 경로로 변경하세요!
+                // 🚨 나중에 실제 백엔드 API 주소로 변경하세요!
                 const response = await fetch('https://your-api.com/app-version');
                 const data = await response.json();
 
-                // 서버에서 내려주는 최소 요구 버전 및 스토어 주소 (예시)
                 const { minVersion, appStoreUrl, playStoreUrl } = data;
 
                 if (isUpdateRequired(CURRENT_VERSION, minVersion)) {
@@ -113,17 +105,17 @@ export default function TabLayout() {
                                 }
                             }
                         ],
-                        { cancelable: false } // 뒤로가기나 빈 화면 눌러서 닫기 방지
+                        { cancelable: false }
                     );
                 }
             } catch (error) {
                 console.error("버전 체크 실패:", error);
-                // 서버 통신 실패 시 일단 앱은 켜지도록 둠 (사용자 경험 보호)
             }
         };
 
         checkAppVersion();
     }, []);
+    */
 
     // 💡 1. 스플래시 대기 로직
     useEffect(() => {
@@ -139,12 +131,12 @@ export default function TabLayout() {
         prepare();
     }, []);
 
-    // 🚀 [추가됨] 앱 실행 시 쌓여있던 아이폰 배지 숫자와 알림 센터를 즉시 청소!
+    // 🚀 앱 실행 시 아이폰 배지 숫자/알림 센터 청소
     useEffect(() => {
         const resetBadge = async () => {
             try {
-                await Notifications.dismissAllNotificationsAsync(); // 알림 센터 청소
-                await Notifications.setBadgeCountAsync(0); // 빨간 숫자 0으로 초기화
+                await Notifications.dismissAllNotificationsAsync();
+                await Notifications.setBadgeCountAsync(0);
                 console.log("✅ 앱 실행: 푸시 알림 배지 초기화 완료");
             } catch (error) {
                 console.error("배지 초기화 실패:", error);
@@ -155,7 +147,6 @@ export default function TabLayout() {
 
     // 💡 2. 푸시 알림 세팅 & 알림 클릭 감지 로직
     useEffect(() => {
-        // [A] 로그인 감지 및 토큰 저장
         const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
             if (user) {
                 try {
@@ -170,7 +161,6 @@ export default function TabLayout() {
             }
         });
 
-        // [B] 알림 팝업 클릭 시 '마이 오더'로 이동하는 리스너
         const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
             console.log("알림 클릭 감지됨! 마이 오더로 이동합니다.");
             router.push('/(tabs)/myorder');
@@ -194,7 +184,6 @@ export default function TabLayout() {
 
     return (
         <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
-            {/* 기존 Tabs 코드 그대로 유지 */}
             <Tabs
                 screenOptions={{
                     headerShown: false,
