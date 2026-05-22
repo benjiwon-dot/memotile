@@ -155,17 +155,16 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             const isIOS = Platform.OS === 'ios';
             let previewW = 1280;
             let previewCompress = 0.8;
-
-            // ✨ 핵심 변경: 안드로이드는 무조건 무손실 PNG 포맷을 사용하도록 분기 처리!
             let previewFormat = SaveFormat.JPEG;
 
-            // ✨ PhotoContext.tsx 중간의 안드로이드 분기 부분 수정
+            // 🚀 [핵심 수술 부위: 안드로이드 버퍼링 완벽 차단]
             if (!isIOS) {
                 const screenW = Dimensions.get('window').width;
                 const pr = PixelRatio.get();
-                previewW = Math.min(Math.round(screenW * pr), 1440);
-                previewCompress = 1.0;
-                // 🚨 PNG는 안드로이드에서 로딩 과부하를 일으키므로 100% 화질의 JPEG로 변경!
+                // 프리뷰 해상도를 너무 키우지 않도록 제한
+                previewW = Math.min(Math.round(screenW * pr), 1080);
+                // 기존 1.0(무손실)에서 0.8로 낮춰서 안드로이드 A23 램 초과 다운/버퍼링 방지!
+                previewCompress = 0.8;
                 previewFormat = SaveFormat.JPEG;
             }
 

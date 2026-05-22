@@ -9,8 +9,6 @@ import {
   Alert,
   Image as RNImage,
   Platform,
-  Dimensions,
-  PixelRatio,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -39,13 +37,8 @@ import FilteredImageSkia, { FilteredImageSkiaRef } from "../components/editorRN/
 import { FILTERS } from "../components/editorRN/filters";
 import { IDENTITY, type ColorMatrix } from "../utils/colorMatrix";
 
-import {
-  calculatePrecisionCrop,
-} from "../utils/cropMath";
-import {
-  generatePreviewExport,
-  bakeFilterFromCanvasSnapshot,
-} from "../utils/editorLogic";
+import { calculatePrecisionCrop } from "../utils/cropMath";
+import { generatePreviewExport, bakeFilterFromCanvasSnapshot } from "../utils/editorLogic";
 import { exportQueue } from "../utils/exportQueue";
 
 type EditState = {
@@ -194,7 +187,6 @@ export default function EditorScreen() {
     setIsProcessing(false);
   }, [incomingResolved, outgoingOpacity, incomingOpacity]);
 
-  // ✨ [해결 1] 애플은 4K 원본 렌더링 유지, 안드로이드는 화면 최적화 고화질 프리뷰 사용
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
     const bestUri = Platform.OS === 'ios'
@@ -251,8 +243,6 @@ export default function EditorScreen() {
     };
 
     const resolve = async () => {
-      // ✨ [해결 2] 에디터 화면(UI) 렌더링용 URI 분기 처리
-      // 안드로이드에서 4K 원본을 작은 화면에 강제로 욱여넣을 때 발생하는 픽셀 뭉개짐(Aliasing) 완벽 차단
       let targetUri = Platform.OS === 'ios'
         ? (currentPhoto?.originalUri || currentPhoto?.uri)
         : (currentPhoto?.cachedPreviewUri || currentPhoto?.originalUri || currentPhoto?.uri);
@@ -264,7 +254,6 @@ export default function EditorScreen() {
           return;
         }
 
-        // 안드로이드 content:// 주소는 에디터 엔진이 못 읽을 수 있으므로 파일로 안전하게 1:1 복사만 합니다.
         let inputUri = targetUri;
         if (inputUri.startsWith("content://")) {
           const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
@@ -273,12 +262,29 @@ export default function EditorScreen() {
           inputUri = dest;
         }
 
-        // 🚨 [가장 중요한 변경] 픽셀을 박살내던 manipulateAsync(압축/리사이즈)를 통째로 삭제했습니다!
-        // 어떠한 변환도 거치지 않고, 100% 4K 원본 사이즈를 그대로 에디터(도마)에 올려버립니다.
-        // OOM 방어는 크로스페이드(1장씩 렌더링) 아키텍처가 이미 완벽하게 해주고 있으니 안전합니다.
-        // ✨ 구겨짐 완벽 해결: 원본 화질(compress: 1)을 유지하면서, 꼬여있는 픽셀 방향만 똑바로 다림질합니다.
-        const normalized = await manipulateAsync(inputUri, [], { compress: 1, format: SaveFormat.JPEG });
-        const info = { uri: normalized.uri, width: normalized.width, height: normalized.height };
+        // ==============================================================================
+        // 🚨 [구겨짐 해결 & 버퍼링 감소 핵심 수술부위] 🚨
+        // 안드로이드 폰이 EXIF 방향 정보를 똑바로 읽게 만들고,
+        // 도마(Skia)가 버틸 수 있도록 가로세로 최대 2000px로 아주 살짝만 다림질해서 올립니다.
+        // 이렇게 하면 화질은 훌륭하게 유지하면서 메모리 뻗음과 구겨짐이 완벽히 사라집니다!
+        let finalUri = inputUri;
+        let finalWidth = 1000;
+        let finalHeight = 1000;
+
+        if (Platform.OS === 'android') {
+          // EXIF 방향 교정 (가로/세로 구겨짐 완벽 차단) 및 렌더링 최적화
+          const normalized = await manipulateAsync(inputUri, [{ resize: { width: 2000 } }], { compress: 1, format: SaveFormat.JPEG });
+          finalUri = normalized.uri;
+          finalWidth = normalized.width;
+          finalHeight = normalized.height;
+        } else {
+          const size = await getImageSizeAsync(inputUri);
+          finalWidth = size.width;
+          finalHeight = size.height;
+        }
+        // ==============================================================================
+
+        const info = { uri: finalUri, width: finalWidth, height: finalHeight };
 
         if (!alive) return;
         resolvedCache.current[targetUri] = info;
@@ -286,14 +292,7 @@ export default function EditorScreen() {
 
       } catch (e) {
         console.warn("에디터 로드 실패:", e);
-        try {
-          const s = await getImageSizeAsync(targetUri);
-          const info = { uri: targetUri, width: s.width, height: s.height };
-          if (!alive) return;
-          applyUiForIndex(info);
-        } catch {
-          applyUiForIndex({ uri: targetUri, width: 1000, height: 1000 });
-        }
+        applyUiForIndex({ uri: targetUri, width: 1000, height: 1000 });
       }
     };
 
@@ -306,7 +305,6 @@ export default function EditorScreen() {
     : (activeResolved || initialInfo);
 
   const displayUri = incomingDisplayResolved?.uri || currentPhoto?.uri;
-  // 썸네일(하단 필터바)은 약간 깨져도 속도가 중요하므로 기존 캐시된 썸네일 씁니다.
   const thumbnailUri = (currentPhoto as any)?.cachedThumbnailUri || displayUri;
 
   const activeFilterId = currentUi.filterId;
@@ -542,7 +540,6 @@ export default function EditorScreen() {
           let cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
           let cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
 
-          // 크롭(오려내기)은 픽셀 열화를 발생시키지 않습니다. 안전합니다!
           const hrCrop = await manipulateAsync(
             originalSourceUri,
             [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],
