@@ -2,7 +2,7 @@
     "expo": {
         "name": "MemoTile",
         "slug": "memotile-app-anti",
-        "version": "1.1.5",
+        "version": "1.1.6",
         "orientation": "portrait",
         "icon": "./assets/icon.png",
         "userInterfaceStyle": "light",
@@ -71,11 +71,16 @@
             }
         },
         "android": {
-            "versionCode": 5,
+            "versionCode": 7,
             "package": "com.memotile.android",
             "googleServicesFile": "./google-services.json",
             "adaptiveIcon": {
-                "foregroundImage": "./assets/adaptive-icon.png",
+                "foregroundImage": "./assets/icon_android.png",
+                "backgroundColor": "#ffffff"
+            },
+            "splash": {
+                "image": "./assets/splash_android.png",
+                "resizeMode": "contain",
                 "backgroundColor": "#ffffff"
             },
             "permissions": [
@@ -116,7 +121,7 @@
             },
             "googleExpoClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
             "googleIosClientId": "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com",
-            "googleAndroidClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com",
+            "googleAndroidClientId": "459952418126-tdgvbf25v41314h0gcpgik3shp1ul3jc.apps.googleusercontent.com",
             "googleWebClientId": "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com"
         }
     }

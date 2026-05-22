@@ -1,6 +1,6 @@
 // src/components/editorRN/FilteredImageSkia.tsx
 import React, { useMemo } from "react";
-import { View, type ViewStyle } from "react-native";
+import { View, Platform, type ViewStyle } from "react-native"; // ✨ Platform 추가
 import {
     Canvas,
     Image as SkiaImage,
@@ -8,7 +8,6 @@ import {
     Skia,
     useImage,
     useCanvasRef,
-    // ✨ [해결의 열쇠 1] 안드로이드 Skia 픽셀 깨짐을 막아주는 마법의 엔진
     FilterMode,
     MipmapMode
 } from "@shopify/react-native-skia";
@@ -126,8 +125,8 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
                             height={H}
                             fit="cover"
                             paint={imagePaint}
-                            // ✨ [해결의 열쇠 2] 강제로 "고화질 스무딩" 옵션을 먹여서 계단 현상(자글자글)을 없앱니다!
-                            sampling={{ filter: FilterMode.Linear, mipmap: MipmapMode.Linear }}
+                            // ✨ [해결의 열쇠] 애플(iOS)은 완벽히 차단하고, 안드로이드에서만 고화질 스무딩(계단 현상 제거)을 강제 적용합니다!
+                            sampling={Platform.OS === 'android' ? { filter: FilterMode.Linear, mipmap: MipmapMode.Linear } : undefined}
                         />
                     ) : (
                         <Rect x={0} y={0} width={W} height={H} color="transparent" />

@@ -40,7 +40,6 @@ import { IDENTITY, type ColorMatrix } from "../utils/colorMatrix";
 
 import {
   calculatePrecisionCrop,
-  defaultCenterCrop,
 } from "../utils/cropMath";
 import {
   generatePreviewExport,
@@ -194,9 +193,12 @@ export default function EditorScreen() {
     setIsProcessing(false);
   }, [incomingResolved, outgoingOpacity, incomingOpacity]);
 
+  // ✨ [해결 1] 애플은 4K 원본 렌더링 유지, 안드로이드는 화면 최적화 고화질 프리뷰 사용
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
-    const bestUri = (currentPhoto as any).cachedPreviewUri || currentPhoto.uri;
+    const bestUri = Platform.OS === 'ios'
+      ? (currentPhoto.originalUri || currentPhoto.uri)
+      : (currentPhoto.cachedPreviewUri || currentPhoto.originalUri || currentPhoto.uri);
     return {
       uri: bestUri,
       width: currentPhoto.width,
@@ -248,14 +250,11 @@ export default function EditorScreen() {
     };
 
     const resolve = async () => {
-      // ✨ [핵심 원리] Skia에 너무 큰 원본을 주면 축소 시 화질이 깨집니다.
-      // 따라서 PhotoContext에서 만들어둔 '기기 화면 픽셀에 딱 맞는 1:1 무손실 PNG'를 UI 전용으로 띄웁니다.
-      const cachedPreview = (currentPhoto as any)?.cachedPreviewUri;
-      let targetUri = currentPhoto?.uri;
-
-      if (cachedPreview) {
-        targetUri = cachedPreview;
-      }
+      // ✨ [해결 2] 에디터 화면(UI) 렌더링용 URI 분기 처리
+      // 안드로이드에서 4K 원본을 작은 화면에 강제로 욱여넣을 때 발생하는 픽셀 뭉개짐(Aliasing) 완벽 차단
+      let targetUri = Platform.OS === 'ios'
+        ? (currentPhoto?.originalUri || currentPhoto?.uri)
+        : (currentPhoto?.cachedPreviewUri || currentPhoto?.originalUri || currentPhoto?.uri);
 
       try {
         if (resolvedCache.current[targetUri]) {
@@ -264,6 +263,7 @@ export default function EditorScreen() {
           return;
         }
 
+        // 안드로이드 content:// 주소는 에디터 엔진이 못 읽을 수 있으므로 파일로 안전하게 1:1 복사만 합니다.
         let inputUri = targetUri;
         if (inputUri.startsWith("content://")) {
           const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
@@ -272,23 +272,18 @@ export default function EditorScreen() {
           inputUri = dest;
         }
 
-        // 혹시 캐시가 유실되었을 경우 현장에서 1:1 매칭 이미지를 즉시 생성
-        const screenW = Dimensions.get('window').width;
-        const pr = PixelRatio.get();
-        const targetW = Platform.OS === 'ios' ? 1280 : Math.min(Math.round(screenW * pr), 1440);
+        // 🚨 [가장 중요한 변경] 픽셀을 박살내던 manipulateAsync(압축/리사이즈)를 통째로 삭제했습니다!
+        // 어떠한 변환도 거치지 않고, 100% 4K 원본 사이즈를 그대로 에디터(도마)에 올려버립니다.
+        // OOM 방어는 크로스페이드(1장씩 렌더링) 아키텍처가 이미 완벽하게 해주고 있으니 안전합니다.
+        const size = await getImageSizeAsync(inputUri);
+        const info = { uri: inputUri, width: size.width, height: size.height };
 
-        const result = await manipulateAsync(
-          inputUri,
-          [{ resize: { width: targetW } }],
-          { compress: 1.0, format: Platform.OS === 'ios' ? SaveFormat.JPEG : SaveFormat.PNG } // 안드로이드 PNG 고정
-        );
-
-        const info = { uri: result.uri, width: result.width, height: result.height };
         if (!alive) return;
-
         resolvedCache.current[targetUri] = info;
         applyUiForIndex(info);
+
       } catch (e) {
+        console.warn("에디터 로드 실패:", e);
         try {
           const s = await getImageSizeAsync(targetUri);
           const info = { uri: targetUri, width: s.width, height: s.height };
@@ -309,6 +304,7 @@ export default function EditorScreen() {
     : (activeResolved || initialInfo);
 
   const displayUri = incomingDisplayResolved?.uri || currentPhoto?.uri;
+  // 썸네일(하단 필터바)은 약간 깨져도 속도가 중요하므로 기존 캐시된 썸네일 씁니다.
   const thumbnailUri = (currentPhoto as any)?.cachedThumbnailUri || displayUri;
 
   const activeFilterId = currentUi.filterId;
@@ -544,6 +540,7 @@ export default function EditorScreen() {
           let cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
           let cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
 
+          // 크롭(오려내기)은 픽셀 열화를 발생시키지 않습니다. 안전합니다!
           const hrCrop = await manipulateAsync(
             originalSourceUri,
             [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],

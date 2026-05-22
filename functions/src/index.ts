@@ -734,7 +734,7 @@ export const adminExportPrinterJSON = onCall(
             const filename = `memotile_printer_${Date.now()}.json`;
             const [url] = await file.getSignedUrl({
                 action: "read",
-                expires: Date.now() + 1000 * 60 * 60,
+                expires: Date.now() + 1000 * 60 * 60 * 24 * 7,
                 responseDisposition: `attachment; filename="${filename}"`,
                 responseType: "application/json",
             });
@@ -952,6 +952,68 @@ export const onPrintFileFinalized = onObjectFinalized(
 /* =========================================================================
    SCHEDULED FUNCTIONS
    ========================================================================= */
+
+// ✨ 추가된 로직: 24시간 지난 결제 대기(pending) 주문 완전 삭제 (매일 새벽 4시)
+export const cleanupAbandonedPendingOrders = onSchedule("0 4 * * *", async (event) => {
+    const db = getFirestore();
+    const bucket = getStorage().bucket();
+    const now = new Date();
+
+    // 24시간 전 시간 계산
+    const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
+
+    try {
+        const snapshot = await db.collection("orders")
+            .where("status", "==", "pending")
+            .where("createdAt", "<=", twentyFourHoursAgo)
+            .get();
+
+        if (snapshot.empty) {
+            console.log("삭제할 쓰레기 데이터가 없습니다.");
+            return;
+        }
+
+        const batch = db.batch();
+        let deletedCount = 0;
+
+        for (const docSnap of snapshot.docs) {
+            const data = docSnap.data();
+            const orderRef = docSnap.ref;
+
+            // 1. Storage 사진 찌꺼기 영구 삭제
+            if (data.storageBasePath) {
+                try {
+                    await bucket.deleteFiles({ prefix: data.storageBasePath });
+                } catch (storageErr) {
+                    console.error(`[Storage 삭제 실패] 경로: ${data.storageBasePath}`, storageErr);
+                }
+            }
+
+            // 2. 하위 items 컬렉션(사진 개별 정보) 삭제
+            const itemsSnap = await orderRef.collection("items").get();
+            itemsSnap.forEach(item => batch.delete(item.ref));
+
+            // 3. 본 주문서 삭제
+            batch.delete(orderRef);
+            deletedCount++;
+        }
+
+        await batch.commit();
+
+        console.log(`🧹 [자동 청소 완료] 24시간 경과된 Pending 주문 ${deletedCount}건 및 데이터 영구 삭제됨.`);
+
+        // 슬랙 알림 전송 (옵션)
+        try {
+            await axios.post(SLACK_WEBHOOK_URL, {
+                text: `🧹 *[자동 청소 완료]* 24시간이 지난 결제 미완료(pending) 더미 주문 *${deletedCount}건* 및 관련 사진 데이터가 영구 삭제되었습니다.`
+            });
+        } catch (e) { }
+
+    } catch (e) {
+        console.error("cleanupAbandonedPendingOrders 실행 중 오류 발생:", e);
+    }
+});
+
 export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
     const db = getFirestore();
     const now = new Date();

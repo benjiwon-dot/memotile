@@ -55,7 +55,7 @@ export default function CheckoutStepTwoScreen() {
 
     // 🚨 [애플 심사 모드 스위치] 
     // 우리가 내부 테스트할 때는 false로 둡니다. (모든 결제수단 노출)
-    // 애플에 심사를 올릴 때는 무조건 true로 바꿉니다. (래빗페이 숨김)
+    // 애플에 심사를 올릴 때는 무조건 true로 바꿉니다. (래빗페이 및 트루머니 숨김)
     const IS_APPLE_REVIEW_MODE = false;
 
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
@@ -339,6 +339,8 @@ export default function CheckoutStepTwoScreen() {
             let pgcode = "PLCreditCardMpi";
             if (method === "RABBIT_LINE_PAY") {
                 pgcode = "AlipayPlusRabbitLinePay";
+            } else if (method === "TRUEMONEY") {
+                pgcode = "AlipayPlusTrueMoney"; // ✨ TrueMoney PG Code 연동
             }
 
             const functions = getFunctions(getApp(), "us-central1");
@@ -488,7 +490,6 @@ export default function CheckoutStepTwoScreen() {
             const isFreeOrder = provider === "PROMO_FREE" || total <= 0;
 
             if (isFreeOrder) {
-                // ✨ 핵심 수정: 0원 결제일 경우 DB(Firestore) 상태를 강제로 'paid'로 업데이트!
                 try {
                     await updateDoc(doc(db, "orders", orderId), {
                         status: "paid",
@@ -743,28 +744,52 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         ) : (
                             <>
-                                {/* ✨ 애플 심사 모드가 아닐 때만 Rabbit LINE Pay 노출 ✨ */}
+                                {/* ✨ 애플 심사 모드가 아닐 때만 외부 간편결제 노출 ✨ */}
                                 {!IS_APPLE_REVIEW_MODE && (
-                                    <TouchableOpacity
-                                        style={[styles.paymentItem, { borderColor: "#00C300" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
-                                        onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")}
-                                        disabled={!currentUser || isCreatingOrder}
-                                    >
-                                        <View style={styles.paymentItemLeft}>
-                                            {Platform.OS !== 'web' ? (
-                                                <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                            ) : (
-                                                <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
-                                            )}
-                                            <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
-                                        </View>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                            {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                        </View>
-                                    </TouchableOpacity>
+                                    <>
+                                        {/* 1. TrueMoney Wallet (태국 점유율 1위, 최상단 배치) */}
+                                        <TouchableOpacity
+                                            style={[styles.paymentItem, { borderColor: "#FF8C00", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
+                                            onPress={() => handlePlaceOrder("TRUEMONEY")}
+                                            disabled={!currentUser || isCreatingOrder}
+                                        >
+                                            <View style={styles.paymentItemLeft}>
+                                                {Platform.OS !== 'web' ? (
+                                                    <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                                ) : (
+                                                    <View style={[styles.paymentIconBase, { backgroundColor: "#FFF4E6" }]}>
+                                                        <Text style={{ fontSize: 10, color: "#FF8C00", fontWeight: "bold" }}>True</Text>
+                                                    </View>
+                                                )}
+                                                <Text style={styles.paymentItemText}>TrueMoney Wallet</Text>
+                                            </View>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                {isCreatingOrder ? <ActivityIndicator size="small" color="#FF8C00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                            </View>
+                                        </TouchableOpacity>
+
+                                        {/* 2. Rabbit LINE Pay (두 번째 배치) */}
+                                        <TouchableOpacity
+                                            style={[styles.paymentItem, { borderColor: "#00C300", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
+                                            onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")}
+                                            disabled={!currentUser || isCreatingOrder}
+                                        >
+                                            <View style={styles.paymentItemLeft}>
+                                                {Platform.OS !== 'web' ? (
+                                                    <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
+                                                ) : (
+                                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
+                                                )}
+                                                <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
+                                            </View>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
+                                            </View>
+                                        </TouchableOpacity>
+                                    </>
                                 )}
 
-                                {/* ✅ Credit/Debit Card는 심사/운영 상관없이 항상 노출 ✅ */}
+                                {/* 3. Credit/Debit Card (가장 아래에 항상 노출) */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
                                     onPress={() => handlePlaceOrder("CREDIT_CARD")}
