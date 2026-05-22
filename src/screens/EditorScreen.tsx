@@ -275,8 +275,9 @@ export default function EditorScreen() {
         // 🚨 [가장 중요한 변경] 픽셀을 박살내던 manipulateAsync(압축/리사이즈)를 통째로 삭제했습니다!
         // 어떠한 변환도 거치지 않고, 100% 4K 원본 사이즈를 그대로 에디터(도마)에 올려버립니다.
         // OOM 방어는 크로스페이드(1장씩 렌더링) 아키텍처가 이미 완벽하게 해주고 있으니 안전합니다.
-        const size = await getImageSizeAsync(inputUri);
-        const info = { uri: inputUri, width: size.width, height: size.height };
+        // ✨ 구겨짐 완벽 해결: 원본 화질(compress: 1)을 유지하면서, 꼬여있는 픽셀 방향만 똑바로 다림질합니다.
+        const normalized = await manipulateAsync(inputUri, [], { compress: 1, format: SaveFormat.JPEG });
+        const info = { uri: normalized.uri, width: normalized.width, height: normalized.height };
 
         if (!alive) return;
         resolvedCache.current[targetUri] = info;
