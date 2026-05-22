@@ -22,7 +22,7 @@ import { colors } from "../theme/colors";
 // Firebase / Auth / Firestore
 import { auth } from "../lib/firebase";
 import { User, GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { doc, getDoc, getFirestore } from "firebase/firestore"; // ✨ Firestore 추가
+import { doc, getDoc, getFirestore } from "firebase/firestore";
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
 
 // ✨ Apple Auth Imports
@@ -132,16 +132,24 @@ export default function CheckoutStepOneScreen() {
         if (authError) Alert.alert("Login Error", authError);
     }, [authError]);
 
+    // 🚀 [수술 부위 1] 안드로이드 구글 토큰 수령 구조 최적화 (유령 경로 이탈 차단)
     useEffect(() => {
         if (Platform.OS !== 'web' && response?.type === "success") {
-            const { id_token } = response.params;
-            const credential = GoogleAuthProvider.credential(id_token);
+            // 안드로이드 네이티브와 Expo 환경 모두 대응할 수 있도록 토큰 추출 다변화
+            const idToken = response.authentication?.idToken || response.params?.id_token || response.params?.idToken;
+
+            if (!idToken) {
+                console.error("Google response 획득 성공했으나 idToken이 누락되었습니다.");
+                return;
+            }
+
+            const credential = GoogleAuthProvider.credential(idToken);
             signInWithCredential(auth, credential)
                 .then(() => {
-                    console.log("Google Sign-In success to Firebase");
+                    console.log("Google Sign-In success to Firebase from Checkout");
                 })
                 .catch((error) => {
-                    console.error("Firebase Sign-In Error", error);
+                    console.error("Firebase Sign-In Error at Checkout", error);
                     Alert.alert("Login Failed", error.message);
                 });
         }
@@ -344,7 +352,6 @@ export default function CheckoutStepOneScreen() {
                                     </Text>
                                 </View>
 
-                                {/* ⭐️ Apple 로그인을 Google 로그인 위로 배치 */}
                                 {Platform.OS === "ios" && (
                                     <LoginButton
                                         text={(t as any)["auth.signinApple"] || "Continue with Apple"}
