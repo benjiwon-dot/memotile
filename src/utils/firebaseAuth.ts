@@ -92,7 +92,6 @@ export const useGoogleAuthRequest = () => {
     // =========================================================================
     const googleWebClientId = "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com";
     const googleIosClientId = "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com";
-    // 🚨 유령 ID(8v20...) 영구 박멸! 아래가 진짜 최신 안드로이드 ID입니다.
     const googleAndroidClientId = "459952418126-tdgvbf25v41314h0gcpgik3shp1ul3jc.apps.googleusercontent.com";
     // =========================================================================
 
@@ -100,26 +99,26 @@ export const useGoogleAuthRequest = () => {
     if (!googleIosClientId) console.warn("[GoogleAuth] Missing Google iOS Client ID");
     if (!googleAndroidClientId) console.warn("[GoogleAuth] Missing Google Android Client ID");
 
-    // Exact Native Redirect required by Google iOS
-    const googleScheme = googleIosClientId
-        ? `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`
-        : "com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm";
-
-    // ✅ 웹과 앱 환경을 분리하여 리다이렉트 URI 설정
+    // ✅ 웹, 아이폰, 갤럭시 환경을 완벽하게 분리하여 리다이렉트 URI 설정!
     const redirectUri = useMemo(() => {
         if (Platform.OS === 'web') {
-            // 웹(Vercel) 환경에서는 /auth 라우트로 리다이렉트
-            return makeRedirectUri({
-                path: "auth",
-            });
+            // 웹(Vercel) 환경
+            return makeRedirectUri({ path: "auth" });
         }
 
-        // 앱 환경
+        // 💡 핵심 수술: 아이폰은 아이폰 주소로, 갤럭시는 갤럭시 주소로 완벽 분리!
+        let scheme = "";
+        if (Platform.OS === 'ios') {
+            scheme = `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`;
+        } else if (Platform.OS === 'android') {
+            scheme = `com.googleusercontent.apps.${googleAndroidClientId.split(".")[0]}`;
+        }
+
         return makeRedirectUri({
-            native: isExpoGo ? undefined : `${googleScheme}:/oauthredirect`,
+            native: isExpoGo ? undefined : `${scheme}:/oauthredirect`,
             path: "oauthredirect",
         });
-    }, [isExpoGo, googleScheme]);
+    }, [isExpoGo, googleIosClientId, googleAndroidClientId]);
 
     // IMPORTANT: To avoid audience mismatch (auth/invalid-credential), 
     // the Google id_token must be issued for the WEB client ID.
@@ -188,14 +187,14 @@ export const useGoogleAuthRequest = () => {
     }, [response]);
 
     const promptAsyncFixed = useCallback((options?: any) => {
-        if (!googleWebClientId || !googleIosClientId) {
+        if (!googleWebClientId || !googleIosClientId || !googleAndroidClientId) {
             console.error("[GoogleAuth] Missing required client IDs in code");
             return Promise.reject("Configuration error: Missing Google Client IDs.");
         }
         return promptAsync({
             ...options,
         });
-    }, [promptAsync, googleWebClientId, googleIosClientId]);
+    }, [promptAsync, googleWebClientId, googleIosClientId, googleAndroidClientId]);
 
     return {
         request,
