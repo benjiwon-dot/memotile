@@ -1,3 +1,4 @@
+// src/lib/firebaseAuth.ts
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "./firebase";
 

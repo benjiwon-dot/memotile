@@ -26,6 +26,8 @@ import {
     signInWithCredential
 } from "firebase/auth";
 
+// 💡 [수정] Firestore 데이터베이스 저장을 위한 패키지 추가
+import { getFirestore, doc, setDoc } from "firebase/firestore";
 import { auth } from "../lib/firebase";
 
 import {
@@ -70,8 +72,9 @@ export default function AuthEmailScreen() {
 
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
+    // 💡 [수정] 로그인 완료 시 기기 정보를 파이어베이스 DB에 수집하는 로직 전면 주입
     useEffect(() => {
-        const unsub = auth.onAuthStateChanged((user) => {
+        const unsub = auth.onAuthStateChanged(async (user) => { // async 키워드 추가
             if (user && !navHandledRef.current) {
                 const isOAuth = user.providerData.some(p => p.providerId === 'google.com' || p.providerId === 'apple.com');
 
@@ -79,6 +82,22 @@ export default function AuthEmailScreen() {
                 const isTestAccount = user.email ? TEST_ACCOUNTS.includes(user.email) : false;
 
                 if (isOAuth || user.emailVerified || isTestAccount) {
+
+                    // ==========================================================
+                    // 🚀 [마케팅 기기 추적 코드 추가] 유저 로그인 통과 시 Firestore에 저장
+                    // ==========================================================
+                    try {
+                        const db = getFirestore();
+                        await setDoc(doc(db, "users", user.uid), {
+                            email: user.email,
+                            platform: Platform.OS, // 폰 기기에 따라 자동으로 'ios' 또는 'android' 저장
+                            lastLoginAt: new Date()
+                        }, { merge: true }); // merge: true를 주어야 기존 데이터 유실을 막습니다.
+                    } catch (e) {
+                        console.error("대시보드용 유저 기기 정보 저장 실패:", e);
+                    }
+                    // ==========================================================
+
                     navHandledRef.current = true;
                     if (router.canGoBack()) {
                         router.back();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Platform } from "react-native"; // ✅ Platform 추가
+import { Platform } from "react-native";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
 import Constants from "expo-constants";
@@ -87,14 +87,18 @@ export const useGoogleAuthRequest = () => {
 
     const isExpoGo = Constants.appOwnership === "expo";
 
-    // Environment Variables (Audience Fix)
-    const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-    const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
-    const googleAndroidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
+    // =========================================================================
+    // 🚀 [수술 완료] Environment Variables 낚시 차단 및 진짜 최신 ID 하드코딩
+    // =========================================================================
+    const googleWebClientId = "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com";
+    const googleIosClientId = "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com";
+    // 🚨 유령 ID(8v20...) 영구 박멸! 아래가 진짜 최신 안드로이드 ID입니다.
+    const googleAndroidClientId = "459952418126-tdgvbf25v41314h0gcpgik3shp1ul3jc.apps.googleusercontent.com";
+    // =========================================================================
 
-    if (!googleWebClientId) console.warn("[GoogleAuth] Missing EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID");
-    if (!googleIosClientId) console.warn("[GoogleAuth] Missing EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID");
-    if (!googleAndroidClientId) console.warn("[GoogleAuth] Missing EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID");
+    if (!googleWebClientId) console.warn("[GoogleAuth] Missing Google Web Client ID");
+    if (!googleIosClientId) console.warn("[GoogleAuth] Missing Google iOS Client ID");
+    if (!googleAndroidClientId) console.warn("[GoogleAuth] Missing Google Android Client ID");
 
     // Exact Native Redirect required by Google iOS
     const googleScheme = googleIosClientId
@@ -120,10 +124,10 @@ export const useGoogleAuthRequest = () => {
     // IMPORTANT: To avoid audience mismatch (auth/invalid-credential), 
     // the Google id_token must be issued for the WEB client ID.
     const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        clientId: googleWebClientId ?? "", // Force audience to Web Client ID
-        webClientId: googleWebClientId ?? "",
-        iosClientId: googleIosClientId ?? undefined,
-        androidClientId: googleAndroidClientId ?? undefined,
+        clientId: googleWebClientId, // Force audience to Web Client ID
+        webClientId: googleWebClientId,
+        iosClientId: googleIosClientId,
+        androidClientId: googleAndroidClientId,
         scopes: ["openid", "profile", "email"],
         usePKCE: true,
         redirectUri,
@@ -185,7 +189,7 @@ export const useGoogleAuthRequest = () => {
 
     const promptAsyncFixed = useCallback((options?: any) => {
         if (!googleWebClientId || !googleIosClientId) {
-            console.error("[GoogleAuth] Missing required client IDs in .env");
+            console.error("[GoogleAuth] Missing required client IDs in code");
             return Promise.reject("Configuration error: Missing Google Client IDs.");
         }
         return promptAsync({
