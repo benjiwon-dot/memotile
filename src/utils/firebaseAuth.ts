@@ -102,28 +102,28 @@ export const useGoogleAuthRequest = () => {
     // ✅ 웹, 아이폰, 갤럭시 환경을 완벽하게 분리하여 리다이렉트 URI 설정!
     const redirectUri = useMemo(() => {
         if (Platform.OS === 'web') {
-            // 웹(Vercel) 환경
-            return makeRedirectUri({ path: "auth" });
+            // 웹(Vercel) 환경에서는 /auth 라우트로 리다이렉트
+            return makeRedirectUri({
+                path: "auth",
+            });
         }
 
-        // 💡 핵심 수술: 아이폰은 아이폰 주소로, 갤럭시는 갤럭시 주소로 완벽 분리!
-        let scheme = "";
-        if (Platform.OS === 'ios') {
-            scheme = `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`;
-        } else if (Platform.OS === 'android') {
-            scheme = `com.googleusercontent.apps.${googleAndroidClientId.split(".")[0]}`;
-        }
+        // 💡 핵심 수술 1: 아이폰은 구글 규격 주소로, 갤럭시는 앱 고유 패키지명으로 분리
+        const scheme = Platform.OS === 'ios'
+            ? `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`
+            : "com.memotile.android";
 
         return makeRedirectUri({
             native: isExpoGo ? undefined : `${scheme}:/oauthredirect`,
             path: "oauthredirect",
         });
-    }, [isExpoGo, googleIosClientId, googleAndroidClientId]);
+    }, [isExpoGo, googleIosClientId]);
 
     // IMPORTANT: To avoid audience mismatch (auth/invalid-credential), 
     // the Google id_token must be issued for the WEB client ID.
     const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        clientId: googleWebClientId, // Force audience to Web Client ID
+        // 💡 핵심 수술 2: 안드로이드일 때는 웹 클라이언트 ID를 강제하지 않도록 분리 (Custom URI 에러 방지)
+        ...(Platform.OS !== 'android' ? { clientId: googleWebClientId } : {}),
         webClientId: googleWebClientId,
         iosClientId: googleIosClientId,
         androidClientId: googleAndroidClientId,
@@ -135,7 +135,7 @@ export const useGoogleAuthRequest = () => {
     const [isSigningIn, setIsSigningIn] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // DEV 로그
+    // DEV 로그 (기존 추적 로직 100% 유지)
     useEffect(() => {
         if (!__DEV__ || !request) return;
         console.log("[GoogleAuth] clientIds", {
