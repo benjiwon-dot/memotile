@@ -136,6 +136,8 @@ export default function Index() {
             allowsMultipleSelection: true,
             selectionLimit: 20,
             quality: 1, // 🌟 애플, 안드로이드 모두 '무조건 최고화질 원본' 요청
+            exif: false, // ✨ [추가됨] 안드로이드 갤러리 앱이 멋대로 회전/압축하는 것을 방지
+            base64: false, // ✨ [추가됨] 메모리 오버플로우 방지 (순수 URI만 사용)
         });
 
         if (!result.canceled && result.assets?.length) {
