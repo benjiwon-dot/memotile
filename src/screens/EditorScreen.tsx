@@ -16,6 +16,9 @@ import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
 
+// 🚀 [스마트 램(RAM) 감지 엔진 탑재] 
+import * as Device from 'expo-device';
+
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -100,6 +103,13 @@ const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
   if (y + size > srcH) y = Math.max(0, srcH - size);
 
   return { x, y, width: size, height: size, isValid: true };
+};
+
+// 🚀 [핵심 분기 로직] 램 6GB 이상 고사양 폰 판독기 (OS 가용 오차 고려하여 5.5GB 기준)
+const isHighEndDevice = () => {
+  if (Platform.OS === 'ios' || Platform.OS === 'web') return true;
+  const ramGB = (Device.totalMemory || 0) / (1024 * 1024 * 1024);
+  return ramGB >= 5.5;
 };
 
 export default function EditorScreen() {
@@ -189,7 +199,13 @@ export default function EditorScreen() {
 
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
-    const bestUri = currentPhoto.originalUri || currentPhoto.uri;
+
+    // 🚀 아이폰이거나 램 6GB 이상 고사양 갤럭시면 무조건 원본(쨍한 화질) 적용!
+    const isHighEnd = isHighEndDevice();
+    const bestUri = isHighEnd
+      ? (currentPhoto.originalUri || currentPhoto.uri)
+      : (currentPhoto.cachedPreviewUri || currentPhoto.originalUri || currentPhoto.uri);
+
     return {
       uri: bestUri,
       width: currentPhoto.width,
@@ -241,7 +257,13 @@ export default function EditorScreen() {
     };
 
     const resolve = async () => {
-      let targetUri = currentPhoto?.originalUri || currentPhoto?.uri;
+      const isHighEnd = isHighEndDevice();
+
+      // 🚀 아이폰 및 6GB 이상 플래그십 갤럭시는 원본 초고화질 적용
+      // 🚀 4GB 보급형(A23 등)은 튕김을 막기 위해 1800px 최적화 프리뷰 적용
+      let targetUri = isHighEnd
+        ? (currentPhoto?.originalUri || currentPhoto?.uri)
+        : (currentPhoto?.cachedPreviewUri || currentPhoto?.originalUri || currentPhoto?.uri);
 
       try {
         if (resolvedCache.current[targetUri]) {
@@ -258,36 +280,11 @@ export default function EditorScreen() {
           inputUri = dest;
         }
 
-        let finalUri = inputUri;
-        let finalWidth = 1000;
-        let finalHeight = 1000;
+        const size = await getImageSizeAsync(inputUri);
+        const finalWidth = size.width;
+        const finalHeight = size.height;
 
-        if (Platform.OS === 'android') {
-          // 🚀 [스마트 다림질 핵심] 안드로이드 Skia 렌더링에 완벽한 스윗 스팟: 1200px!
-          // 원본이 4000px이어도, 에디터 "화면"에는 1200px로 픽셀을 부드럽게 압축해서 올립니다.
-          // 이렇게 해야 자글거림(Aliasing)이 원천 차단됩니다. (실제 인쇄 시엔 원본을 다시 쓰니 화질 저하 0%)
-          const size = await getImageSizeAsync(inputUri);
-          const actions: any[] = [];
-
-          const MAX_EDITOR_SIZE = 1200;
-
-          if (size.width > MAX_EDITOR_SIZE || size.height > MAX_EDITOR_SIZE) {
-            const scale = MAX_EDITOR_SIZE / Math.max(size.width, size.height);
-            actions.push({ resize: { width: Math.round(size.width * scale) } });
-          }
-
-          // format을 1(최고 화질)로 유지하여 노이즈 제거
-          const normalized = await manipulateAsync(inputUri, actions, { compress: 1, format: SaveFormat.JPEG });
-          finalUri = normalized.uri;
-          finalWidth = normalized.width;
-          finalHeight = normalized.height;
-        } else {
-          const size = await getImageSizeAsync(inputUri);
-          finalWidth = size.width;
-          finalHeight = size.height;
-        }
-
-        const info = { uri: finalUri, width: finalWidth, height: finalHeight };
+        const info = { uri: inputUri, width: finalWidth, height: finalHeight };
 
         if (!alive) return;
         resolvedCache.current[targetUri] = info;
@@ -535,7 +532,6 @@ export default function EditorScreen() {
 
       if (currentUi.filterId !== "original") {
         try {
-          // 🚨 인쇄용 파일은 무조건 4K 원본(originalUri)을 가져오므로 인쇄 화질은 전혀 걱정하실 필요가 없습니다!
           const originalSourceUri = photo.originalUri || photo.sourceUri || photo.uri;
           const trueMeta = await manipulateAsync(originalSourceUri, []);
 
@@ -801,7 +797,17 @@ export default function EditorScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
-  cropHintWrapper: { position: 'absolute', top: 40, left: 0, right: 0, alignItems: 'center', zIndex: 100 },
+
+  // 🚀 안드로이드는 상단 바에 겹치지 않게 밑으로 쑥! (80)
+  cropHintWrapper: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 40 : 80,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 100
+  },
+
   cropHintBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, gap: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
   cropHintText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
