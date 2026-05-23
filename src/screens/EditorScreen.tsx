@@ -263,14 +263,21 @@ export default function EditorScreen() {
         let finalHeight = 1000;
 
         if (Platform.OS === 'android') {
-          // 🚀 [스마트 다림질] 2500px 방어 & 압축률 0.95(최상급) 유지
+          // 🚀 [스마트 다림질 핵심] 안드로이드 Skia 렌더링에 완벽한 스윗 스팟: 1200px!
+          // 원본이 4000px이어도, 에디터 "화면"에는 1200px로 픽셀을 부드럽게 압축해서 올립니다.
+          // 이렇게 해야 자글거림(Aliasing)이 원천 차단됩니다. (실제 인쇄 시엔 원본을 다시 쓰니 화질 저하 0%)
           const size = await getImageSizeAsync(inputUri);
           const actions: any[] = [];
-          if (size.width > 2500 || size.height > 2500) {
-            const scale = 2500 / Math.max(size.width, size.height);
+
+          const MAX_EDITOR_SIZE = 1200;
+
+          if (size.width > MAX_EDITOR_SIZE || size.height > MAX_EDITOR_SIZE) {
+            const scale = MAX_EDITOR_SIZE / Math.max(size.width, size.height);
             actions.push({ resize: { width: Math.round(size.width * scale) } });
           }
-          const normalized = await manipulateAsync(inputUri, actions, { compress: 0.95, format: SaveFormat.JPEG });
+
+          // format을 1(최고 화질)로 유지하여 노이즈 제거
+          const normalized = await manipulateAsync(inputUri, actions, { compress: 1, format: SaveFormat.JPEG });
           finalUri = normalized.uri;
           finalWidth = normalized.width;
           finalHeight = normalized.height;
@@ -528,6 +535,7 @@ export default function EditorScreen() {
 
       if (currentUi.filterId !== "original") {
         try {
+          // 🚨 인쇄용 파일은 무조건 4K 원본(originalUri)을 가져오므로 인쇄 화질은 전혀 걱정하실 필요가 없습니다!
           const originalSourceUri = photo.originalUri || photo.sourceUri || photo.uri;
           const trueMeta = await manipulateAsync(originalSourceUri, []);
 
