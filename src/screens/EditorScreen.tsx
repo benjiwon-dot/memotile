@@ -262,18 +262,15 @@ export default function EditorScreen() {
           inputUri = dest;
         }
 
-        // ==============================================================================
-        // 🚨 [구겨짐 해결 & 버퍼링 감소 핵심 수술부위] 🚨
-        // 안드로이드 폰이 EXIF 방향 정보를 똑바로 읽게 만들고,
-        // 도마(Skia)가 버틸 수 있도록 가로세로 최대 2000px로 아주 살짝만 다림질해서 올립니다.
-        // 이렇게 하면 화질은 훌륭하게 유지하면서 메모리 뻗음과 구겨짐이 완벽히 사라집니다!
         let finalUri = inputUri;
         let finalWidth = 1000;
         let finalHeight = 1000;
 
         if (Platform.OS === 'android') {
-          // EXIF 방향 교정 (가로/세로 구겨짐 완벽 차단) 및 렌더링 최적화
-          const normalized = await manipulateAsync(inputUri, [{ resize: { width: 2000 } }], { compress: 1, format: SaveFormat.JPEG });
+          // 🚀 [핵심 수술 부위: 화질 박살내는 뻥튀기 코드 완전 삭제!]
+          // 두 번째 인자로 빈 배열 `[]`을 주어서 크기는 1픽셀도 건드리지 않습니다.
+          // 오직 EXIF(방향 정보)만 똑바로 펴는(bake) 역할만 수행합니다.
+          const normalized = await manipulateAsync(inputUri, [], { compress: 1, format: SaveFormat.JPEG });
           finalUri = normalized.uri;
           finalWidth = normalized.width;
           finalHeight = normalized.height;
@@ -282,7 +279,6 @@ export default function EditorScreen() {
           finalWidth = size.width;
           finalHeight = size.height;
         }
-        // ==============================================================================
 
         const info = { uri: finalUri, width: finalWidth, height: finalHeight };
 
