@@ -189,9 +189,7 @@ export default function EditorScreen() {
 
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
-    const bestUri = Platform.OS === 'ios'
-      ? (currentPhoto.originalUri || currentPhoto.uri)
-      : (currentPhoto.cachedPreviewUri || currentPhoto.originalUri || currentPhoto.uri);
+    const bestUri = currentPhoto.originalUri || currentPhoto.uri;
     return {
       uri: bestUri,
       width: currentPhoto.width,
@@ -243,9 +241,7 @@ export default function EditorScreen() {
     };
 
     const resolve = async () => {
-      let targetUri = Platform.OS === 'ios'
-        ? (currentPhoto?.originalUri || currentPhoto?.uri)
-        : (currentPhoto?.cachedPreviewUri || currentPhoto?.originalUri || currentPhoto?.uri);
+      let targetUri = currentPhoto?.originalUri || currentPhoto?.uri;
 
       try {
         if (resolvedCache.current[targetUri]) {
@@ -267,10 +263,14 @@ export default function EditorScreen() {
         let finalHeight = 1000;
 
         if (Platform.OS === 'android') {
-          // 🚀 [핵심 수술 부위: 화질 박살내는 뻥튀기 코드 완전 삭제!]
-          // 두 번째 인자로 빈 배열 `[]`을 주어서 크기는 1픽셀도 건드리지 않습니다.
-          // 오직 EXIF(방향 정보)만 똑바로 펴는(bake) 역할만 수행합니다.
-          const normalized = await manipulateAsync(inputUri, [], { compress: 1, format: SaveFormat.JPEG });
+          // 🚀 [스마트 다림질] 2500px 방어 & 압축률 0.95(최상급) 유지
+          const size = await getImageSizeAsync(inputUri);
+          const actions: any[] = [];
+          if (size.width > 2500 || size.height > 2500) {
+            const scale = 2500 / Math.max(size.width, size.height);
+            actions.push({ resize: { width: Math.round(size.width * scale) } });
+          }
+          const normalized = await manipulateAsync(inputUri, actions, { compress: 0.95, format: SaveFormat.JPEG });
           finalUri = normalized.uri;
           finalWidth = normalized.width;
           finalHeight = normalized.height;

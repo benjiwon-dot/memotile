@@ -153,18 +153,16 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             }
 
             const isIOS = Platform.OS === 'ios';
-            let previewW = 1280;
-            let previewCompress = 0.8;
+            // 🚀 [수술 부위] 화질 저하 방지: 프리뷰 해상도를 1800px까지 허용하고 압축률을 0.95로 높임
+            let previewW = 1800;
+            let previewCompress = 0.95;
             let previewFormat = SaveFormat.JPEG;
 
-            // 🚀 [핵심 수술 부위: 안드로이드 버퍼링 완벽 차단]
             if (!isIOS) {
                 const screenW = Dimensions.get('window').width;
                 const pr = PixelRatio.get();
-                // 프리뷰 해상도를 너무 키우지 않도록 제한
-                previewW = Math.min(Math.round(screenW * pr), 1080);
-                // 기존 1.0(무손실)에서 0.8로 낮춰서 안드로이드 A23 램 초과 다운/버퍼링 방지!
-                previewCompress = 0.8;
+                previewW = Math.min(Math.round(screenW * pr * 1.5), 1800);
+                previewCompress = 0.95;
                 previewFormat = SaveFormat.JPEG;
             }
 
@@ -176,8 +174,8 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
 
             const thumbResult = await manipulateAsync(
                 inputUri,
-                [{ resize: { width: 200 } }],
-                { compress: 0.6, format: SaveFormat.JPEG }
+                [{ resize: { width: 300 } }],
+                { compress: 0.7, format: SaveFormat.JPEG }
             );
 
             setPhotosState((prev) => {

@@ -99,10 +99,8 @@ export default function CheckoutStepOneScreen() {
     const [isWebLoggingIn, setIsWebLoggingIn] = useState(false);
     const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
 
-    // ✨ Firebase에서 불러올 가격 (기본값 세팅으로 화면 깜빡임 방지)
     const [pricePerTile, setPricePerTile] = useState<number>(locale === "TH" ? 300 : 8.85);
 
-    // ✨ Firebase Firestore 가격 불러오기 로직
     useEffect(() => {
         const fetchPrice = async () => {
             try {
@@ -132,10 +130,8 @@ export default function CheckoutStepOneScreen() {
         if (authError) Alert.alert("Login Error", authError);
     }, [authError]);
 
-    // 🚀 [수술 부위 1] 안드로이드 구글 토큰 수령 구조 최적화 (유령 경로 이탈 차단)
     useEffect(() => {
         if (Platform.OS !== 'web' && response?.type === "success") {
-            // 안드로이드 네이티브와 Expo 환경 모두 대응할 수 있도록 토큰 추출 다변화
             const idToken = response.authentication?.idToken || response.params?.id_token || response.params?.idToken;
 
             if (!idToken) {

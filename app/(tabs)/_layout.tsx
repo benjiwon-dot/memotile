@@ -61,61 +61,12 @@ async function registerForPushNotificationsAsync() {
     return token;
 }
 
-const isUpdateRequired = (current: string, min: string) => {
-    const curParts = current.split('.').map(Number);
-    const minParts = min.split('.').map(Number);
-    for (let i = 0; i < Math.max(curParts.length, minParts.length); i++) {
-        const curNum = curParts[i] || 0;
-        const minNum = minParts[i] || 0;
-        if (curNum < minNum) return true;
-        if (curNum > minNum) return false;
-    }
-    return false;
-};
-
 export default function TabLayout() {
     const { t } = useLanguage();
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
     const [appIsReady, setAppIsReady] = useState(false);
-
-    // 🚀 [강제 업데이트] 나중을 위해 기능은 살려두고 주석 처리(무력화)만 했습니다!
-    /*
-    useEffect(() => {
-        const checkAppVersion = async () => {
-            try {
-                const CURRENT_VERSION = Constants.expoConfig?.version || "1.0.0";
-                // 🚨 나중에 실제 백엔드 API 주소로 변경하세요!
-                const response = await fetch('https://your-api.com/app-version');
-                const data = await response.json();
-
-                const { minVersion, appStoreUrl, playStoreUrl } = data;
-
-                if (isUpdateRequired(CURRENT_VERSION, minVersion)) {
-                    Alert.alert(
-                        "업데이트 알림",
-                        "원활한 서비스 이용을 위해 최신 버전으로 업데이트 해주세요.",
-                        [
-                            {
-                                text: "업데이트 하러가기",
-                                onPress: () => {
-                                    const storeUrl = Platform.OS === 'ios' ? appStoreUrl : playStoreUrl;
-                                    Linking.openURL(storeUrl);
-                                }
-                            }
-                        ],
-                        { cancelable: false }
-                    );
-                }
-            } catch (error) {
-                console.error("버전 체크 실패:", error);
-            }
-        };
-
-        checkAppVersion();
-    }, []);
-    */
 
     // 💡 1. 스플래시 대기 로직
     useEffect(() => {
@@ -137,7 +88,6 @@ export default function TabLayout() {
             try {
                 await Notifications.dismissAllNotificationsAsync();
                 await Notifications.setBadgeCountAsync(0);
-                console.log("✅ 앱 실행: 푸시 알림 배지 초기화 완료");
             } catch (error) {
                 console.error("배지 초기화 실패:", error);
             }
@@ -162,8 +112,17 @@ export default function TabLayout() {
         });
 
         const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
-            console.log("알림 클릭 감지됨! 마이 오더로 이동합니다.");
-            router.push('/(tabs)/myorder');
+            // 🚨 [핵심 수술 부위: 구글 로그인 납치 버그 완벽 차단]
+            // 안드로이드에서 구글 로그인 후 돌아오는 신호(Intent)를 알림 클릭으로 착각하지 못하도록 방어막을 쳤습니다.
+            // "진짜로 사용자가 푸시 알림을 눌렀을 때(actionIdentifier가 있을 때)만 작동해라!"
+            const isGenuineNotification = response?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER;
+
+            if (isGenuineNotification) {
+                console.log("진짜 알림 클릭 감지됨! 마이 오더로 이동합니다.");
+                router.push('/myorder');
+            } else {
+                console.log("구글 로그인 등 다른 딥링크 복귀 신호입니다. 무시합니다.");
+            }
         });
 
         return () => {
