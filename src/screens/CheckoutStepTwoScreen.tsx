@@ -1,3 +1,4 @@
+// src/screens/CheckoutStepTwoScreen.tsx
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
     View,
@@ -32,8 +33,8 @@ import { shadows } from "../theme/shadows";
 
 import { auth, db } from "../lib/firebase";
 import { User } from "firebase/auth";
-// ✨ updateDoc 추가 (0원 결제 상태 변경용)
-import { doc, getDoc, getFirestore, updateDoc } from "firebase/firestore";
+// ✨ updateDoc, setDoc 추가 (0원 결제 상태 변경 및 쿠폰 사용 기록용)
+import { doc, getDoc, getFirestore, updateDoc, setDoc } from "firebase/firestore";
 import { createOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 
@@ -239,7 +240,6 @@ export default function CheckoutStepTwoScreen() {
     }
     const discountUSD = Number((subtotalUSD * discountRatio).toFixed(2));
 
-    // ✨ 수량에 맞춰서 정상적으로 달러가 결제됩니다.
     const totalInUSD = Math.max(0, Number((subtotalUSD - discountUSD).toFixed(2)));
 
     const handleApplyPromo = async () => {
@@ -340,7 +340,7 @@ export default function CheckoutStepTwoScreen() {
             if (method === "RABBIT_LINE_PAY") {
                 pgcode = "AlipayPlusRabbitLinePay";
             } else if (method === "TRUEMONEY") {
-                pgcode = "AlipayPlusTrueMoney"; // ✨ TrueMoney PG Code 연동
+                pgcode = "AlipayPlusTrueMoney";
             }
 
             const functions = getFunctions(getApp(), "us-central1");
@@ -397,6 +397,18 @@ export default function CheckoutStepTwoScreen() {
                                         const orderData = orderSnap.data();
 
                                         if (orderData?.status === 'paid') {
+
+                                            // ✨ [핵심: 무한 사용 방지] 유료 결제 후 쿠폰을 썼다면 사용 처리 도장 쾅!
+                                            if (promoResult?.success && promoResult.promoCode) {
+                                                const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
+                                                await setDoc(redemptionRef, {
+                                                    uid: currentUser?.uid,
+                                                    code: promoResult.promoCode.toUpperCase(),
+                                                    usedAt: new Date().toISOString(),
+                                                    usageCount: 1
+                                                }, { merge: true });
+                                            }
+
                                             await clearDraft();
                                             clearPhotos();
                                             router.replace({ pathname: "/myorder/success", params: { id: orderId } });
@@ -496,6 +508,18 @@ export default function CheckoutStepTwoScreen() {
                         paymentMethod: "PROMO_FREE",
                         paidAt: new Date().toISOString()
                     });
+
+                    // ✨ [핵심: 무한 사용 방지] 0원 무료 결제 완료 시 쿠폰 사용 도장 쾅!
+                    if (promoResult?.success && promoResult.promoCode) {
+                        const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${user!.uid}`);
+                        await setDoc(redemptionRef, {
+                            uid: user!.uid,
+                            code: promoResult.promoCode.toUpperCase(),
+                            usedAt: new Date().toISOString(),
+                            usageCount: 1
+                        }, { merge: true });
+                    }
+
                 } catch (updateErr) {
                     console.error("Failed to update free order status:", updateErr);
                 }

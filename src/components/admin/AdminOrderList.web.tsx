@@ -1,3 +1,4 @@
+//src/components/admin/AdminOrderList.web.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -481,7 +482,8 @@ export default function AdminOrderList() {
 
                     <tbody>
                         {visibleOrders.map((order) => {
-                            const abandoned = order.status === 'paid' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
+                            // ✨ 버그 수정됨: paid가 아니라 'pending' 상태가 24시간 넘었을 때 붉은색 경고가 뜨도록 수정
+                            const abandoned = order.status === 'pending' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
                             const fullAddress = [order.shipping?.address1, order.shipping?.address2, order.shipping?.city, order.shipping?.state].filter(Boolean).join(" ");
                             const qty = order.itemsCount || 0;
@@ -529,7 +531,7 @@ export default function AdminOrderList() {
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
                                             <StatusBadge status={order.status} />
-                                            {abandoned && <span className="text-[9px] font-black text-rose-600 uppercase animate-pulse">🚨 24H ABANDONED</span>}
+                                            {abandoned && <span className="text-[9px] font-black text-rose-600 uppercase animate-pulse">🚨 24H 펜딩(자동취소 대상)</span>}
                                         </div>
                                     </td>
                                     <td className="p-4">

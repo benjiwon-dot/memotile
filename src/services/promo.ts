@@ -1,3 +1,4 @@
+// src/services/promo.ts
 import {
     doc,
     getDoc,

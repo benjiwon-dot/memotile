@@ -1,10 +1,11 @@
+// app/admin/dashboard/index.tsx
 import React, { useState, useEffect } from "react";
 import {
     TrendingUp, Users, ShoppingBag, DollarSign,
     Calendar, AlertCircle, ArrowRight, Loader2, CreditCard, Activity,
-    Smartphone, Apple, RefreshCw, XCircle
+    Smartphone, Apple, RefreshCw, XCircle, FileSpreadsheet, Download
 } from "lucide-react";
-import { getFirestore, collection, getDocs, query, orderBy } from "firebase/firestore";
+import { getFirestore, collection, getDocs, query, orderBy, where } from "firebase/firestore";
 import { app } from "@/lib/firebase";
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -12,8 +13,15 @@ import {
 
 export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
-    // 💡 기간 필터: 'this_month'(이번 달), 'last_month'(지난달), 'all'(전체)
+    // 💡 기간 필터: 'this_month'(이번 달), 'last_month'(지난달), 'custom'(날짜 지정), 'all'(전체)
     const [timeFilter, setTimeFilter] = useState("this_month");
+
+    // ✨ 날짜 지정 필터용 State 추가
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
+
+    // ✨ 엑셀 다운로드 로딩 스피너용 State
+    const [downloading, setDownloading] = useState(false);
 
     const [stats, setStats] = useState({
         revenue: 0,
@@ -22,10 +30,10 @@ export default function DashboardPage() {
         pendingRevenue: 0,
         pendingOrders: 0,
         totalUsers: 0,
-        iosUsers: 0,      // 애플 유저
-        androidUsers: 0,  // 안드로이드 유저
-        repurchaseRate: 0, // 재구매율 (%)
-        cancelRate: 0      // 취소율 (%)
+        iosUsers: 0,
+        androidUsers: 0,
+        repurchaseRate: 0,
+        cancelRate: 0
     });
 
     const [chartData, setChartData] = useState([]);
@@ -33,11 +41,121 @@ export default function DashboardPage() {
 
     const db = getFirestore(app);
 
+    // ✨ [핵심 기능] 지정된 기간의 상세 내역서를 추출하여 CSV(엑셀) 파일로 다운로드하는 함수
+    const handleDownloadStatement = async () => {
+        setDownloading(true);
+        try {
+            const ordersQuery = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+            const ordersSnap = await getDocs(ordersQuery);
+
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+
+            const rows: any[] = [];
+            let totalTileCount = 0;
+            let totalAmountSum = 0;
+
+            ordersSnap.forEach((doc) => {
+                const data = doc.data();
+                if (!data.createdAt) return;
+
+                const orderDate = data.createdAt.toDate();
+                let isIncluded = false;
+
+                // 대시보드와 동일한 날짜 필터링 적용
+                if (timeFilter === 'all') {
+                    isIncluded = true;
+                } else if (timeFilter === 'this_month') {
+                    isIncluded = orderDate.getMonth() === currentMonth && orderDate.getFullYear() === currentYear;
+                } else if (timeFilter === 'last_month') {
+                    const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+                    const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+                    isIncluded = orderDate.getMonth() === prevMonth && orderDate.getFullYear() === prevYear;
+                } else if (timeFilter === 'custom' && startDate && endDate) {
+                    const start = new Date(startDate + "T00:00:00");
+                    const end = new Date(endDate + "T23:59:59");
+                    isIncluded = orderDate >= start && orderDate <= end;
+                }
+
+                // 조건에 맞고 결제가 완료된 내역만 엑셀에 포함
+                if (isIncluded && (data.status === "paid" || data.status === "completed" || data.status === "printing")) {
+                    const shipping = data.shipping || {};
+                    const customer = data.customer || {};
+
+                    const name = shipping.fullName || customer.fullName || "Guest";
+                    const phone = shipping.phone || customer.phone || "";
+                    const fullAddress = `${shipping.address1 || ""} ${shipping.address2 || ""} ${shipping.city || ""} ${shipping.state || ""}`.trim();
+                    const insta = data.instagram || customer.instagram || (data.instagramId || "");
+                    const tileCount = data.itemsCount || (Array.isArray(data.items) ? data.items.length : 0) || 0;
+                    const amount = data.totalAmount || data.total || 0;
+
+                    totalTileCount += tileCount;
+                    totalAmountSum += amount;
+
+                    rows.push({
+                        "주문 일시": orderDate.toLocaleString('ko-KR'),
+                        "주문 번호": data.orderCode || doc.id,
+                        "고객 이름": name,
+                        "전화 번호": phone,
+                        "인스타그램 ID": insta ? `@${insta.replace('@', '')}` : "",
+                        "배송지 주소": fullAddress,
+                        "타일 수량(EA)": tileCount,
+                        "결제 금액": `฿${amount.toLocaleString()}`,
+                        "비고": data.adminNote || ""
+                    });
+                }
+            });
+
+            if (rows.length === 0) {
+                alert("선택하신 기간에 결제 완료된 내역이 없습니다.");
+                setDownloading(false);
+                return;
+            }
+
+            // CSV 데이터 변환 로직 (한글 깨짐 방지 BOM 추가)
+            const headers = ["주문 일시", "주문 번호", "고객 이름", "전화 번호", "인스타그램 ID", "배송지 주소", "타일 수량(EA)", "결제 금액", "비고"];
+            const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+            const csvLines = [headers.join(",")];
+            rows.forEach(r => {
+                csvLines.push(headers.map(h => escape(r[h])).join(","));
+            });
+
+            // ✨ 은행 명세서처럼 맨 아랫줄에 총합계 라인 추가 구현
+            csvLines.push(""); // 한 줄 띄우기
+            csvLines.push(`[총합계],,,,,,,`);
+            csvLines.push(`총 주문 건수:,${rows.length} 건,,,,,,`);
+            csvLines.push(`총 판매 타일수:,${totalTileCount} EA,,,,,,`);
+            csvLines.push(`총 결제 합계액:,฿${totalAmountSum.toLocaleString()},,,,,,`);
+
+            const csvString = "\uFEFF" + csvLines.join("\n");
+
+            // 파일 다운로드 발사
+            const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            const fileDateStr = timeFilter === 'custom' ? `${startDate}_to_${endDate}` : timeFilter;
+            a.href = url;
+            a.download = `MemoTile_결제내역서_${fileDateStr}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+
+        } catch (error) {
+            console.error("내역서 다운로드 실패:", error);
+            alert("다운로드 중 오류가 발생했습니다.");
+        } finally {
+            setDownloading(false);
+        }
+    };
+
     useEffect(() => {
         const fetchDashboardData = async () => {
             setLoading(true);
             try {
-                // 1. 유저 데이터 분석 (가입자 및 기기 비율)
+                // 1. 유저 데이터 분석
                 const usersSnap = await getDocs(collection(db, "users"));
                 let totalUsers = 0;
                 let iosCount = 0;
@@ -46,7 +164,6 @@ export default function DashboardPage() {
                 usersSnap.forEach(doc => {
                     totalUsers++;
                     const platform = doc.data().platform?.toLowerCase();
-                    // ※ DB에 platform 필드가 'ios' 또는 'android'로 저장되어 있어야 정확히 카운트됩니다.
                     if (platform === 'ios') iosCount++;
                     else if (platform === 'android') androidCount++;
                 });
@@ -64,7 +181,7 @@ export default function DashboardPage() {
 
                 const dailyRevenue: Record<string, number> = {};
                 const recentList: any[] = [];
-                const userPurchaseCounts: Record<string, number> = {}; // 재구매율 계산용
+                const userPurchaseCounts: Record<string, number> = {};
 
                 const now = new Date();
                 const currentMonth = now.getMonth();
@@ -77,7 +194,6 @@ export default function DashboardPage() {
                     const orderDate = data.createdAt.toDate();
                     let isIncluded = false;
 
-                    // 💡 월별 필터링 로직
                     if (timeFilter === 'all') {
                         isIncluded = true;
                     } else if (timeFilter === 'this_month') {
@@ -86,43 +202,42 @@ export default function DashboardPage() {
                         const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
                         const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
                         isIncluded = orderDate.getMonth() === prevMonth && orderDate.getFullYear() === prevYear;
+                    } else if (timeFilter === 'custom' && startDate && endDate) {
+                        const start = new Date(startDate + "T00:00:00");
+                        const end = new Date(endDate + "T23:59:59");
+                        isIncluded = orderDate >= start && orderDate <= end;
                     }
 
                     if (!isIncluded) return;
 
                     totalFilteredOrders++;
 
-                    // 최신 주문 리스트 (최대 5개) 추출
                     if (recentList.length < 5) {
                         recentList.push({ id: doc.id, ...data });
                     }
 
-                    // 결제 완료된 주문
+                    const amount = data.totalAmount || data.total || 0;
+
                     if (data.status === "paid" || data.status === "completed" || data.status === "printing") {
-                        tempRevenue += (data.totalAmount || 0);
+                        tempRevenue += amount;
                         tempOrders++;
 
-                        // 재구매 추적 (유저 UID 기준)
                         if (data.uid) {
                             userPurchaseCounts[data.uid] = (userPurchaseCounts[data.uid] || 0) + 1;
                         }
 
-                        // 차트용 일별 매출
                         const dateStr = `${orderDate.getMonth() + 1}/${orderDate.getDate()}`;
-                        dailyRevenue[dateStr] = (dailyRevenue[dateStr] || 0) + (data.totalAmount || 0);
+                        dailyRevenue[dateStr] = (dailyRevenue[dateStr] || 0) + amount;
                     }
-                    // 결제 대기
                     else if (data.status === "pending") {
-                        tempPendingRevenue += (data.totalAmount || 0);
+                        tempPendingRevenue += amount;
                         tempPendingOrders++;
                     }
-                    // 결제 취소/환불
                     else if (data.status === "cancelled" || data.status === "refunded") {
                         tempCancelledOrders++;
                     }
                 });
 
-                // 재구매율 및 취소율 계산 로직
                 const buyersArray = Object.values(userPurchaseCounts);
                 const repeatCustomers = buyersArray.filter(count => count > 1).length;
                 const totalBuyers = buyersArray.length;
@@ -130,7 +245,6 @@ export default function DashboardPage() {
                 const repurchaseRate = totalBuyers > 0 ? Math.round((repeatCustomers / totalBuyers) * 100) : 0;
                 const cancelRate = totalFilteredOrders > 0 ? Math.round((tempCancelledOrders / totalFilteredOrders) * 100) : 0;
 
-                // 차트 데이터 변환 (과거 -> 현재 순)
                 const formattedChartData = Object.keys(dailyRevenue)
                     .map(date => ({ date, 매출액: dailyRevenue[date] }))
                     .reverse();
@@ -158,8 +272,11 @@ export default function DashboardPage() {
             }
         };
 
+        // 날짜지정 분기 예외처리
+        if (timeFilter === 'custom' && (!startDate || !endDate)) return;
+
         fetchDashboardData();
-    }, [timeFilter]);
+    }, [timeFilter, startDate, endDate]);
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -185,8 +302,7 @@ export default function DashboardPage() {
 
     return (
         <div className="max-w-7xl mx-auto p-4 lg:p-8 bg-zinc-50/50 min-h-screen mb-20 font-sans">
-            {/* 💡 헤더 및 월별 필터 영역 */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-8 gap-4">
                 <div>
                     <h1 className="text-3xl font-black text-zinc-900 flex items-center gap-2">
                         <Activity className="text-pink-600" size={32} />
@@ -195,23 +311,44 @@ export default function DashboardPage() {
                     <p className="text-zinc-500 text-sm mt-1">실시간 매출 및 고객 행동 인사이트를 확인하세요.</p>
                 </div>
 
-                <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-zinc-200 shadow-sm">
-                    <Calendar size={18} className="text-zinc-400 ml-2" />
-                    <select
-                        value={timeFilter}
-                        onChange={(e) => setTimeFilter(e.target.value)}
-                        className="bg-transparent border-none text-sm font-bold text-zinc-700 focus:ring-0 cursor-pointer outline-none py-2 pr-8"
+                {/* 💡 기간 필터 & 엑셀 다운로드 컨트롤 영역 */}
+                <div className="flex flex-wrap items-center gap-3">
+                    {timeFilter === "custom" && (
+                        <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-zinc-200 shadow-sm text-xs font-bold">
+                            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="outline-none border-none bg-transparent" />
+                            <span className="text-zinc-400">~</span>
+                            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="outline-none border-none bg-transparent" />
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-zinc-200 shadow-sm">
+                        <Calendar size={18} className="text-zinc-400 ml-2" />
+                        <select
+                            value={timeFilter}
+                            onChange={(e) => setTimeFilter(e.target.value)}
+                            className="bg-transparent border-none text-sm font-bold text-zinc-700 focus:ring-0 cursor-pointer outline-none py-2 pr-8"
+                        >
+                            <option value="this_month">이번 달</option>
+                            <option value="last_month">지난달</option>
+                            <option value="custom">📅 날짜 직접 선택</option>
+                            <option value="all">전체 기간</option>
+                        </select>
+                    </div>
+
+                    {/* ✨ [핵심 버튼] 은행 스타일 결제 내역서 일괄 내보내기 버튼 */}
+                    <button
+                        onClick={handleDownloadStatement}
+                        disabled={downloading}
+                        className="bg-zinc-900 hover:bg-black disabled:bg-zinc-400 text-white font-bold text-sm px-4 py-3 rounded-xl flex items-center gap-2 shadow-sm transition-all"
                     >
-                        <option value="this_month">이번 달</option>
-                        <option value="last_month">지난달</option>
-                        <option value="all">전체 기간</option>
-                    </select>
+                        {downloading ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+                        내역서 엑셀 다운로드
+                    </button>
                 </div>
             </div>
 
-            {/* 💡 1. 핵심 KPI & 마케팅 인사이트 지표 */}
+            {/* KPI 그리드 */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                {/* 1) 총 매출 */}
                 <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 p-6 rounded-3xl shadow-lg border border-zinc-700 text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-4 opacity-20"><DollarSign size={80} /></div>
                     <p className="text-sm font-semibold text-zinc-400 mb-1">총 매출액</p>
@@ -219,7 +356,6 @@ export default function DashboardPage() {
                     <p className="text-xs text-zinc-400">결제 완료 기준 ({stats.orders}건)</p>
                 </div>
 
-                {/* 2) 객단가 */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col justify-center">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-3 bg-pink-50 text-pink-600 rounded-2xl"><ShoppingBag size={20} /></div>
@@ -229,7 +365,6 @@ export default function DashboardPage() {
                     <p className="text-xs text-zinc-400 mt-1 ml-1">고객 1인당 평균 결제액</p>
                 </div>
 
-                {/* 3) 재구매율 (충성 고객 지표) */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col justify-center">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-3 bg-green-50 text-green-600 rounded-2xl"><RefreshCw size={20} /></div>
@@ -241,7 +376,6 @@ export default function DashboardPage() {
                     </p>
                 </div>
 
-                {/* 4) 이탈 및 취소 지표 */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col justify-center">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-3 bg-red-50 text-red-500 rounded-2xl"><XCircle size={20} /></div>
@@ -254,7 +388,7 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* 💡 2. 유저 플랫폼 현황 (Apple vs Galaxy 마케팅 지표) */}
+            {/* 가입자 현황 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="col-span-1 md:col-span-3 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col md:flex-row items-center justify-between">
                     <div className="flex items-center gap-4 mb-4 md:mb-0">
@@ -265,7 +399,6 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* 마케팅 타겟팅을 위한 기기별 가입자 현황 */}
                     <div className="flex gap-8 border-t md:border-t-0 md:border-l border-zinc-100 pt-4 md:pt-0 md:pl-8 w-full md:w-auto">
                         <div className="flex items-center gap-3">
                             <Apple size={32} className="text-zinc-800" />
@@ -285,9 +418,8 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* 💡 3. 매출 추이 & 최근 주문 그리드 */}
+            {/* 차트 및 최신 주문 */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* 메인 차트 */}
                 <div className="lg:col-span-2 bg-white p-6 lg:p-8 rounded-3xl shadow-sm border border-zinc-100">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
@@ -324,7 +456,6 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* 최근 라이브 주문 */}
                 <div className="lg:col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col">
                     <h2 className="text-lg font-bold text-zinc-800 mb-6 flex items-center gap-2">
                         <CreditCard size={20} className="text-blue-500" /> 최근 접수된 주문
@@ -340,7 +471,7 @@ export default function DashboardPage() {
                                         </div>
                                         <div>
                                             <p className="text-sm font-bold text-zinc-800">
-                                                ฿{order.totalAmount ? order.totalAmount.toLocaleString() : 0}
+                                                ฿{order.totalAmount ? order.totalAmount.toLocaleString() : (order.total ? order.total.toLocaleString() : 0)}
                                             </p>
                                             <p className="text-[10px] text-zinc-400 mt-0.5">
                                                 {order.createdAt ? order.createdAt.toDate().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
