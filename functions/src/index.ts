@@ -381,7 +381,6 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
     }
 );
 
-// ✨ 여기가 완벽하게 수정된 알림 로직입니다.
 export const processAdminTask = onDocumentCreated(
     { document: "adminTasks/{taskId}", region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
     async (event) => {
@@ -393,7 +392,6 @@ export const processAdminTask = onDocumentCreated(
         const timestamp = FieldValue.serverTimestamp();
 
         try {
-            // 상태 변경 & 운송장 입력
             if (task.type === "BATCH_UPDATE_STATUS" || task.type === "UPDATE_ORDER_OPS") {
                 const isBatch = task.type === "BATCH_UPDATE_STATUS";
                 const { orderIds, orderId, status, trackingNumber, adminNote, uid, email } = task.payload || {};
@@ -416,7 +414,6 @@ export const processAdminTask = onDocumentCreated(
 
                     const userId = orderData?.userId || orderData?.uid || orderData?.customer?.uid || orderData?.customer?.id || orderData?.createdBy;
 
-                    // 1. DB 업데이트 세팅
                     const updates: any = { updatedAt: timestamp };
                     if (status !== undefined) {
                         updates.status = status;
@@ -427,7 +424,6 @@ export const processAdminTask = onDocumentCreated(
 
                     batch.set(ref, updates, { merge: true });
 
-                    // 2. 이벤트 히스토리 저장
                     batch.set(ref.collection("events").doc(), {
                         type: status ? "STATUS_CHANGED" : "OPS_UPDATE",
                         to: status || undefined,
@@ -437,7 +433,6 @@ export const processAdminTask = onDocumentCreated(
                         createdAt: timestamp,
                     });
 
-                    // 3. 상태별 맞춤 푸시 알림 세팅
                     if (userId) {
                         const userSnap = await db.collection("users").doc(String(userId)).get();
                         const userLang = userSnap.data()?.language || "en";
@@ -465,7 +460,6 @@ export const processAdminTask = onDocumentCreated(
                             }
                         }
 
-                        // 운송장이 방금 입력된 경우 (상태 변경 알림을 덮어씀)
                         if (trackingNumber && trackingNumber !== orderData.trackingNumber) {
                             pushTitle = userLang === "th" ? "🚚 อัปเดตการจัดส่ง" : "🚚 Shipping Update";
                             pushBody = userLang === "th" ? `หมายเลขติดตามพัสดุของคุณคือ: ${trackingNumber}` : `Your tracking number: ${trackingNumber}`;
@@ -479,13 +473,10 @@ export const processAdminTask = onDocumentCreated(
 
                 await batch.commit();
 
-                // 푸시 일괄 발송
                 for (const noti of notifications) {
                     await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                 }
             }
-
-            // 마케팅 푸시
             else if (task.type === "MARKETING_PUSH") {
                 const { target, filters, testToken, en, th } = task.payload || {};
                 const titleEn = en?.title;
@@ -954,60 +945,78 @@ export const onPrintFileFinalized = onObjectFinalized(
    SCHEDULED FUNCTIONS
    ========================================================================= */
 
-export const cleanupAbandonedPendingOrders = onSchedule("0 4 * * *", async (event) => {
-    const db = getFirestore();
-    const bucket = getStorage().bucket();
-    const now = new Date();
+// ✨ [완벽하게 수정됨] 24시간 지난 펜딩 주문은 Canceled 처리하고 무거운 사진만 지웁니다!
+export const cleanupAbandonedPendingOrders = onSchedule(
+    {
+        schedule: "0 4 * * *",
+        timeZone: "Asia/Bangkok", // 🚨 태국 시간으로 강제 고정!
+        region: "us-central1"
+    },
+    async (event) => {
+        const db = getFirestore();
+        const bucket = getStorage().bucket();
+        const now = new Date();
 
-    const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
-
-    try {
-        const snapshot = await db.collection("orders")
-            .where("status", "==", "pending")
-            .where("createdAt", "<=", twentyFourHoursAgo)
-            .get();
-
-        if (snapshot.empty) {
-            console.log("삭제할 쓰레기 데이터가 없습니다.");
-            return;
-        }
-
-        const batch = db.batch();
-        let deletedCount = 0;
-
-        for (const docSnap of snapshot.docs) {
-            const data = docSnap.data();
-            const orderRef = docSnap.ref;
-
-            if (data.storageBasePath) {
-                try {
-                    await bucket.deleteFiles({ prefix: data.storageBasePath });
-                } catch (storageErr) {
-                    console.error(`[Storage 삭제 실패] 경로: ${data.storageBasePath}`, storageErr);
-                }
-            }
-
-            const itemsSnap = await orderRef.collection("items").get();
-            itemsSnap.forEach(item => batch.delete(item.ref));
-
-            batch.delete(orderRef);
-            deletedCount++;
-        }
-
-        await batch.commit();
-
-        console.log(`🧹 [자동 청소 완료] 24시간 경과된 Pending 주문 ${deletedCount}건 및 데이터 영구 삭제됨.`);
+        // 24시간 전 시간 계산
+        const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
 
         try {
-            await axios.post(SLACK_WEBHOOK_URL, {
-                text: `🧹 *[자동 청소 완료]* 24시간이 지난 결제 미완료(pending) 더미 주문 *${deletedCount}건* 및 관련 사진 데이터가 영구 삭제되었습니다.`
-            });
-        } catch (e) { }
+            const snapshot = await db.collection("orders")
+                .where("status", "==", "pending")
+                .where("createdAt", "<=", twentyFourHoursAgo)
+                .get();
 
-    } catch (e) {
-        console.error("cleanupAbandonedPendingOrders 실행 중 오류 발생:", e);
+            if (snapshot.empty) {
+                console.log("변경할 펜딩 주문이 없습니다.");
+                return;
+            }
+
+            const batch = db.batch();
+            let processedCount = 0;
+
+            for (const docSnap of snapshot.docs) {
+                const data = docSnap.data();
+                const orderRef = docSnap.ref;
+
+                // 1. Storage 원본 사진 파일 영구 삭제 (서버 용량 다이어트)
+                if (data.storageBasePath) {
+                    try {
+                        await bucket.deleteFiles({ prefix: data.storageBasePath });
+                    } catch (storageErr) {
+                        console.error(`[Storage 삭제 실패] 경로: ${data.storageBasePath}`, storageErr);
+                    }
+                }
+
+                // 2. 하위 items 컬렉션(개별 사진 정보) 지우기
+                const itemsSnap = await orderRef.collection("items").get();
+                itemsSnap.forEach(item => batch.delete(item.ref));
+
+                // 3. 본 주문서는 지우지 않고 상태만 Canceled로 변경!
+                batch.update(orderRef, {
+                    status: "canceled",
+                    adminNote: "24시간 결제 미완료(Pending) 자동 취소 및 사진 삭제 완료",
+                    canceledAt: FieldValue.serverTimestamp(),
+                    updatedAt: FieldValue.serverTimestamp()
+                });
+
+                processedCount++;
+            }
+
+            await batch.commit();
+
+            console.log(`🧹 [자동 처리 완료] 24시간 경과된 Pending 주문 ${processedCount}건 상태 취소(Canceled) 변경 및 사진 영구 삭제됨.`);
+
+            try {
+                await axios.post(SLACK_WEBHOOK_URL, {
+                    text: `🧹 *[자동 처리 완료]* 24시간이 지난 결제 미완료(pending) 주문 *${processedCount}건*이 '취소(Canceled)'로 변경되었으며 서버 사진 용량이 확보되었습니다.`
+                });
+            } catch (e) { }
+
+        } catch (e) {
+            console.error("cleanupAbandonedPendingOrders 실행 중 오류 발생:", e);
+        }
     }
-});
+);
 
 export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
     const db = getFirestore();
