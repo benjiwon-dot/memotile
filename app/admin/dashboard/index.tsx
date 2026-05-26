@@ -41,7 +41,7 @@ export default function DashboardPage() {
 
     const db = getFirestore(app);
 
-    // ✨ 화면에 미리보기로 뜬 데이터를 그대로 엑셀로 변환하는 함수 (DB 재요청 방지)
+    // ✨ 엑셀 변환 함수 (신규 컬럼 및 바트/달러 합계 분리 적용)
     const handleDownloadStatement = () => {
         if (statementRows.length === 0) {
             alert("선택하신 기간에 다운로드할 결제 내역이 없습니다.");
@@ -54,7 +54,8 @@ export default function DashboardPage() {
             let totalTHB = 0;
             let totalUSD = 0;
 
-            const headers = ["주문 일시", "주문 번호", "고객 이름", "전화 번호", "인스타그램 ID", "배송지 주소", "타일 수량(EA)", "결제 금액", "비고"];
+            // ✨ 헤더에 인스타, 기기(OS), 쿠폰 컬럼 분리 추가
+            const headers = ["주문 일시", "주문 번호", "고객 이름", "인스타그램 ID", "기기(OS)", "쿠폰 사용", "타일 수량(EA)", "결제 통화", "결제 금액", "전화 번호", "배송지 주소", "비고"];
             const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
             const csvLines = [headers.join(",")];
@@ -64,28 +65,29 @@ export default function DashboardPage() {
                 if (r.currency === 'USD') totalUSD += r.amount;
                 else totalTHB += r.amount;
 
-                const amountStr = r.currency === 'USD' ? `$${r.amount.toLocaleString()}` : `฿${r.amount.toLocaleString()}`;
-
                 csvLines.push([
                     escape(r.date),
                     escape(r.orderCode),
                     escape(r.name),
-                    escape(r.phone),
                     escape(r.insta),
-                    escape(r.address),
+                    escape(r.os),
+                    escape(r.promo),
                     escape(r.qty),
-                    escape(amountStr),
+                    escape(r.currency),
+                    escape(r.amount), // 기호 없이 순수 숫자만 (엑셀 계산 용이)
+                    escape(r.phone),
+                    escape(r.address),
                     escape(r.note)
                 ].join(","));
             });
 
             // 은행 명세서 총합계 라인 추가
             csvLines.push("");
-            csvLines.push(`[총합계],,,,,,,`);
-            csvLines.push(`총 주문 건수:,${statementRows.length} 건,,,,,,`);
-            csvLines.push(`총 판매 타일수:,${totalTileCount} EA,,,,,,`);
-            if (totalTHB > 0) csvLines.push(`총 결제(바트):,฿${totalTHB.toLocaleString()},,,,,,`);
-            if (totalUSD > 0) csvLines.push(`총 결제(달러):,$${totalUSD.toLocaleString()},,,,,,`);
+            csvLines.push(`[기간 총합계 정산],,,,,,,,,,,`);
+            csvLines.push(`총 주문 건수:,${statementRows.length} 건,,,,,,,,,,`);
+            csvLines.push(`총 판매 타일수:,${totalTileCount} EA,,,,,,,,,,`);
+            csvLines.push(`총 결제 합계 (바트 THB):,฿${totalTHB.toLocaleString()},,,,,,,,,,`);
+            csvLines.push(`총 결제 합계 (달러 USD):,$${totalUSD.toLocaleString()},,,,,,,,,,`);
 
             const csvString = "\uFEFF" + csvLines.join("\n");
 
@@ -94,7 +96,7 @@ export default function DashboardPage() {
             const a = document.createElement("a");
             const fileDateStr = timeFilter === 'custom' ? `${startDate}_to_${endDate}` : timeFilter;
             a.href = url;
-            a.download = `MemoTile_결제내역서_${fileDateStr}.csv`;
+            a.download = `MemoTile_결제정산내역_${fileDateStr}.csv`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -139,7 +141,7 @@ export default function DashboardPage() {
                 const dailyRevenue: Record<string, number> = {};
                 const recentList: any[] = [];
                 const userPurchaseCounts: Record<string, number> = {};
-                const rowsForTable: any[] = []; // 미리보기 표 데이터
+                const rowsForTable: any[] = [];
 
                 const now = new Date();
                 const currentMonth = now.getMonth();
@@ -174,7 +176,6 @@ export default function DashboardPage() {
                         recentList.push({ id: doc.id, ...data });
                     }
 
-                    // ✨ 핵심 버그 수정: 0원이면 0원으로 정확히 인식하도록 수정 (FREE100 오류 해결)
                     const amount = data.totalAmount !== undefined ? data.totalAmount : (data.total !== undefined ? data.total : 0);
                     const currency = (data.currency || 'THB').toUpperCase();
 
@@ -188,18 +189,25 @@ export default function DashboardPage() {
                             userPurchaseCounts[data.uid] = (userPurchaseCounts[data.uid] || 0) + 1;
                         }
 
-                        // 차트는 바트 기준으로만 추이 합산 (단순 추이 확인용)
                         const dateStr = `${orderDate.getMonth() + 1}/${orderDate.getDate()}`;
                         if (currency !== 'USD') {
                             dailyRevenue[dateStr] = (dailyRevenue[dateStr] || 0) + amount;
                         }
 
-                        // 결제 내역서 미리보기용 데이터 적재
+                        // ✨ 신규 컬럼 추출 (쿠폰, 인스타, 기기)
                         const shipping = data.shipping || {};
                         const customer = data.customer || {};
                         const tileCount = data.itemsCount || (Array.isArray(data.items) ? data.items.length : 0) || 0;
                         const fullAddress = `${shipping.address1 || ""} ${shipping.address2 || ""} ${shipping.city || ""} ${shipping.state || ""}`.trim();
-                        const insta = data.instagram || customer.instagram || (data.instagramId || "");
+                        const insta = data.instagram || customer.instagram || data.instagramId || "-";
+                        const promoCode = data.promoCode || data.pricing?.promoCode || "-";
+
+                        // OS 기기 판별
+                        const platformStr = String(data.platform || data.device || "-").toLowerCase();
+                        let osDisplay = "-";
+                        if (platformStr.includes('ios') || platformStr.includes('iphone') || platformStr.includes('ipad')) osDisplay = "iOS";
+                        else if (platformStr.includes('android') || platformStr.includes('galaxy')) osDisplay = "Android";
+                        else if (platformStr !== "-") osDisplay = data.platform;
 
                         rowsForTable.push({
                             id: doc.id,
@@ -207,7 +215,9 @@ export default function DashboardPage() {
                             orderCode: data.orderCode || doc.id,
                             name: shipping.fullName || customer.fullName || "Guest",
                             phone: shipping.phone || customer.phone || "",
-                            insta: insta ? `@${insta.replace('@', '')}` : "",
+                            insta: insta.startsWith('@') ? insta : (insta !== "-" ? `@${insta}` : "-"),
+                            os: osDisplay,
+                            promo: promoCode,
                             address: fullAddress,
                             qty: tileCount,
                             amount: amount,
@@ -298,16 +308,16 @@ export default function DashboardPage() {
                     </h1>
                     <p className="text-zinc-500 text-sm mt-1">실시간 매출 및 고객 행동 인사이트를 확인하세요.</p>
                 </div>
-                {/* 헤더에 있던 필터는 아래 명세서 쪽으로 이동시켰습니다 */}
             </div>
 
-            {/* 객단가를 없애고 3칸 그리드로 넓게 변경 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 p-6 rounded-3xl shadow-lg border border-zinc-700 text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-4 opacity-20"><DollarSign size={80} /></div>
                     <p className="text-sm font-semibold text-zinc-400 mb-1">총 매출액 (결제완료 {stats.orders}건)</p>
-                    <p className="text-3xl font-black mb-1">฿{stats.revenueTHB.toLocaleString()}</p>
-                    {stats.revenueUSD > 0 && <p className="text-lg font-bold text-zinc-300">+ ${stats.revenueUSD.toLocaleString()}</p>}
+                    <div className="flex flex-col gap-1">
+                        <p className="text-3xl font-black">฿{stats.revenueTHB.toLocaleString()}</p>
+                        <p className="text-lg font-bold text-blue-400">+ ${stats.revenueUSD.toLocaleString()}</p>
+                    </div>
                 </div>
 
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col justify-center">
@@ -328,7 +338,7 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-2xl font-black text-zinc-800 ml-1">{stats.cancelRate}%</p>
                     <p className="text-xs text-red-500 font-medium mt-1 ml-1 flex items-center gap-1">
-                        결제 대기이탈: ฿{stats.pendingRevenueTHB.toLocaleString()} {stats.pendingRevenueUSD > 0 && `/ $${stats.pendingRevenueUSD.toLocaleString()}`}
+                        이탈: ฿{stats.pendingRevenueTHB.toLocaleString()} / <span className="text-blue-500">${stats.pendingRevenueUSD.toLocaleString()}</span>
                     </p>
                 </div>
             </div>
@@ -414,7 +424,7 @@ export default function DashboardPage() {
                                         </div>
                                         <div>
                                             <p className="text-sm font-bold text-zinc-800">
-                                                {order.currency === 'USD' ? '$' : '฿'}{order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total ? order.total.toLocaleString() : 0)}
+                                                {order.currency === 'USD' ? <span className="text-blue-600">${order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span> : <span>฿{order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>}
                                             </p>
                                             <p className="text-[10px] text-zinc-400 mt-0.5">
                                                 {order.createdAt ? order.createdAt.toDate().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
@@ -438,16 +448,15 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* ✨ 신규 추가: 은행 명세서 스타일 미리보기 및 엑셀 다운로드 영역 */}
+            {/* ✨ 완벽 개편: 은행 명세서 스타일 엑셀 데이터 미리보기 (OS, 인스타, 쿠폰 포함) */}
             <div className="bg-white rounded-3xl shadow-sm border border-zinc-100 overflow-hidden">
                 <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-50/50">
                     <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
                         <FileSpreadsheet size={20} className="text-green-600" />
-                        결제 내역서 미리보기
+                        결제 내역서 미리보기 (엑셀 추출용)
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-3">
-                        {/* 기간 필터 */}
                         {timeFilter === "custom" && (
                             <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-zinc-200 shadow-sm text-xs font-bold">
                                 <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="outline-none border-none bg-transparent" />
@@ -470,7 +479,6 @@ export default function DashboardPage() {
                             </select>
                         </div>
 
-                        {/* 확실하게 눈에 띄는 초록색 다운로드 버튼 */}
                         <button
                             onClick={handleDownloadStatement}
                             disabled={downloading}
@@ -486,32 +494,53 @@ export default function DashboardPage() {
                     <table className="w-full text-sm text-left">
                         <thead className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-100">
                             <tr>
-                                <th className="px-6 py-4 whitespace-nowrap">주문 일시</th>
-                                <th className="px-6 py-4 whitespace-nowrap">주문 번호</th>
-                                <th className="px-6 py-4 whitespace-nowrap">고객 이름</th>
-                                <th className="px-6 py-4 whitespace-nowrap">결제 금액</th>
-                                <th className="px-6 py-4 whitespace-nowrap text-center">타일 수</th>
-                                <th className="px-6 py-4 whitespace-nowrap">전화번호</th>
+                                <th className="px-4 py-4 whitespace-nowrap">주문 일시</th>
+                                <th className="px-4 py-4 whitespace-nowrap">주문 번호</th>
+                                <th className="px-4 py-4 whitespace-nowrap">고객 이름</th>
+                                <th className="px-4 py-4 whitespace-nowrap">인스타 ID</th>
+                                <th className="px-4 py-4 whitespace-nowrap text-center">쿠폰</th>
+                                <th className="px-4 py-4 whitespace-nowrap text-center">OS</th>
+                                <th className="px-4 py-4 whitespace-nowrap">결제 금액</th>
+                                <th className="px-4 py-4 whitespace-nowrap text-center">타일 수</th>
+                                <th className="px-4 py-4 whitespace-nowrap">전화번호</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
                             {statementRows.length > 0 ? statementRows.map((row) => (
                                 <tr key={row.id} className="hover:bg-zinc-50 transition-colors">
-                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-zinc-500">{row.date}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap font-mono font-bold text-zinc-700">{row.orderCode}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap font-bold">
-                                        {row.name}
-                                        {row.insta && <span className="block text-[10px] text-pink-500 font-medium">{row.insta}</span>}
+                                    <td className="px-4 py-4 whitespace-nowrap text-[11px] text-zinc-500">{row.date}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap font-mono font-bold text-xs text-zinc-700">{row.orderCode}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap font-bold text-zinc-900">{row.name}</td>
+
+                                    {/* 인스타그램 */}
+                                    <td className="px-4 py-4 whitespace-nowrap">
+                                        {row.insta !== "-" ? <span className="text-xs text-pink-500 font-bold bg-pink-50 px-1.5 py-0.5 rounded">{row.insta}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap font-black text-zinc-900">
-                                        {row.currency === 'USD' ? '$' : '฿'}{row.amount.toLocaleString()}
+
+                                    {/* 쿠폰 사용 여부 */}
+                                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                                        {row.promo !== "-" ? <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">{row.promo}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-center text-zinc-600 font-bold bg-zinc-50/50">{row.qty}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-zinc-500">{row.phone}</td>
+
+                                    {/* 기기 OS */}
+                                    <td className="px-4 py-4 whitespace-nowrap text-center text-zinc-500 flex items-center justify-center gap-1">
+                                        {row.os === 'iOS' ? <Apple size={14} className="text-zinc-800" /> : (row.os === 'Android' ? <Smartphone size={14} className="text-green-600" /> : null)}
+                                        <span className="text-[11px] font-bold">{row.os}</span>
+                                    </td>
+
+                                    {/* 결제 금액 (바트/달러 색상 분리) */}
+                                    <td className="px-4 py-4 whitespace-nowrap font-black text-sm">
+                                        {row.currency === 'USD'
+                                            ? <span className="text-blue-600">${row.amount.toLocaleString()}</span>
+                                            : <span className="text-zinc-900">฿{row.amount.toLocaleString()}</span>}
+                                    </td>
+
+                                    <td className="px-4 py-4 whitespace-nowrap text-center text-zinc-700 font-black">{row.qty}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-xs text-zinc-500 font-mono">{row.phone}</td>
                                 </tr>
                             )) : (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-16 text-center text-zinc-400 font-bold">
+                                    <td colSpan={9} className="px-4 py-16 text-center text-zinc-400 font-bold">
                                         선택하신 기간에 해당하는 결제 완료 내역이 없습니다.
                                     </td>
                                 </tr>
