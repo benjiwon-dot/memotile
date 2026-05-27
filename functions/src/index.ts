@@ -433,36 +433,34 @@ export const processAdminTask = onDocumentCreated(
                         createdAt: timestamp,
                     });
 
+                    // ✨ 여기서부터 100% 태국어 알림으로 고정 발송 로직 시작!
                     if (userId) {
-                        const userSnap = await db.collection("users").doc(String(userId)).get();
-                        const userLang = userSnap.data()?.language || "en";
-
                         let pushTitle = "";
                         let pushBody = "";
 
                         if (status) {
                             const s = status.toLowerCase();
                             if (s === "processing") {
-                                pushTitle = userLang === "th" ? "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!" : "🎨 We started crafting your tiles!";
-                                pushBody = userLang === "th" ? "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด" : "Our team is carefully printing your photos.";
+                                pushTitle = "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!";
+                                pushBody = "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด";
                             } else if (s === "printed") {
-                                pushTitle = userLang === "th" ? "📸 พิมพ์ภาพเสร็จเรียบร้อย!" : "📸 Your photos are printed!";
-                                pushBody = userLang === "th" ? "ภาพของคุณถูกพิมพ์อย่างสวยงามและกำลังเตรียมจัดส่ง" : "Your photos have been beautifully printed and are getting ready to ship.";
+                                pushTitle = "📸 พิมพ์ภาพเสร็จเรียบร้อย!";
+                                pushBody = "ภาพของคุณถูกพิมพ์อย่างสวยงามและกำลังเตรียมจัดส่งค่ะ";
                             } else if (s === "shipping") {
-                                pushTitle = userLang === "th" ? "🚚 ความทรงจำของคุณกำลังเดินทางไปหา!" : "🚚 Your memories are on the way!";
-                                pushBody = userLang === "th" ? "ข่าวดี! MemoTile ของคุณถูกจัดส่งเรียบร้อยแล้ว" : "Good news! Your MemoTiles have been shipped.";
+                                pushTitle = "🚚 ความทรงจำของคุณกำลังเดินทางไปหา!";
+                                pushBody = "ข่าวดี! MemoTile ของคุณถูกจัดส่งเรียบร้อยแล้ว เตรียมรับพัสดุได้เลยค่ะ";
                             } else if (s === "delivered") {
-                                pushTitle = userLang === "th" ? "🎁 พัสดุของคุณจัดส่งสำเร็จแล้ว!" : "🎁 Your MemoTiles have arrived!";
-                                pushBody = userLang === "th" ? "หวังว่าคุณจะชอบ MemoTile ของคุณนะ!" : "We hope you love your new MemoTiles!";
+                                pushTitle = "🎁 พัสดุจัดส่งสำเร็จ!";
+                                pushBody = "หวังว่าคุณจะชอบ MemoTile ของคุณนะคะ ขอบคุณที่ใช้บริการค่ะ!";
                             } else {
-                                pushTitle = userLang === "th" ? "อัปเดตสถานะการสั่งซื้อ" : "Order Status Updated";
-                                pushBody = userLang === "th" ? `คำสั่งซื้อของคุณอยู่ในสถานะ [${status.toUpperCase()}]` : `Your order is now in [${status.toUpperCase()}] status.`;
+                                pushTitle = "อัปเดตสถานะการสั่งซื้อ";
+                                pushBody = `คำสั่งซื้อของคุณได้รับการเปลี่ยนสถานะเป็น [${status.toUpperCase()}] แล้วค่ะ`;
                             }
                         }
 
                         if (trackingNumber && trackingNumber !== orderData.trackingNumber) {
-                            pushTitle = userLang === "th" ? "🚚 อัปเดตการจัดส่ง" : "🚚 Shipping Update";
-                            pushBody = userLang === "th" ? `หมายเลขติดตามพัสดุของคุณคือ: ${trackingNumber}` : `Your tracking number: ${trackingNumber}`;
+                            pushTitle = "🚚 อัปเดตข้อมูลการจัดส่ง";
+                            pushBody = `หมายเลขพัสดุของคุณคือ: ${trackingNumber} สามารถตรวจสอบสถานะได้เลยค่ะ!`;
                         }
 
                         if (pushTitle) {
@@ -479,17 +477,19 @@ export const processAdminTask = onDocumentCreated(
             }
             else if (task.type === "MARKETING_PUSH") {
                 const { target, filters, testToken, en, th } = task.payload || {};
-                const titleEn = en?.title;
-                const bodyEn = en?.body;
+                // 마케팅 알림도 태국어(th) 내용을 최우선으로, 없으면 en을 사용하도록 강제
                 const titleTh = th?.title;
                 const bodyTh = th?.body;
+                const titleEn = en?.title;
+                const bodyEn = en?.body;
 
                 if (!titleEn && !titleTh) throw new Error("No message content provided.");
 
                 if (target === "test_token" && testToken) {
                     console.log(`[Marketing Push] Direct test to token: ${testToken}`);
-                    const finalTitle = filters?.language === 'th' ? (titleTh || titleEn) : (titleEn || titleTh);
-                    const finalBody = filters?.language === 'th' ? (bodyTh || bodyEn) : (bodyEn || bodyTh);
+                    // 무조건 태국어 우선
+                    const finalTitle = titleTh || titleEn;
+                    const finalBody = bodyTh || bodyEn;
 
                     await axios.post("https://exp.host/--/api/v2/push/send", {
                         to: testToken,
@@ -511,7 +511,6 @@ export const processAdminTask = onDocumentCreated(
                         if (!pushToken || uniqueTokens.has(pushToken)) continue;
 
                         const userId = userDoc.id;
-                        const userLang = userData?.language || "en";
 
                         if (target === "admins" && userData.isAdmin !== true) continue;
 
@@ -532,14 +531,9 @@ export const processAdminTask = onDocumentCreated(
                             if (filters.userGroup === "abandoned" && !hasAbandoned) continue;
                         }
 
-                        let finalTitle, finalBody;
-                        if (userLang === "th") {
-                            finalTitle = titleTh || titleEn;
-                            finalBody = bodyTh || bodyEn;
-                        } else {
-                            finalTitle = titleEn || titleTh;
-                            finalBody = bodyEn || bodyTh;
-                        }
+                        // 무조건 태국어(Th) 우선 적용
+                        const finalTitle = titleTh || titleEn;
+                        const finalBody = bodyTh || bodyEn;
 
                         if (finalTitle && finalBody) {
                             uniqueTokens.add(pushToken);
@@ -945,11 +939,10 @@ export const onPrintFileFinalized = onObjectFinalized(
    SCHEDULED FUNCTIONS
    ========================================================================= */
 
-// ✨ [완벽하게 수정됨] 24시간 지난 펜딩 주문은 Canceled 처리하고 무거운 사진만 지웁니다!
 export const cleanupAbandonedPendingOrders = onSchedule(
     {
-        schedule: "0 4 * * *",
-        timeZone: "Asia/Bangkok", // 🚨 태국 시간으로 강제 고정!
+        schedule: "every 1 hours",
+        timeZone: "Asia/Bangkok",
         region: "us-central1"
     },
     async (event) => {
@@ -957,19 +950,12 @@ export const cleanupAbandonedPendingOrders = onSchedule(
         const bucket = getStorage().bucket();
         const now = new Date();
 
-        // 24시간 전 시간 계산
-        const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
-
         try {
             const snapshot = await db.collection("orders")
                 .where("status", "==", "pending")
-                .where("createdAt", "<=", twentyFourHoursAgo)
                 .get();
 
-            if (snapshot.empty) {
-                console.log("변경할 펜딩 주문이 없습니다.");
-                return;
-            }
+            if (snapshot.empty) return;
 
             const batch = db.batch();
             let processedCount = 0;
@@ -978,7 +964,12 @@ export const cleanupAbandonedPendingOrders = onSchedule(
                 const data = docSnap.data();
                 const orderRef = docSnap.ref;
 
-                // 1. Storage 원본 사진 파일 영구 삭제 (서버 용량 다이어트)
+                if (!data.createdAt) continue;
+                const createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+                const diffHours = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+
+                if (diffHours < 24) continue;
+
                 if (data.storageBasePath) {
                     try {
                         await bucket.deleteFiles({ prefix: data.storageBasePath });
@@ -987,28 +978,26 @@ export const cleanupAbandonedPendingOrders = onSchedule(
                     }
                 }
 
-                // 2. 하위 items 컬렉션(개별 사진 정보) 지우기
                 const itemsSnap = await orderRef.collection("items").get();
                 itemsSnap.forEach(item => batch.delete(item.ref));
 
-                // 3. 본 주문서는 지우지 않고 상태만 Canceled로 변경!
+                // 🚨 본 주문서를 삭제(delete)하지 않고, "deleted" 상태로 덮어씌웁니다.
                 batch.update(orderRef, {
-                    status: "canceled",
-                    adminNote: "24시간 결제 미완료(Pending) 자동 취소 및 사진 삭제 완료",
-                    canceledAt: FieldValue.serverTimestamp(),
+                    status: "deleted",
+                    adminNote: "24시간 결제 미완료로 인한 시스템 자동 삭제 (사진 파기 완료)",
+                    deletedAt: FieldValue.serverTimestamp(),
                     updatedAt: FieldValue.serverTimestamp()
                 });
 
                 processedCount++;
             }
 
+            if (processedCount === 0) return;
             await batch.commit();
-
-            console.log(`🧹 [자동 처리 완료] 24시간 경과된 Pending 주문 ${processedCount}건 상태 취소(Canceled) 변경 및 사진 영구 삭제됨.`);
 
             try {
                 await axios.post(SLACK_WEBHOOK_URL, {
-                    text: `🧹 *[자동 처리 완료]* 24시간이 지난 결제 미완료(pending) 주문 *${processedCount}건*이 '취소(Canceled)'로 변경되었으며 서버 사진 용량이 확보되었습니다.`
+                    text: `🧹 *[팬딩 주문 자동 삭제 완료]* 24시간이 지난 결제 미완료(pending) 주문 *${processedCount}건*이 '자동 삭제(deleted)' 처리되었습니다. (사진 파일 영구 파기 완료)`
                 });
             } catch (e) { }
 
@@ -1123,17 +1112,11 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
    ✨ PAYLETTER 통합 결제 연동 (LIVE 운영 서버)
    ========================================================================= */
 
-// ✅ 실결제용 API Key
 const PAYLETTER_API_KEY = "5955a60454daa331f178229f2337804f";
-
-// 🚨 주의: 반드시 발급받으신 진짜 상점 ID(Store ID)로 변경하세요!
 const PAYLETTER_CLIENT_ID = "memotile";
-
 const PROJECT_REGION = "us-central1";
 const PROJECT_ID = "memotile-app-anti-demo";
 const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
-
-// ✅ 라이브 서버 URL
 const PAYLETTER_URL = "https://api.payletter.com/api/payment/request";
 
 export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
