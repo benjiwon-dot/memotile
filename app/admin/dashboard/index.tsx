@@ -2,9 +2,9 @@
 import React, { useState, useEffect } from "react";
 import {
     TrendingUp, Users, DollarSign, Calendar, ArrowRight, Loader2, CreditCard, Activity,
-    Smartphone, Apple, RefreshCw, XCircle, FileSpreadsheet
+    Smartphone, Apple, RefreshCw, XCircle, FileSpreadsheet, Tag
 } from "lucide-react";
-import { getFirestore, collection, getDocs, query, orderBy } from "firebase/firestore";
+import { getFirestore, collection, getDocs } from "firebase/firestore";
 import { app } from "@/lib/firebase";
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -14,10 +14,12 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [timeFilter, setTimeFilter] = useState("this_month");
 
-    const [startDate, setStartDate] = useState("");
-    const [endDate, setEndDate] = useState("");
+    const todayStr = new Date().toISOString().split('T')[0];
+    const [startDate, setStartDate] = useState(todayStr);
+    const [endDate, setEndDate] = useState(todayStr);
 
     const [downloading, setDownloading] = useState(false);
+    const [refreshKey, setRefreshKey] = useState(0);
 
     const [stats, setStats] = useState({
         revenueTHB: 0,
@@ -35,13 +37,10 @@ export default function DashboardPage() {
 
     const [chartData, setChartData] = useState([]);
     const [recentOrders, setRecentOrders] = useState<any[]>([]);
-
-    // ✨ 화면에 보여줄 엑셀 미리보기용 데이터 State
     const [statementRows, setStatementRows] = useState<any[]>([]);
 
     const db = getFirestore(app);
 
-    // ✨ 엑셀 변환 함수 (신규 컬럼 및 바트/달러 합계 분리 적용)
     const handleDownloadStatement = () => {
         if (statementRows.length === 0) {
             alert("선택하신 기간에 다운로드할 결제 내역이 없습니다.");
@@ -54,8 +53,7 @@ export default function DashboardPage() {
             let totalTHB = 0;
             let totalUSD = 0;
 
-            // ✨ 헤더에 인스타, 기기(OS), 쿠폰 컬럼 분리 추가
-            const headers = ["주문 일시", "주문 번호", "고객 이름", "인스타그램 ID", "기기(OS)", "쿠폰 사용", "타일 수량(EA)", "결제 통화", "결제 금액", "전화 번호", "배송지 주소", "비고"];
+            const headers = ["주문 일시", "주문 번호", "고객 이름", "인스타그램 ID", "기기(OS)", "사용한 쿠폰", "타일 수량(EA)", "결제 통화", "결제 금액", "전화 번호", "배송지 주소", "비고"];
             const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
             const csvLines = [headers.join(",")];
@@ -74,14 +72,13 @@ export default function DashboardPage() {
                     escape(r.promo),
                     escape(r.qty),
                     escape(r.currency),
-                    escape(r.amount), // 기호 없이 순수 숫자만 (엑셀 계산 용이)
+                    escape(r.amount),
                     escape(r.phone),
                     escape(r.address),
                     escape(r.note)
                 ].join(","));
             });
 
-            // 은행 명세서 총합계 라인 추가
             csvLines.push("");
             csvLines.push(`[기간 총합계 정산],,,,,,,,,,,`);
             csvLines.push(`총 주문 건수:,${statementRows.length} 건,,,,,,,,,,`);
@@ -126,8 +123,23 @@ export default function DashboardPage() {
                     else if (platform === 'android') androidCount++;
                 });
 
-                const ordersQuery = query(collection(db, "orders"), orderBy("createdAt", "desc"));
-                const ordersSnap = await getDocs(ordersQuery);
+                const ordersSnap = await getDocs(collection(db, "orders"));
+
+                const allOrdersList = ordersSnap.docs.map(doc => {
+                    const data = doc.data();
+                    let orderDate = new Date(0);
+
+                    if (data.createdAt) {
+                        if (typeof data.createdAt.toDate === 'function') {
+                            orderDate = data.createdAt.toDate();
+                        } else {
+                            orderDate = new Date(data.createdAt);
+                        }
+                    }
+                    return { id: doc.id, ...data, orderDate };
+                });
+
+                allOrdersList.sort((a, b) => b.orderDate.getTime() - a.orderDate.getTime());
 
                 let tempRevenueTHB = 0;
                 let tempRevenueUSD = 0;
@@ -147,11 +159,8 @@ export default function DashboardPage() {
                 const currentMonth = now.getMonth();
                 const currentYear = now.getFullYear();
 
-                ordersSnap.forEach(doc => {
-                    const data = doc.data();
-                    if (!data.createdAt) return;
-
-                    const orderDate = data.createdAt.toDate();
+                allOrdersList.forEach(order => {
+                    const orderDate = order.orderDate;
                     let isIncluded = false;
 
                     if (timeFilter === 'all') {
@@ -169,24 +178,25 @@ export default function DashboardPage() {
                     }
 
                     if (!isIncluded) return;
+                    if (order.status === "deleted") return;
 
                     totalFilteredOrders++;
 
                     if (recentList.length < 5) {
-                        recentList.push({ id: doc.id, ...data });
+                        recentList.push(order);
                     }
 
-                    const amount = data.totalAmount !== undefined ? data.totalAmount : (data.total !== undefined ? data.total : 0);
-                    const currency = (data.currency || 'THB').toUpperCase();
+                    const amount = order.totalAmount !== undefined ? order.totalAmount : (order.total !== undefined ? order.total : 0);
+                    const currency = (order.currency || 'THB').toUpperCase();
 
-                    if (data.status === "paid" || data.status === "completed" || data.status === "printing") {
+                    if (order.status === "paid" || order.status === "completed" || order.status === "printing" || order.status === "processing") {
                         if (currency === 'USD') tempRevenueUSD += amount;
                         else tempRevenueTHB += amount;
 
                         tempOrders++;
 
-                        if (data.uid) {
-                            userPurchaseCounts[data.uid] = (userPurchaseCounts[data.uid] || 0) + 1;
+                        if (order.uid) {
+                            userPurchaseCounts[order.uid] = (userPurchaseCounts[order.uid] || 0) + 1;
                         }
 
                         const dateStr = `${orderDate.getMonth() + 1}/${orderDate.getDate()}`;
@@ -194,25 +204,25 @@ export default function DashboardPage() {
                             dailyRevenue[dateStr] = (dailyRevenue[dateStr] || 0) + amount;
                         }
 
-                        // ✨ 신규 컬럼 추출 (쿠폰, 인스타, 기기)
-                        const shipping = data.shipping || {};
-                        const customer = data.customer || {};
-                        const tileCount = data.itemsCount || (Array.isArray(data.items) ? data.items.length : 0) || 0;
+                        const shipping = order.shipping || {};
+                        const customer = order.customer || {};
+                        const tileCount = order.itemsCount || (Array.isArray(order.items) ? order.items.length : 0) || 0;
                         const fullAddress = `${shipping.address1 || ""} ${shipping.address2 || ""} ${shipping.city || ""} ${shipping.state || ""}`.trim();
-                        const insta = data.instagram || customer.instagram || data.instagramId || "-";
-                        const promoCode = data.promoCode || data.pricing?.promoCode || "-";
+                        const insta = order.instagram || customer.instagram || order.instagramId || "-";
 
-                        // OS 기기 판별
-                        const platformStr = String(data.platform || data.device || "-").toLowerCase();
+                        // 정확한 쿠폰명 추출
+                        const promoCode = order.promoCode || order.pricing?.promoCode || "-";
+
+                        const platformStr = String(order.platform || order.device || "-").toLowerCase();
                         let osDisplay = "-";
                         if (platformStr.includes('ios') || platformStr.includes('iphone') || platformStr.includes('ipad')) osDisplay = "iOS";
                         else if (platformStr.includes('android') || platformStr.includes('galaxy')) osDisplay = "Android";
-                        else if (platformStr !== "-") osDisplay = data.platform;
+                        else if (platformStr !== "-") osDisplay = order.platform;
 
                         rowsForTable.push({
-                            id: doc.id,
+                            id: order.id,
                             date: orderDate.toLocaleString('ko-KR'),
-                            orderCode: data.orderCode || doc.id,
+                            orderCode: order.orderCode || order.id,
                             name: shipping.fullName || customer.fullName || "Guest",
                             phone: shipping.phone || customer.phone || "",
                             insta: insta.startsWith('@') ? insta : (insta !== "-" ? `@${insta}` : "-"),
@@ -222,15 +232,15 @@ export default function DashboardPage() {
                             qty: tileCount,
                             amount: amount,
                             currency: currency,
-                            note: data.adminNote || ""
+                            note: order.adminNote || ""
                         });
                     }
-                    else if (data.status === "pending") {
+                    else if (order.status === "pending") {
                         if (currency === 'USD') tempPendingUSD += amount;
                         else tempPendingTHB += amount;
                         tempPendingOrders++;
                     }
-                    else if (data.status === "cancelled" || data.status === "refunded" || data.status === "canceled") {
+                    else if (order.status === "cancelled" || order.status === "refunded" || order.status === "canceled") {
                         tempCancelledOrders++;
                     }
                 });
@@ -274,16 +284,20 @@ export default function DashboardPage() {
         if (timeFilter === 'custom' && (!startDate || !endDate)) return;
 
         fetchDashboardData();
-    }, [timeFilter, startDate, endDate]);
+    }, [timeFilter, startDate, endDate, refreshKey]);
 
     const getStatusBadge = (status: string) => {
         switch (status) {
             case "paid": case "completed": case "printing":
                 return <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-md">결제완료</span>;
+            case "processing":
+                return <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-md">처리중</span>;
             case "pending":
                 return <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-md">결제대기</span>;
             case "cancelled": case "refunded": case "canceled":
                 return <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-md">취소됨</span>;
+            case "deleted":
+                return <span className="px-2 py-1 bg-zinc-200 text-zinc-500 text-xs font-black rounded-md line-through">자동삭제</span>;
             default:
                 return <span className="px-2 py-1 bg-zinc-100 text-zinc-600 text-xs font-bold rounded-md">{status}</span>;
         }
@@ -308,15 +322,30 @@ export default function DashboardPage() {
                     </h1>
                     <p className="text-zinc-500 text-sm mt-1">실시간 매출 및 고객 행동 인사이트를 확인하세요.</p>
                 </div>
+
+                <button
+                    onClick={() => setRefreshKey(prev => prev + 1)}
+                    className="bg-white border border-zinc-200 text-zinc-700 hover:text-zinc-900 hover:bg-zinc-50 px-4 py-2.5 rounded-xl shadow-sm transition-all flex items-center gap-2 text-sm font-bold"
+                >
+                    <RefreshCw size={16} className={loading ? "animate-spin text-blue-500" : ""} />
+                    데이터 동기화
+                </button>
             </div>
 
+            {/* ✨ 완벽 개편: 바트와 달러 1:1 동급 배치 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 p-6 rounded-3xl shadow-lg border border-zinc-700 text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-4 opacity-20"><DollarSign size={80} /></div>
-                    <p className="text-sm font-semibold text-zinc-400 mb-1">총 매출액 (결제완료 {stats.orders}건)</p>
-                    <div className="flex flex-col gap-1">
-                        <p className="text-3xl font-black">฿{stats.revenueTHB.toLocaleString()}</p>
-                        <p className="text-lg font-bold text-blue-400">+ ${stats.revenueUSD.toLocaleString()}</p>
+                    <p className="text-sm font-semibold text-zinc-400 mb-4">총 매출액 (결제완료 {stats.orders}건)</p>
+                    <div className="grid grid-cols-2 gap-4 items-center">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-zinc-400 font-bold mb-1 uppercase tracking-wider">Thai Baht (THB)</span>
+                            <p className="text-2xl lg:text-3xl font-black">฿{stats.revenueTHB.toLocaleString()}</p>
+                        </div>
+                        <div className="flex flex-col border-l border-zinc-700 pl-4">
+                            <span className="text-[10px] text-blue-400 font-bold mb-1 uppercase tracking-wider">US Dollar (USD)</span>
+                            <p className="text-2xl lg:text-3xl font-black text-blue-400">${stats.revenueUSD.toLocaleString()}</p>
+                        </div>
                     </div>
                 </div>
 
@@ -327,7 +356,7 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-2xl font-black text-zinc-800 ml-1">{stats.repurchaseRate}%</p>
                     <p className="text-xs text-green-600 font-medium mt-1 ml-1 flex items-center gap-1">
-                        {stats.repurchaseRate < 10 ? '리타겟팅 마케팅 필요' : '단골 고객 유입 양호'}
+                        {stats.repurchaseRate < 10 ? '리타겟팅 มาเก็ตติ้ง 필요' : '단골 고객 유입 양호'}
                     </p>
                 </div>
 
@@ -343,6 +372,7 @@ export default function DashboardPage() {
                 </div>
             </div>
 
+            {/* 유저 통계 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="col-span-1 md:col-span-3 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col md:flex-row items-center justify-between">
                     <div className="flex items-center gap-4 mb-4 md:mb-0">
@@ -409,6 +439,7 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
+                {/* 최근 주문 리스트 */}
                 <div className="lg:col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col">
                     <h2 className="text-lg font-bold text-zinc-800 mb-6 flex items-center gap-2">
                         <CreditCard size={20} className="text-blue-500" /> 최근 접수된 주문
@@ -416,24 +447,38 @@ export default function DashboardPage() {
 
                     <div className="flex-1 space-y-4">
                         {recentOrders.length > 0 ? (
-                            recentOrders.map((order, index) => (
-                                <div key={order.id || index} className="flex items-center justify-between p-3 rounded-2xl hover:bg-zinc-50 transition-colors border border-transparent hover:border-zinc-100">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 font-bold text-sm">
-                                            {order.uid ? order.uid.substring(0, 2).toUpperCase() : 'US'}
+                            recentOrders.map((order, index) => {
+                                const promoCodeName = order.promoCode || order.pricing?.promoCode;
+
+                                return (
+                                    <div key={order.id || index} className="flex items-center justify-between p-3 rounded-2xl hover:bg-zinc-50 transition-colors border border-transparent hover:border-zinc-100">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className="w-10 h-10 shrink-0 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 font-bold text-sm">
+                                                {order.uid ? order.uid.substring(0, 2).toUpperCase() : 'US'}
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <p className="text-sm font-bold text-zinc-800">
+                                                        {order.currency === 'USD'
+                                                            ? <span className="text-blue-600">${order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>
+                                                            : <span>฿{order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>}
+                                                    </p>
+                                                    {/* ✨ 최근 주문에 쿠폰 이름 직관적 노출 */}
+                                                    {promoCodeName && (
+                                                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 flex items-center gap-1">
+                                                            <Tag size={10} /> {promoCodeName}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+                                                    {order.orderDate ? order.orderDate.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-bold text-zinc-800">
-                                                {order.currency === 'USD' ? <span className="text-blue-600">${order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span> : <span>฿{order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>}
-                                            </p>
-                                            <p className="text-[10px] text-zinc-400 mt-0.5">
-                                                {order.createdAt ? order.createdAt.toDate().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
-                                            </p>
-                                        </div>
+                                        <div className="shrink-0">{getStatusBadge(order.status)}</div>
                                     </div>
-                                    <div>{getStatusBadge(order.status)}</div>
-                                </div>
-                            ))
+                                );
+                            })
                         ) : (
                             <p className="text-sm text-zinc-400 text-center py-10">최근 들어온 주문이 없습니다.</p>
                         )}
@@ -448,7 +493,7 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* ✨ 완벽 개편: 은행 명세서 스타일 엑셀 데이터 미리보기 (OS, 인스타, 쿠폰 포함) */}
+            {/* 정산용 미리보기 표 */}
             <div className="bg-white rounded-3xl shadow-sm border border-zinc-100 overflow-hidden">
                 <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-50/50">
                     <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
@@ -480,6 +525,14 @@ export default function DashboardPage() {
                         </div>
 
                         <button
+                            onClick={() => setRefreshKey(prev => prev + 1)}
+                            className="bg-white border border-zinc-200 text-zinc-500 hover:text-zinc-900 p-2.5 rounded-xl shadow-sm transition-all"
+                            title="데이터 동기화"
+                        >
+                            <RefreshCw size={18} className={loading ? "animate-spin text-blue-500" : ""} />
+                        </button>
+
+                        <button
                             onClick={handleDownloadStatement}
                             disabled={downloading}
                             className="bg-green-600 hover:bg-green-700 disabled:bg-zinc-400 text-white font-black text-sm px-5 py-3 rounded-xl flex items-center gap-2 shadow-md transition-all"
@@ -498,7 +551,7 @@ export default function DashboardPage() {
                                 <th className="px-4 py-4 whitespace-nowrap">주문 번호</th>
                                 <th className="px-4 py-4 whitespace-nowrap">고객 이름</th>
                                 <th className="px-4 py-4 whitespace-nowrap">인스타 ID</th>
-                                <th className="px-4 py-4 whitespace-nowrap text-center">쿠폰</th>
+                                <th className="px-4 py-4 whitespace-nowrap text-center">어떤 쿠폰?</th>
                                 <th className="px-4 py-4 whitespace-nowrap text-center">OS</th>
                                 <th className="px-4 py-4 whitespace-nowrap">결제 금액</th>
                                 <th className="px-4 py-4 whitespace-nowrap text-center">타일 수</th>
@@ -512,23 +565,20 @@ export default function DashboardPage() {
                                     <td className="px-4 py-4 whitespace-nowrap font-mono font-bold text-xs text-zinc-700">{row.orderCode}</td>
                                     <td className="px-4 py-4 whitespace-nowrap font-bold text-zinc-900">{row.name}</td>
 
-                                    {/* 인스타그램 */}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         {row.insta !== "-" ? <span className="text-xs text-pink-500 font-bold bg-pink-50 px-1.5 py-0.5 rounded">{row.insta}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
 
-                                    {/* 쿠폰 사용 여부 */}
+                                    {/* ✨ 엑셀 표에도 쿠폰 이름 직관적 노출 */}
                                     <td className="px-4 py-4 whitespace-nowrap text-center">
-                                        {row.promo !== "-" ? <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">{row.promo}</span> : <span className="text-zinc-300">-</span>}
+                                        {row.promo !== "-" ? <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100 flex items-center justify-center gap-1 w-max mx-auto"><Tag size={12} /> {row.promo}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
 
-                                    {/* 기기 OS */}
                                     <td className="px-4 py-4 whitespace-nowrap text-center text-zinc-500 flex items-center justify-center gap-1">
                                         {row.os === 'iOS' ? <Apple size={14} className="text-zinc-800" /> : (row.os === 'Android' ? <Smartphone size={14} className="text-green-600" /> : null)}
                                         <span className="text-[11px] font-bold">{row.os}</span>
                                     </td>
 
-                                    {/* 결제 금액 (바트/달러 색상 분리) */}
                                     <td className="px-4 py-4 whitespace-nowrap font-black text-sm">
                                         {row.currency === 'USD'
                                             ? <span className="text-blue-600">${row.amount.toLocaleString()}</span>
