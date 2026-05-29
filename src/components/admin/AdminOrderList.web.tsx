@@ -21,11 +21,10 @@ import {
     X
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc, getDoc, collection, addDoc } from "firebase/firestore";
+import { getFirestore, doc, deleteDoc, getDoc, collection, addDoc, getDocs } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { OrderHeader, OrderStatus } from "@/lib/admin/types";
-import { listOrders } from "@/lib/admin/orderRepo";
 import StatusBadge from "./StatusBadge";
 import { app } from "@/lib/firebase";
 
@@ -83,7 +82,6 @@ function getDeleteChallenge() {
     return `delete${y}${m}${day}`;
 }
 
-// ✨ 날짜 데이터 타입(Timestamp vs String) 꼬임 방지를 위한 안전 파싱 함수
 const getSafeDate = (val: any) => {
     if (!val) return new Date();
     if (typeof val.toDate === 'function') return val.toDate();
@@ -108,16 +106,8 @@ export default function AdminOrderList() {
     const [showTrackingModal, setShowTrackingModal] = useState(false);
     const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
 
-    const lastSigRef = useRef<string>("");
-
     const db = useMemo(() => getFirestore(app), []);
     const functions = useMemo(() => getFunctions(app, "us-central1"), []);
-
-    const formatDate = (val: any) =>
-        getSafeDate(val).toLocaleDateString("en-US", {
-            month: "short", day: "numeric", year: "numeric",
-            hour: "2-digit", minute: "2-digit",
-        });
 
     const formatShortDateTime = (val: any) =>
         getSafeDate(val).toLocaleString("ko-KR", {
@@ -131,31 +121,48 @@ export default function AdminOrderList() {
         setSelectedIds(new Set());
 
         try {
-            // ✨ [핵심 수정] 파이어베이스 복합 인덱스 에러(400)를 원천 차단!
-            // 상태 필터링은 파이어베이스 엔진에 시키지 않고(status: undefined), 프론트엔드가 알아서 거릅니다.
-            const data: any = await listOrders({
-                status: undefined,
-                from: from || undefined,
-                to: to || undefined,
-                sort: "desc",
-                limit: 500,
-            } as any);
+            // ✨ [핵심 조치] 파이어베이스 복합 인덱스 에러(400)를 원천 차단하기 위해
+            // where, orderBy 같은 조건식을 싹 빼버리고, 무조건 모든 데이터를 가볍게 가져옵니다.
+            const querySnapshot = await getDocs(collection(db, "orders"));
 
-            const rows: OrderHeader[] = Array.isArray(data) ? data : data?.rows ?? [];
-            setOrders(rows);
+            let allData = querySnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    // 안전하게 날짜 객체 추출
+                    createdAtSafe: getSafeDate(data.createdAt)
+                } as any;
+            });
+
+            // ✨ 프론트엔드(브라우저) 메모리에서 직접 최신순으로 깔끔하게 정렬!
+            allData.sort((a, b) => b.createdAtSafe.getTime() - a.createdAtSafe.getTime());
+
+            // 날짜 필터링(from, to)이 걸려있다면 여기서 잘라냅니다.
+            if (from || to) {
+                const fromDate = from ? new Date(`${from}T00:00:00`) : new Date(0);
+                const toDate = to ? new Date(`${to}T23:59:59`) : new Date();
+
+                allData = allData.filter(o => {
+                    const orderDate = o.createdAtSafe;
+                    return orderDate >= fromDate && orderDate <= toDate;
+                });
+            }
+
+            setOrders(allData);
         } catch (e: any) {
-            console.error(e);
+            console.error("Order fetch error:", e);
             setError(e?.message || String(e));
         } finally {
             setLoading(false);
         }
     };
 
+    // 상태 필터링 탭(ALL, PAID 등)과 검색창 작동 로직
     const visibleOrders = useMemo(() => {
         const query = q.trim();
         const tab = normStatus(statusFilter);
 
-        // ✨ 서버에서 다 가져온 뒤, 여기서 현재 선택된 탭(statusFilter)에 맞춰 100% 안전하게 필터링합니다.
         const statusFiltered = orders.filter((o) => {
             if (tab === "ALL") return true;
             const s = normStatus(o.status);
@@ -334,9 +341,11 @@ export default function AdminOrderList() {
                     zipUrl = (res.data as any)?.url || "";
                 } catch { zipUrl = "Link Error"; }
 
+                const orderDateObj = (o as any).createdAtSafe || getSafeDate(o.createdAt);
+
                 rows.push({
                     "Order Number": o.orderCode,
-                    "Date": formatDate(o.createdAt),
+                    "Date": orderDateObj.toLocaleDateString("en-US"),
                     "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
                     "Phone Number": o.shipping?.phone || o.customer?.phone || "",
                     "Address": `${o.shipping?.address1 || ""} ${o.shipping?.address2 || ""} ${o.shipping?.city || ""} ${o.shipping?.state || ""}`.trim(),
@@ -376,14 +385,8 @@ export default function AdminOrderList() {
     const handleResetView = () => { setFrom(""); setTo(""); fetchOrders(); };
 
     useEffect(() => {
-        const timer = setTimeout(() => {
-            const sig = JSON.stringify({ status: statusFilter, from, to });
-            if (lastSigRef.current === sig) return;
-            lastSigRef.current = sig;
-            fetchOrders();
-        }, 200);
-        return () => clearTimeout(timer);
-    }, [statusFilter, from, to]);
+        fetchOrders();
+    }, [from, to]);
 
     const isAllVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selectedIds.has(o.id));
 
@@ -417,7 +420,7 @@ export default function AdminOrderList() {
                         <span className="text-zinc-400">-</span>
                         <input type="date" className="bg-transparent text-xs" value={to} onChange={(e) => setTo(e.target.value)} />
                         <button onClick={handleResetView} className="admin-btn admin-btn-secondary !p-1.5" disabled={loading}>
-                            <RefreshCw size={14} />
+                            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
                         </button>
                     </div>
                 </div>
@@ -487,8 +490,7 @@ export default function AdminOrderList() {
 
                     <tbody>
                         {visibleOrders.map((order) => {
-                            // ✨ 안전한 파싱을 적용하여 타임스탬프 오류를 원천 차단했습니다.
-                            const orderDate = getSafeDate(order.createdAt);
+                            const orderDate = (order as any).createdAtSafe || getSafeDate(order.createdAt);
                             const abandoned = order.status === 'pending' && (new Date().getTime() - orderDate.getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
                             const fullAddress = [order.shipping?.address1, order.shipping?.address2, order.shipping?.city, order.shipping?.state].filter(Boolean).join(" ");
@@ -504,7 +506,7 @@ export default function AdminOrderList() {
                                     <td className="p-4">
                                         <div className="text-xs text-zinc-500 font-medium whitespace-nowrap flex items-center gap-1.5">
                                             <Clock size={12} className="text-zinc-400" />
-                                            {formatShortDateTime(order.createdAt)}
+                                            {formatShortDateTime(orderDate)}
                                         </div>
                                     </td>
                                     <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">{order.orderCode}</td>
@@ -533,7 +535,7 @@ export default function AdminOrderList() {
                                             {qty}
                                         </div>
                                     </td>
-                                    <td className="p-4 font-black text-sm whitespace-nowrap">฿{order.pricing?.total?.toLocaleString()}</td>
+                                    <td className="p-4 font-black text-sm whitespace-nowrap">฿{order.pricing?.total?.toLocaleString() || 0}</td>
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
                                             <StatusBadge status={order.status} />
@@ -552,7 +554,6 @@ export default function AdminOrderList() {
                 </table>
             </div>
 
-            {/* ✨ 팝업 모달창 UI */}
             {showTrackingModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-2xl flex flex-col max-h-[85vh]">

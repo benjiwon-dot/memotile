@@ -10,6 +10,13 @@ import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 
+// ✨ 날짜 데이터 꼬임 방지용 안전 파싱 함수
+const getSafeDate = (val: any) => {
+    if (!val) return new Date();
+    if (typeof val.toDate === 'function') return val.toDate();
+    return new Date(val);
+};
+
 export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [timeFilter, setTimeFilter] = useState("this_month");
@@ -123,23 +130,20 @@ export default function DashboardPage() {
                     else if (platform === 'android') androidCount++;
                 });
 
+                // ✨ [핵심 조치] 파이어베이스 엔진에 정렬(orderBy)을 시키지 않고 가볍게 통째로 가져옵니다! (무한 로딩 원천 차단)
                 const ordersSnap = await getDocs(collection(db, "orders"));
 
                 const allOrdersList = ordersSnap.docs.map(doc => {
                     const data = doc.data();
-                    let orderDate = new Date(0);
-
-                    if (data.createdAt) {
-                        if (typeof data.createdAt.toDate === 'function') {
-                            orderDate = data.createdAt.toDate();
-                        } else {
-                            orderDate = new Date(data.createdAt);
-                        }
-                    }
-                    return { id: doc.id, ...data, orderDate };
+                    return {
+                        id: doc.id,
+                        ...data,
+                        orderDateSafe: getSafeDate(data.createdAt) // 안전한 날짜 객체 추출
+                    };
                 });
 
-                allOrdersList.sort((a, b) => b.orderDate.getTime() - a.orderDate.getTime());
+                // ✨ 브라우저 메모리에서 자바스크립트로 순식간에 최신순 완벽 정렬!
+                allOrdersList.sort((a: any, b: any) => b.orderDateSafe.getTime() - a.orderDateSafe.getTime());
 
                 let tempRevenueTHB = 0;
                 let tempRevenueUSD = 0;
@@ -159,8 +163,8 @@ export default function DashboardPage() {
                 const currentMonth = now.getMonth();
                 const currentYear = now.getFullYear();
 
-                allOrdersList.forEach(order => {
-                    const orderDate = order.orderDate;
+                allOrdersList.forEach((order: any) => {
+                    const orderDate = order.orderDateSafe;
                     let isIncluded = false;
 
                     if (timeFilter === 'all') {
@@ -172,12 +176,14 @@ export default function DashboardPage() {
                         const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
                         isIncluded = orderDate.getMonth() === prevMonth && orderDate.getFullYear() === prevYear;
                     } else if (timeFilter === 'custom' && startDate && endDate) {
-                        const start = new Date(startDate + "T00:00:00");
-                        const end = new Date(endDate + "T23:59:59");
+                        const start = new Date(`${startDate}T00:00:00`);
+                        const end = new Date(`${endDate}T23:59:59`);
                         isIncluded = orderDate >= start && orderDate <= end;
                     }
 
                     if (!isIncluded) return;
+
+                    // 🚨 시스템 자동삭제 처리된 쓰레기 데이터는 대시보드 통계에서 투명인간 취급
                     if (order.status === "deleted") return;
 
                     totalFilteredOrders++;
@@ -210,7 +216,6 @@ export default function DashboardPage() {
                         const fullAddress = `${shipping.address1 || ""} ${shipping.address2 || ""} ${shipping.city || ""} ${shipping.state || ""}`.trim();
                         const insta = order.instagram || customer.instagram || order.instagramId || "-";
 
-                        // 정확한 쿠폰명 추출
                         const promoCode = order.promoCode || order.pricing?.promoCode || "-";
 
                         const platformStr = String(order.platform || order.device || "-").toLowerCase();
@@ -281,8 +286,6 @@ export default function DashboardPage() {
             }
         };
 
-        if (timeFilter === 'custom' && (!startDate || !endDate)) return;
-
         fetchDashboardData();
     }, [timeFilter, startDate, endDate, refreshKey]);
 
@@ -332,7 +335,6 @@ export default function DashboardPage() {
                 </button>
             </div>
 
-            {/* ✨ 완벽 개편: 바트와 달러 1:1 동급 배치 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 p-6 rounded-3xl shadow-lg border border-zinc-700 text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-4 opacity-20"><DollarSign size={80} /></div>
@@ -356,7 +358,7 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-2xl font-black text-zinc-800 ml-1">{stats.repurchaseRate}%</p>
                     <p className="text-xs text-green-600 font-medium mt-1 ml-1 flex items-center gap-1">
-                        {stats.repurchaseRate < 10 ? '리타겟팅 มาเก็ตติ้ง 필요' : '단골 고객 유입 양호'}
+                        {stats.repurchaseRate < 10 ? '리타겟팅 마케팅 필요' : '단골 고객 유입 양호'}
                     </p>
                 </div>
 
@@ -372,7 +374,6 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* 유저 통계 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="col-span-1 md:col-span-3 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col md:flex-row items-center justify-between">
                     <div className="flex items-center gap-4 mb-4 md:mb-0">
@@ -439,7 +440,6 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* 최근 주문 리스트 */}
                 <div className="lg:col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 flex flex-col">
                     <h2 className="text-lg font-bold text-zinc-800 mb-6 flex items-center gap-2">
                         <CreditCard size={20} className="text-blue-500" /> 최근 접수된 주문
@@ -463,15 +463,14 @@ export default function DashboardPage() {
                                                             ? <span className="text-blue-600">${order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>
                                                             : <span>฿{order.totalAmount !== undefined ? order.totalAmount.toLocaleString() : (order.total || 0)}</span>}
                                                     </p>
-                                                    {/* ✨ 최근 주문에 쿠폰 이름 직관적 노출 */}
-                                                    {promoCodeName && (
+                                                    {promoCodeName && promoCodeName !== "-" && (
                                                         <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 flex items-center gap-1">
                                                             <Tag size={10} /> {promoCodeName}
                                                         </span>
                                                     )}
                                                 </div>
                                                 <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
-                                                    {order.orderDate ? order.orderDate.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
+                                                    {order.orderDateSafe ? order.orderDateSafe.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '방금 전'}
                                                 </p>
                                             </div>
                                         </div>
@@ -493,7 +492,6 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* 정산용 미리보기 표 */}
             <div className="bg-white rounded-3xl shadow-sm border border-zinc-100 overflow-hidden">
                 <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-50/50">
                     <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
@@ -569,7 +567,6 @@ export default function DashboardPage() {
                                         {row.insta !== "-" ? <span className="text-xs text-pink-500 font-bold bg-pink-50 px-1.5 py-0.5 rounded">{row.insta}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
 
-                                    {/* ✨ 엑셀 표에도 쿠폰 이름 직관적 노출 */}
                                     <td className="px-4 py-4 whitespace-nowrap text-center">
                                         {row.promo !== "-" ? <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100 flex items-center justify-center gap-1 w-max mx-auto"><Tag size={12} /> {row.promo}</span> : <span className="text-zinc-300">-</span>}
                                     </td>
