@@ -1,4 +1,4 @@
-//src/components/admin/AdminOrderList.web.tsx
+// src/components/admin/AdminOrderList.web.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -83,6 +83,13 @@ function getDeleteChallenge() {
     return `delete${y}${m}${day}`;
 }
 
+// ✨ 날짜 데이터 타입(Timestamp vs String) 꼬임 방지를 위한 안전 파싱 함수
+const getSafeDate = (val: any) => {
+    if (!val) return new Date();
+    if (typeof val.toDate === 'function') return val.toDate();
+    return new Date(val);
+};
+
 export default function AdminOrderList() {
     const router = useRouter();
 
@@ -98,7 +105,6 @@ export default function AdminOrderList() {
     const [bulkLoading, setBulkLoading] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-    // ✨ 팝업창 관리를 위한 State 추가
     const [showTrackingModal, setShowTrackingModal] = useState(false);
     const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
 
@@ -107,14 +113,14 @@ export default function AdminOrderList() {
     const db = useMemo(() => getFirestore(app), []);
     const functions = useMemo(() => getFunctions(app, "us-central1"), []);
 
-    const formatDate = (dateStr: string) =>
-        new Date(dateStr).toLocaleDateString("en-US", {
+    const formatDate = (val: any) =>
+        getSafeDate(val).toLocaleDateString("en-US", {
             month: "short", day: "numeric", year: "numeric",
             hour: "2-digit", minute: "2-digit",
         });
 
-    const formatShortDateTime = (dateStr: string) =>
-        new Date(dateStr).toLocaleString("ko-KR", {
+    const formatShortDateTime = (val: any) =>
+        getSafeDate(val).toLocaleString("ko-KR", {
             month: "short", day: "numeric",
             hour: "2-digit", minute: "2-digit",
         });
@@ -125,8 +131,10 @@ export default function AdminOrderList() {
         setSelectedIds(new Set());
 
         try {
+            // ✨ [핵심 수정] 파이어베이스 복합 인덱스 에러(400)를 원천 차단!
+            // 상태 필터링은 파이어베이스 엔진에 시키지 않고(status: undefined), 프론트엔드가 알아서 거릅니다.
             const data: any = await listOrders({
-                status: statusFilter !== "ALL" ? (statusFilter as OrderStatus) : undefined,
+                status: undefined,
                 from: from || undefined,
                 to: to || undefined,
                 sort: "desc",
@@ -147,6 +155,7 @@ export default function AdminOrderList() {
         const query = q.trim();
         const tab = normStatus(statusFilter);
 
+        // ✨ 서버에서 다 가져온 뒤, 여기서 현재 선택된 탭(statusFilter)에 맞춰 100% 안전하게 필터링합니다.
         const statusFiltered = orders.filter((o) => {
             if (tab === "ALL") return true;
             const s = normStatus(o.status);
@@ -220,20 +229,18 @@ export default function AdminOrderList() {
         }
     };
 
-    // ✨ 팝업창 띄우기 함수
     const openTrackingModal = () => {
         if (selectedIds.size === 0) return;
         const initialInputs: Record<string, string> = {};
         visibleOrders.forEach(o => {
             if (selectedIds.has(o.id)) {
-                initialInputs[o.id] = o.trackingNumber || ""; // 기존 운송장 번호가 있으면 불러오기
+                initialInputs[o.id] = o.trackingNumber || "";
             }
         });
         setTrackingInputs(initialInputs);
         setShowTrackingModal(true);
     };
 
-    // ✨ 운송장 번호 일괄 저장 & Shipping 상태 변경 요청
     const handleSaveTracking = async () => {
         setBulkLoading(true);
         try {
@@ -241,7 +248,6 @@ export default function AdminOrderList() {
                 const trackingNum = trackingInputs[id];
                 if (!trackingNum || trackingNum.trim() === "") return Promise.resolve();
 
-                // 각각의 주문에 대해 운송장 번호 입력 및 'shipping' 상태 변경 지시서를 만듭니다.
                 return addDoc(collection(db, "adminTasks"), {
                     type: "UPDATE_ORDER_OPS",
                     payload: {
@@ -432,7 +438,6 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
-                        {/* ✨ 운송장 일괄 입력 버튼 추가 */}
                         <button onClick={openTrackingModal} disabled={bulkLoading || selectedIds.size === 0} className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <Package size={12} />
                             운송장 퀵입력
@@ -482,8 +487,9 @@ export default function AdminOrderList() {
 
                     <tbody>
                         {visibleOrders.map((order) => {
-                            // ✨ 버그 수정됨: paid가 아니라 'pending' 상태가 24시간 넘었을 때 붉은색 경고가 뜨도록 수정
-                            const abandoned = order.status === 'pending' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
+                            // ✨ 안전한 파싱을 적용하여 타임스탬프 오류를 원천 차단했습니다.
+                            const orderDate = getSafeDate(order.createdAt);
+                            const abandoned = order.status === 'pending' && (new Date().getTime() - orderDate.getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
                             const fullAddress = [order.shipping?.address1, order.shipping?.address2, order.shipping?.city, order.shipping?.state].filter(Boolean).join(" ");
                             const qty = order.itemsCount || 0;
