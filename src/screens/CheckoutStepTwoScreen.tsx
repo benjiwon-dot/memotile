@@ -33,7 +33,6 @@ import { shadows } from "../theme/shadows";
 
 import { auth, db } from "../lib/firebase";
 import { User } from "firebase/auth";
-// ✨ updateDoc, setDoc 추가 (0원 결제 상태 변경 및 쿠폰 사용 기록용)
 import { doc, getDoc, getFirestore, updateDoc, setDoc } from "firebase/firestore";
 import { createOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
@@ -115,9 +114,12 @@ export default function CheckoutStepTwoScreen() {
     const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 300 : 8.85);
     const [basePriceUSD, setBasePriceUSD] = useState<number>(8.85);
 
-    // ✨ Firebase Firestore 가격 실시간 불러오기
+    // ✨ [핵심 추가] 파이어베이스에서 가져올 "자동 할인 구간 배열"
+    const [volumeDiscounts, setVolumeDiscounts] = useState<{ minQty: number, discountPercent: number }[]>([]);
+
+    // ✨ Firebase Firestore 가격 및 자동 할인 데이터 실시간 불러오기
     useEffect(() => {
-        const fetchPrice = async () => {
+        const fetchPriceAndDiscounts = async () => {
             try {
                 const firestoreDb = getFirestore();
                 const docRef = doc(firestoreDb, "config", "prices");
@@ -125,16 +127,21 @@ export default function CheckoutStepTwoScreen() {
 
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    const remotePrice = safeLocale === "TH" ? data.price_thb : data.price_usd;
-                    setPricePerTile(remotePrice);
+                    setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
                     setBasePriceUSD(data.price_usd || 8.85);
+
+                    // ✨ 파이어베이스에서 다량 구매 자동 할인표를 가져옵니다. (내림차순 정렬)
+                    if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
+                        const sortedTiers = [...data.volumeDiscounts].sort((a, b) => b.minQty - a.minQty);
+                        setVolumeDiscounts(sortedTiers);
+                    }
                 }
             } catch (error) {
                 console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
             }
         };
 
-        fetchPrice();
+        fetchPriceAndDiscounts();
     }, [safeLocale]);
 
     useEffect(() => {
@@ -208,51 +215,60 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    // ✨ 서버에서 받아온 가격(state) 적용
+    // ✨ [강력해진 결제 금액 계산 로직]
     const PRICE_PER_TILE = pricePerTile;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
     const BASE_PRICE_USD = basePriceUSD;
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
+    // 1. 순수 원금 (할인 전)
     const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
-    const subtotal = Number(rawSubtotal.toFixed(2));
 
-    let calculatedDiscount = 0;
-    if (promoResult?.success) {
-        if (promoResult.discountType === 'percent') {
-            calculatedDiscount = subtotal * ((promoResult.discountValue || 0) / 100);
-        } else if (promoResult.discountType === 'fixed') {
-            calculatedDiscount = promoResult.discountValue || 0;
-        } else if (promoResult.discountAmount) {
-            calculatedDiscount = promoResult.discountAmount;
+    // 2. 파이어베이스 세팅에 의한 "자동 수량 할인" 적용 (예: 10개 이상 20%)
+    let autoDiscountPercent = 0;
+    for (const tier of volumeDiscounts) {
+        if (safePhotosCount >= tier.minQty) {
+            autoDiscountPercent = tier.discountPercent;
+            break;
         }
     }
+    const autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
+    const subtotalAfterAuto = rawSubtotal - autoDiscountAmount; // 자동할인이 빠진 실결제 예정액
 
-    const discount = Number(calculatedDiscount.toFixed(2));
-    const shippingFee = 0;
-    const total = Math.max(0, Number((subtotal - discount + shippingFee).toFixed(2)));
-
-    const rawSubtotalUSD = safePhotosCount * BASE_PRICE_USD;
-    const subtotalUSD = Number(rawSubtotalUSD.toFixed(2));
-    let discountRatio = 0;
-    if (promoResult?.success && subtotal > 0) {
-        discountRatio = discount / subtotal;
+    // 3. 프로모션(쿠폰) 할인 적용 (자동할인 된 금액에서 한 번 더 깎아줌)
+    let promoDiscountAmount = 0;
+    if (promoResult?.success && promoResult.discountAmount) {
+        promoDiscountAmount = Number(promoResult.discountAmount.toFixed(2));
     }
-    const discountUSD = Number((subtotalUSD * discountRatio).toFixed(2));
 
-    const totalInUSD = Math.max(0, Number((subtotalUSD - discountUSD).toFixed(2)));
+    const totalDiscount = autoDiscountAmount + promoDiscountAmount;
+    const shippingFee = 0;
+    const total = Math.max(0, Number((rawSubtotal - totalDiscount + shippingFee).toFixed(2)));
 
+    // USD 환산 처리
+    const rawSubtotalUSD = safePhotosCount * basePriceUSD;
+    const autoDiscountAmountUSD = rawSubtotalUSD * (autoDiscountPercent / 100);
+    const subtotalAfterAutoUSD = rawSubtotalUSD - autoDiscountAmountUSD;
+    let promoDiscountRatio = 0;
+    if (promoResult?.success && subtotalAfterAuto > 0) {
+        promoDiscountRatio = promoDiscountAmount / subtotalAfterAuto;
+    }
+    const promoDiscountAmountUSD = subtotalAfterAutoUSD * promoDiscountRatio;
+    const totalInUSD = Math.max(0, Number((rawSubtotalUSD - autoDiscountAmountUSD - promoDiscountAmountUSD).toFixed(2)));
+
+    // ✨ 쿠폰 코드 적용 핸들러
     const handleApplyPromo = async () => {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
-            const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotal);
+            // 🚨 [핵심 변경] 쿠폰은 '자동 할인이 끝난 금액(subtotalAfterAuto)'을 기준으로 계산하도록 던집니다!
+            const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotalAfterAuto, safePhotosCount, PRICE_PER_TILE);
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
 
             if (!res.success) {
-                Alert.alert("Promo", (t as any)?.[res.error || "promoInvalid"] || res.error || "Invalid promo.");
+                Alert.alert("Promo", res.error === 'promoInvalid' ? ((t as any)?.[res.error] || "Invalid promo.") : res.error);
             }
         } catch (e) {
             Alert.alert("Promo", "Failed to validate promo.");
@@ -398,15 +414,19 @@ export default function CheckoutStepTwoScreen() {
 
                                         if (orderData?.status === 'paid') {
 
-                                            // ✨ [핵심: 무한 사용 방지] 유료 결제 후 쿠폰을 썼다면 사용 처리 도장 쾅!
+                                            // 🚨 [핵심 버그 수정 완료!] 유료 결제 성공 시에도 얌체 사용을 막기 위해 '쿠폰 사용 완료' 도장을 확실하게 찍습니다.
                                             if (promoResult?.success && promoResult.promoCode) {
-                                                const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
-                                                await setDoc(redemptionRef, {
-                                                    uid: currentUser?.uid,
-                                                    code: promoResult.promoCode.toUpperCase(),
-                                                    usedAt: new Date().toISOString(),
-                                                    usageCount: 1
-                                                }, { merge: true });
+                                                try {
+                                                    const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
+                                                    await setDoc(redemptionRef, {
+                                                        uid: currentUser?.uid,
+                                                        code: promoResult.promoCode.toUpperCase(),
+                                                        usedAt: new Date().toISOString(),
+                                                        usageCount: 1
+                                                    }, { merge: true });
+                                                } catch (promoErr) {
+                                                    console.error("쿠폰 도장 찍기 에러", promoErr);
+                                                }
                                             }
 
                                             await clearDraft();
@@ -481,7 +501,7 @@ export default function CheckoutStepTwoScreen() {
                     phone: formData.phone,
                     email: formData.email,
                 },
-                totals: { subtotal, discount, shippingFee, total },
+                totals: { subtotal: rawSubtotal, discount: totalDiscount, shippingFee, total },
                 photos: Array.isArray(safePhotos) ? safePhotos : [],
                 promoCode: promoResult?.success
                     ? {
@@ -498,7 +518,7 @@ export default function CheckoutStepTwoScreen() {
                 }
             });
 
-            // 0원 결제 확인 (무료 이벤트)
+            // 0원 결제 확인 (무료 쿠폰 이벤트)
             const isFreeOrder = provider === "PROMO_FREE" || total <= 0;
 
             if (isFreeOrder) {
@@ -509,7 +529,7 @@ export default function CheckoutStepTwoScreen() {
                         paidAt: new Date().toISOString()
                     });
 
-                    // ✨ [핵심: 무한 사용 방지] 0원 무료 결제 완료 시 쿠폰 사용 도장 쾅!
+                    // ✨ 무료 결제 성공 시 쿠폰 사용 도장 쾅!
                     if (promoResult?.success && promoResult.promoCode) {
                         const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${user!.uid}`);
                         await setDoc(redemptionRef, {
@@ -703,17 +723,36 @@ export default function CheckoutStepTwoScreen() {
                     </View>
 
                     <View style={styles.summarySection}>
-                        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text><Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{subtotal.toFixed(2)}</Text></View>
-                        {discount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Discount"}</Text><Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{discount.toFixed(2)}</Text></View>}
+                        <View style={styles.summaryRow}>
+                            <Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text>
+                            <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{rawSubtotal.toFixed(2)}</Text>
+                        </View>
+
+                        {/* ✨ 자동 할인 표시 */}
+                        {autoDiscountAmount > 0 && (
+                            <View style={styles.summaryRow}>
+                                <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
+                                    Volume Discount ({autoDiscountPercent}%)
+                                </Text>
+                                <Text style={[styles.summaryValue, { color: "#10B981" }]}>-{CURRENCY_SYMBOL}{autoDiscountAmount.toFixed(2)}</Text>
+                            </View>
+                        )}
+
+                        {/* 쿠폰 할인 표시 */}
+                        {promoDiscountAmount > 0 && (
+                            <View style={styles.summaryRow}>
+                                <Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Promo Discount"}</Text>
+                                <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{promoDiscountAmount.toFixed(2)}</Text>
+                            </View>
+                        )}
+
                         <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
                             <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
                             <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
                         </View>
 
                         {safeLocale === 'TH' && (
-                            <Text style={styles.exchangeRateNotice}>
-                                {(t as any)?.["exchangeRateNotice"]}
-                            </Text>
+                            <Text style={styles.exchangeRateNotice}>{(t as any)?.["exchangeRateNotice"]}</Text>
                         )}
                     </View>
 
@@ -768,10 +807,8 @@ export default function CheckoutStepTwoScreen() {
                             </TouchableOpacity>
                         ) : (
                             <>
-                                {/* ✨ 애플 심사 모드가 아닐 때만 외부 간편결제 노출 ✨ */}
                                 {!IS_APPLE_REVIEW_MODE && (
                                     <>
-                                        {/* 1. TrueMoney Wallet (태국 점유율 1위, 최상단 배치) */}
                                         <TouchableOpacity
                                             style={[styles.paymentItem, { borderColor: "#FF8C00", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
                                             onPress={() => handlePlaceOrder("TRUEMONEY")}
@@ -792,7 +829,6 @@ export default function CheckoutStepTwoScreen() {
                                             </View>
                                         </TouchableOpacity>
 
-                                        {/* 2. Rabbit LINE Pay (두 번째 배치) */}
                                         <TouchableOpacity
                                             style={[styles.paymentItem, { borderColor: "#00C300", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
                                             onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")}
@@ -813,7 +849,6 @@ export default function CheckoutStepTwoScreen() {
                                     </>
                                 )}
 
-                                {/* 3. Credit/Debit Card (가장 아래에 항상 노출) */}
                                 <TouchableOpacity
                                     style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
                                     onPress={() => handlePlaceOrder("CREDIT_CARD")}

@@ -6,7 +6,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-export type PromoType = 'percent' | 'amount';
+// ✨ 'buyXgetY' (N개 사면 M개 무료) 타입 추가!
+export type PromoType = 'percent' | 'amount' | 'buyXgetY';
 
 export interface PromoCode {
     code: string;
@@ -18,6 +19,12 @@ export interface PromoCode {
     redeemedCount?: number;
     expiresAt?: any;
     perUserLimit?: number;
+
+    // ✨ 앱 심사 없이 통제하기 위한 만능 조건들 추가
+    minOrderAmount?: number; // 최소 결제 금액 (예: 1200)
+    minQty?: number;         // 최소 구매 수량 (예: 4)
+    buyQty?: number;         // N개 사면 (예: 3)
+    getQty?: number;         // M개 무료 (예: 1)
 }
 
 export interface PromoResult {
@@ -30,13 +37,12 @@ export interface PromoResult {
     error?: string;
 }
 
-/**
- * ✨ [수정됨] 이제 DB 횟수를 깎지 않습니다! 오직 유효한지 검사만 합니다 (Read-Only)
- */
 export const validatePromo = async (
     code: string,
     uid: string,
-    subtotal: number
+    subtotal: number,
+    qty: number,           // ✨ 타일 수량 추가
+    pricePerItem: number   // ✨ 타일 1개당 단가 추가
 ): Promise<PromoResult> => {
     if (!code) return { success: false, discountAmount: 0, total: subtotal, error: 'Empty code' };
 
@@ -47,44 +53,63 @@ export const validatePromo = async (
         const promoSnap = await getDoc(promoRef);
 
         if (!promoSnap.exists()) {
-            throw new Error('promoInvalid');
+            throw new Error('promoInvalid'); // 유효하지 않은 코드
         }
 
         const data = promoSnap.data() as PromoCode;
 
-        // 1. Check Active
+        // 1. 활성화 여부 체크
         if (!data.active) throw new Error('promoInvalid');
 
-        // 2. Check Expiry
+        // 2. 기한 만료 체크
         if (data.expiresAt) {
             const now = new Date();
             const expiry = data.expiresAt.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt);
             if (now > expiry) throw new Error('promoExpired');
         }
 
-        // 3. Check Max Redemptions
+        // 3. 전체 선착순 횟수 체크
         if (data.maxRedemptions && (data.redeemedCount || 0) >= data.maxRedemptions) {
             throw new Error('promoLimitReached');
         }
 
-        // 4. Check if user already used it
+        // 4. 유저당 사용 횟수 제한 체크 (1계정 1번 제한)
         const redemptionSnap = await getDoc(redemptionRef);
         const perUserLimit = data.perUserLimit || 1;
 
         if (redemptionSnap.exists()) {
             const currentUsage = redemptionSnap.data().usageCount || 1;
             if (currentUsage >= perUserLimit) {
-                throw new Error('promoAlreadyUsed');
+                throw new Error('promoAlreadyUsed'); // 이미 사용함
             }
         }
 
-        // 5. Calculate Discount
+        // ✨ 5. [신규] 최소 결제 금액 검사
+        if (data.minOrderAmount && subtotal < data.minOrderAmount) {
+            throw new Error(`Minimum order amount is ฿${data.minOrderAmount}`);
+        }
+
+        // ✨ 6. [신규] 최소 타일 수량 검사
+        if (data.minQty && qty < data.minQty) {
+            throw new Error(`Please add at least ${data.minQty} items`);
+        }
+
+        // ✨ 7. 할인 금액 계산 로직 (buyXgetY 추가)
         let discountAmount = 0;
         const actualValue = data.discountValue !== undefined ? data.discountValue : (data.value || 0);
 
         if (data.type === 'percent') {
+            // 퍼센트 할인
             discountAmount = (subtotal * actualValue) / 100;
+        } else if (data.type === 'buyXgetY') {
+            // N+M 무료 로직 (예: 3+1 이면 그룹사이즈 4. 4개마다 1개 무료)
+            const b = data.buyQty || 1;
+            const g = data.getQty || 1;
+            const groupSize = b + g;
+            const freeItemsCount = Math.floor(qty / groupSize) * g;
+            discountAmount = freeItemsCount * pricePerItem;
         } else {
+            // 고정 금액 할인
             discountAmount = actualValue;
         }
 
