@@ -1,7 +1,7 @@
 // src/components/admin/AdminOrderList.web.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import {
     Search,
@@ -18,13 +18,14 @@ import {
     Copy,
     Users,
     Package,
-    X
+    X,
+    ClipboardPaste // ✨ 엑셀 아이콘 추가
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc, getDoc, collection, addDoc, getDocs } from "firebase/firestore";
+import { getFirestore, doc, deleteDoc, collection, addDoc, getDocs } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
-import { OrderHeader, OrderStatus } from "@/lib/admin/types";
+import { OrderHeader } from "@/lib/admin/types";
 import StatusBadge from "./StatusBadge";
 import { app } from "@/lib/firebase";
 
@@ -106,6 +107,10 @@ export default function AdminOrderList() {
     const [showTrackingModal, setShowTrackingModal] = useState(false);
     const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
 
+    // ✨ 신규: 엑셀 복붙 모달 상태
+    const [showExcelModal, setShowExcelModal] = useState(false);
+    const [excelText, setExcelText] = useState("");
+
     const db = useMemo(() => getFirestore(app), []);
     const functions = useMemo(() => getFunctions(app, "us-central1"), []);
 
@@ -121,8 +126,6 @@ export default function AdminOrderList() {
         setSelectedIds(new Set());
 
         try {
-            // ✨ [핵심 조치] 파이어베이스 복합 인덱스 에러(400)를 원천 차단하기 위해
-            // where, orderBy 같은 조건식을 싹 빼버리고, 무조건 모든 데이터를 가볍게 가져옵니다.
             const querySnapshot = await getDocs(collection(db, "orders"));
 
             let allData = querySnapshot.docs.map(doc => {
@@ -130,15 +133,12 @@ export default function AdminOrderList() {
                 return {
                     id: doc.id,
                     ...data,
-                    // 안전하게 날짜 객체 추출
                     createdAtSafe: getSafeDate(data.createdAt)
                 } as any;
             });
 
-            // ✨ 프론트엔드(브라우저) 메모리에서 직접 최신순으로 깔끔하게 정렬!
             allData.sort((a, b) => b.createdAtSafe.getTime() - a.createdAtSafe.getTime());
 
-            // 날짜 필터링(from, to)이 걸려있다면 여기서 잘라냅니다.
             if (from || to) {
                 const fromDate = from ? new Date(`${from}T00:00:00`) : new Date(0);
                 const toDate = to ? new Date(`${to}T23:59:59`) : new Date();
@@ -158,7 +158,6 @@ export default function AdminOrderList() {
         }
     };
 
-    // 상태 필터링 탭(ALL, PAID 등)과 검색창 작동 로직
     const visibleOrders = useMemo(() => {
         const query = q.trim();
         const tab = normStatus(statusFilter);
@@ -283,6 +282,63 @@ export default function AdminOrderList() {
             alert("오류가 발생했습니다.");
             setBulkLoading(false);
         }
+    };
+
+    // ✨ 신규: 엑셀 파싱 및 매칭 로직 (주문번호 기준!)
+    const parsedExcelData = useMemo(() => {
+        if (!excelText.trim()) return [];
+        const lines = excelText.trim().split('\n');
+        return lines.map(line => {
+            const [rawCode, rawTracking] = line.split('\t');
+            const code = rawCode?.trim() || "";
+            const tracking = rawTracking?.trim() || "";
+
+            // 핵심 로직: 이름/번호가 아니라 '주문번호(orderCode)'가 완벽히 일치하는 주문 찾기
+            const matchedOrder = orders.find(o => o.orderCode === code);
+
+            return {
+                code,
+                tracking,
+                matchedId: matchedOrder?.id,
+                customerName: matchedOrder?.shipping?.fullName || matchedOrder?.customer?.fullName,
+                isValid: !!matchedOrder && !!tracking
+            };
+        });
+    }, [excelText, orders]);
+
+    const handleApplyExcelBulk = async () => {
+        const validItems = parsedExcelData.filter(item => item.isValid);
+        if (validItems.length === 0) {
+            alert("적용 가능한(매칭된) 송장이 없습니다. 주문번호를 다시 확인해주세요.");
+            return;
+        }
+
+        if (!window.confirm(`총 ${validItems.length}건의 송장을 저장하고 Shipping으로 변경할까요?`)) return;
+
+        setBulkLoading(true);
+        try {
+            const promises = validItems.map(item => {
+                return addDoc(collection(db, "adminTasks"), {
+                    type: "UPDATE_ORDER_OPS",
+                    payload: {
+                        orderId: item.matchedId,
+                        status: "shipping",
+                        trackingNumber: item.tracking,
+                        uid: "admin"
+                    },
+                    createdAt: new Date(),
+                    status: "pending"
+                });
+            });
+            await Promise.all(promises);
+            setTimeout(() => {
+                fetchOrders();
+                setShowExcelModal(false);
+                setExcelText("");
+                setBulkLoading(false);
+                alert(`성공! ${validItems.length}건의 송장 저장 및 Shipping 알림 발송이 완료되었습니다.`);
+            }, 1500);
+        } catch (error) { alert("오류 발생"); setBulkLoading(false); }
     };
 
     const handleBulkDelete = async () => {
@@ -441,9 +497,15 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
+                        {/* ✨ 엑셀 모달 버튼 추가! */}
+                        <button onClick={() => setShowExcelModal(true)} disabled={bulkLoading} className="bg-green-600 text-white hover:bg-green-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                            <ClipboardPaste size={12} />
+                            엑셀 일괄 등록
+                        </button>
+
                         <button onClick={openTrackingModal} disabled={bulkLoading || selectedIds.size === 0} className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <Package size={12} />
-                            운송장 퀵입력
+                            개별 퀵입력
                         </button>
 
                         <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
@@ -453,7 +515,7 @@ export default function AdminOrderList() {
 
                         <button onClick={handleExportInstaInfo} disabled={bulkLoading} className="bg-pink-600 text-white hover:bg-pink-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <Users size={12} />
-                            Export Insta Info
+                            Insta Info
                         </button>
 
                         <button onClick={handleBulkZipCopy} disabled={bulkLoading || selectedIds.size === 0} className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
@@ -509,7 +571,13 @@ export default function AdminOrderList() {
                                             {formatShortDateTime(orderDate)}
                                         </div>
                                     </td>
-                                    <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">{order.orderCode}</td>
+                                    <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">
+                                        <div className="text-blue-600">{order.orderCode}</div>
+                                        {/* 운송장 번호 표시 */}
+                                        <div className="text-xs text-zinc-500 mt-1">
+                                            {order.trackingNumber ? `🚚 ${order.trackingNumber}` : "운송장 미입력"}
+                                        </div>
+                                    </td>
                                     <td className="p-4 min-w-[140px]">
                                         <div className="font-bold text-sm">{order.customer?.fullName || "-"}</div>
                                         <div className="text-[11px] text-zinc-400">{order.customer?.email || order.customer?.phone}</div>
@@ -554,6 +622,80 @@ export default function AdminOrderList() {
                 </table>
             </div>
 
+            {/* ✨ 엑셀 일괄 등록 모달 */}
+            {showExcelModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl flex flex-col h-[85vh]">
+                        <div className="flex items-center justify-between p-5 border-b shrink-0">
+                            <h2 className="text-lg font-black flex items-center gap-2 text-green-700">
+                                <ClipboardPaste /> 운송장 엑셀 일괄 등록
+                            </h2>
+                            <button onClick={() => setShowExcelModal(false)} className="p-2 hover:bg-zinc-100 rounded-full"><X size={20} /></button>
+                        </div>
+
+                        <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+                            <div className="w-full md:w-1/3 p-5 border-r border-zinc-100 flex flex-col gap-3 bg-zinc-50 overflow-y-auto">
+                                <div className="text-xs text-zinc-500 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                    <p className="font-bold text-blue-800 mb-1">📌 입력 방법 (주문번호 기준)</p>
+                                    엑셀에서 <b>[주문번호]</b>와 <b>[송장번호]</b> 두 열만 드래그해서 복사한 후, 아래 빈칸에 그대로 붙여넣기(Ctrl+V) 하세요.
+                                </div>
+                                <textarea
+                                    className="flex-1 w-full border border-zinc-300 rounded-lg p-3 text-sm font-mono focus:outline-none focus:border-green-500 resize-none whitespace-pre"
+                                    placeholder={`[예시]\n20260530-0001\tTH0123456\n20260530-0002\tTH9876543`}
+                                    value={excelText}
+                                    onChange={(e) => setExcelText(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="w-full md:w-2/3 p-5 flex flex-col overflow-hidden bg-white">
+                                <h3 className="text-sm font-bold mb-3 flex items-center justify-between">
+                                    매칭 결과 미리보기
+                                    <span className="text-xs bg-zinc-100 px-2 py-1 rounded text-zinc-500">
+                                        매칭성공: {parsedExcelData.filter(i => i.isValid).length}건 / 실패: {parsedExcelData.filter(i => !i.isValid).length}건
+                                    </span>
+                                </h3>
+                                <div className="flex-1 overflow-y-auto border border-zinc-200 rounded-lg">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-zinc-50 sticky top-0 border-b">
+                                            <tr>
+                                                <th className="p-3">상태</th>
+                                                <th className="p-3">주문번호</th>
+                                                <th className="p-3">고객명</th>
+                                                <th className="p-3">송장번호</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {parsedExcelData.length === 0 ? (
+                                                <tr><td colSpan={4} className="p-8 text-center text-zinc-400">왼쪽에 엑셀 데이터를 붙여넣어 주세요.</td></tr>
+                                            ) : parsedExcelData.map((item, i) => (
+                                                <tr key={i} className={`border-b last:border-0 ${item.isValid ? 'bg-white' : 'bg-rose-50'}`}>
+                                                    <td className="p-3 font-bold">
+                                                        {item.isValid
+                                                            ? <span className="text-green-600">✅ 매칭</span>
+                                                            : <span className="text-rose-600 flex items-center gap-1"><AlertTriangle size={14} /> 실패</span>}
+                                                    </td>
+                                                    <td className="p-3 font-mono">{item.code || "-"}</td>
+                                                    <td className="p-3 text-zinc-600">{item.customerName || "-"}</td>
+                                                    <td className="p-3 font-mono font-bold">{item.tracking || "-"}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="p-5 border-t bg-zinc-50 flex justify-end gap-3 shrink-0 rounded-b-2xl">
+                            <button onClick={() => setShowExcelModal(false)} className="px-4 py-2 font-bold text-zinc-500 hover:bg-zinc-200 rounded-lg">취소</button>
+                            <button onClick={handleApplyExcelBulk} disabled={bulkLoading || parsedExcelData.filter(i => i.isValid).length === 0} className="bg-green-600 text-white font-black px-6 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:bg-zinc-300">
+                                {bulkLoading ? <Loader2 size={16} className="animate-spin" /> : "일괄 저장 및 발송처리"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 기존 퀵입력 모달 */}
             {showTrackingModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-2xl flex flex-col max-h-[85vh]">

@@ -177,6 +177,60 @@ async function clampCropToImage(
    CLOUD FUNCTIONS
    ========================================================================= */
 
+// ✨ 신규: 새 주문 발생 시 대표님 슬랙으로 알림 보내기!
+export const onNewOrderCreated = onDocumentCreated(
+    { document: "orders/{orderId}", region: "us-central1" },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+
+        const data = snap.data();
+        const orderId = event.params.orderId;
+        const orderCode = data.orderCode || orderId;
+
+        // "pending" 이나 "paid" 상태 등으로 새로 들어온 주문만 필터링할 수 있지만,
+        // 보통 문서가 '처음 생성'될 때 트리거되므로 장바구니 결제 시작 직후(pending)에 알림이 갑니다.
+
+        const customerName = data.customer?.fullName || data.shipping?.fullName || "Guest";
+        const itemsCount = data.itemsCount || 0;
+
+        // 주소 조립
+        const addressParts = [
+            data.shipping?.address1,
+            data.shipping?.address2,
+            data.shipping?.city,
+            data.shipping?.state
+        ].filter(Boolean);
+        const fullAddress = addressParts.join(" ") || "주소 미입력";
+
+        // 한국 시간 기준으로 보기 편하게
+        const orderDate = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+
+        const slackMessage = {
+            text: `🔔 *[새 주문 도착]* 새로운 주문이 접수되었습니다!`,
+            attachments: [
+                {
+                    color: "#36a64f", // 초록색 띠
+                    fields: [
+                        { title: "주문번호", value: orderCode, short: true },
+                        { title: "고객명", value: customerName, short: true },
+                        { title: "주문일자", value: orderDate, short: false },
+                        { title: "타일 수량", value: `${itemsCount}개`, short: true },
+                        { title: "배송지", value: fullAddress, short: false }
+                    ]
+                }
+            ]
+        };
+
+        try {
+            await axios.post(SLACK_WEBHOOK_URL, slackMessage);
+        } catch (error) {
+            console.error("[Slack Notification] 새 주문 알림 발송 실패:", error);
+        }
+    }
+);
+
+
 export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -417,7 +471,7 @@ export const processAdminTask = onDocumentCreated(
                     const updates: any = { updatedAt: timestamp };
                     if (status !== undefined) {
                         updates.status = status;
-                        updates.statusUpdatedAt = timestamp;
+                        updates.statusUpdatedAt = timestamp; // ✨ 자동화를 위한 시간 기록
                     }
                     if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
                     if (adminNote !== undefined) updates.adminNote = adminNote;
@@ -433,7 +487,7 @@ export const processAdminTask = onDocumentCreated(
                         createdAt: timestamp,
                     });
 
-                    // ✨ 여기서부터 100% 태국어 알림으로 고정 발송 로직 시작!
+                    // 100% 태국어 알림 로직
                     if (userId) {
                         let pushTitle = "";
                         let pushBody = "";
@@ -477,7 +531,6 @@ export const processAdminTask = onDocumentCreated(
             }
             else if (task.type === "MARKETING_PUSH") {
                 const { target, filters, testToken, en, th } = task.payload || {};
-                // 마케팅 알림도 태국어(th) 내용을 최우선으로, 없으면 en을 사용하도록 강제
                 const titleTh = th?.title;
                 const bodyTh = th?.body;
                 const titleEn = en?.title;
@@ -486,8 +539,6 @@ export const processAdminTask = onDocumentCreated(
                 if (!titleEn && !titleTh) throw new Error("No message content provided.");
 
                 if (target === "test_token" && testToken) {
-                    console.log(`[Marketing Push] Direct test to token: ${testToken}`);
-                    // 무조건 태국어 우선
                     const finalTitle = titleTh || titleEn;
                     const finalBody = bodyTh || bodyEn;
 
@@ -531,7 +582,6 @@ export const processAdminTask = onDocumentCreated(
                             if (filters.userGroup === "abandoned" && !hasAbandoned) continue;
                         }
 
-                        // 무조건 태국어(Th) 우선 적용
                         const finalTitle = titleTh || titleEn;
                         const finalBody = bodyTh || bodyEn;
 
@@ -541,7 +591,6 @@ export const processAdminTask = onDocumentCreated(
                         }
                     }
 
-                    console.log(`[Smart CRM] 총 ${notifications.length}개의 고유 기기에 타겟팅 푸시 발송 시도`);
                     for (const noti of notifications) {
                         await sendExpoPushNotification(noti.userId, noti.title, noti.body);
                     }
@@ -708,70 +757,39 @@ export const adminExportPrinterJSON = onCall(
             }
 
             const jsonText = JSON.stringify({ generatedAt: new Date().toISOString(), count: payload.length, orders: payload }, null, 2);
-
             const jsonName = `exports/json/printer_${orderIds.length}orders_${Date.now()}.json`;
             const file = bucket.file(jsonName);
-
-            await file.save(Buffer.from(jsonText, "utf8"), {
-                contentType: "application/json; charset=utf-8",
-                resumable: false,
-            });
+            await file.save(Buffer.from(jsonText, "utf8"), { contentType: "application/json; charset=utf-8", resumable: false });
 
             const filename = `memotile_printer_${Date.now()}.json`;
             const [url] = await file.getSignedUrl({
-                action: "read",
-                expires: Date.now() + 1000 * 60 * 60 * 24 * 7,
-                responseDisposition: `attachment; filename="${filename}"`,
-                responseType: "application/json",
+                action: "read", expires: Date.now() + 1000 * 60 * 60 * 24 * 7, responseDisposition: `attachment; filename="${filename}"`, responseType: "application/json",
             });
-
             return { ok: true, url };
         } catch (e: any) {
-            console.error("[adminExportPrinterJSON] failed", e);
-            if (e instanceof HttpsError) throw e;
             throw new HttpsError("internal", e?.message || "Export printer JSON failed");
         }
     }
 );
 
 export const adminExportZipPrints = onCall(
-    {
-        region: "us-central1",
-        cors: true,
-        memory: "2GiB",
-        timeoutSeconds: 300
-    },
+    { region: "us-central1", cors: true, memory: "2GiB", timeoutSeconds: 300 },
     async (req) => {
         try {
-            if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-                throw new HttpsError("permission-denied", "Admin only.");
-            }
-
+            if (!req.auth?.uid || req.auth.token.isAdmin !== true) throw new HttpsError("permission-denied", "Admin only.");
             const { orderIds, type = "print" } = (req.data || {}) as any;
-            if (!Array.isArray(orderIds) || orderIds.length === 0) {
-                throw new HttpsError("invalid-argument", "orderIds required.");
-            }
+            if (!Array.isArray(orderIds) || orderIds.length === 0) throw new HttpsError("invalid-argument", "orderIds required.");
 
             const db = getFirestore();
             const bucket = getStorage().bucket();
-
             const zipName = `exports/zip/${type}_${orderIds.length}orders_${Date.now()}.zip`;
             const zipFile = bucket.file(zipName);
 
             const archive = archiver("zip", { zlib: { level: 9 } });
-            const out = zipFile.createWriteStream({
-                contentType: "application/zip",
-                resumable: false,
-            });
-
-            const uploadPromise = new Promise<void>((resolve, reject) => {
-                out.on("close", resolve);
-                out.on("finish", resolve);
-                out.on("error", reject);
-            });
+            const out = zipFile.createWriteStream({ contentType: "application/zip", resumable: false });
+            const uploadPromise = new Promise<void>((resolve, reject) => { out.on("close", resolve); out.on("finish", resolve); out.on("error", reject); });
 
             archive.pipe(out);
-
             let addedCount = 0;
 
             for (const rawOrderId of orderIds) {
@@ -782,85 +800,46 @@ export const adminExportZipPrints = onCall(
                 const orderData: any = orderSnap.data() || {};
                 const orderCode = orderData?.orderCode || orderId;
                 const dateKey = toYYYYMMDD(orderData?.createdAt);
-
-                const customerName = safeFolderName(
-                    orderData?.customer?.fullName || orderData?.shipping?.fullName || "Guest"
-                );
-
+                const customerName = safeFolderName(orderData?.customer?.fullName || orderData?.shipping?.fullName || "Guest");
                 const baseFolder = `${dateKey}/${orderCode}/${customerName}`;
 
                 const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
                 const items = itemsSnap.empty ? orderData?.items || [] : itemsSnap.docs.map((d) => d.data());
-
                 const shipping = orderData?.shipping || {};
-                const infoText = `
-[ORDER INFO]
-Order Code : ${orderCode}
-Date       : ${dateKey}
-Customer   : ${customerName}
-Phone      : ${orderData?.customer?.phone || shipping?.phone || "-"}
-Email      : ${orderData?.customer?.email || "-"}
-
-[SHIPPING ADDRESS]
-Name       : ${shipping?.fullName || "-"}
-Address    : ${shipping?.address1 || ""} ${shipping?.address2 || ""}
-City/State : ${shipping?.city || ""}, ${shipping?.state || ""}
-Postal Code: ${shipping?.postalCode || ""}
-Country    : ${shipping?.country || ""}
-Phone      : ${shipping?.phone || "-"} (Required)
-
-[ITEMS]
-Total Items: ${items.length} EA
-Note       : ${orderData?.adminNote || "-"}
-`.trim();
+                const infoText = `[ORDER INFO]\nOrder Code : ${orderCode}\nDate       : ${dateKey}\nCustomer   : ${customerName}\nPhone      : ${orderData?.customer?.phone || shipping?.phone || "-"}\nEmail      : ${orderData?.customer?.email || "-"}\n\n[SHIPPING ADDRESS]\nName       : ${shipping?.fullName || "-"}\nAddress    : ${shipping?.address1 || ""} ${shipping?.address2 || ""}\nCity/State : ${shipping?.city || ""}, ${shipping?.state || ""}\nPostal Code: ${shipping?.postalCode || ""}\nPhone      : ${shipping?.phone || "-"} (Required)\n\n[ITEMS]\nTotal Items: ${items.length} EA\nNote       : ${orderData?.adminNote || "-"}\n`.trim();
 
                 archive.append(infoText, { name: `${baseFolder}/order_info.txt` });
 
                 for (const item of items) {
                     const index = Number.isFinite(item?.index) ? Number(item.index) : 0;
                     const fileIndex = String(index + 1).padStart(2, "0");
-
-                    const path =
-                        type === "print"
-                            ? item?.assets?.printPath || item?.printPath
-                            : item?.assets?.previewPath || item?.previewPath;
+                    const path = type === "print" ? item?.assets?.printPath || item?.printPath : item?.assets?.previewPath || item?.previewPath;
 
                     if (!path) continue;
-
                     const file = bucket.file(path);
                     const [exists] = await file.exists();
 
                     if (exists) {
                         const ext = (String(path).split(".").pop() || "jpg").toLowerCase();
-                        const entryName = `${baseFolder}/${fileIndex}.${ext}`;
-                        archive.append(file.createReadStream(), { name: entryName });
+                        archive.append(file.createReadStream(), { name: `${baseFolder}/${fileIndex}.${ext}` });
                         addedCount++;
                     } else {
-                        console.warn(`[ZIP] Missing file: ${path}`);
                         archive.append(`Missing file: ${path}\n`, { name: `${baseFolder}/MISSING_${fileIndex}.txt` });
                     }
                 }
             }
 
-            if (addedCount === 0) {
-                archive.append("No images found. Check if 'print.jpg' generation is complete.", { name: "WARNING_NO_IMAGES.txt" });
-            }
+            if (addedCount === 0) archive.append("No images found.", { name: "WARNING_NO_IMAGES.txt" });
 
             await archive.finalize();
             await uploadPromise;
 
             const filename = `Batch_${orderIds.length}orders_${new Date().toISOString().slice(0, 10)}.zip`;
             const [url] = await zipFile.getSignedUrl({
-                action: "read",
-                expires: Date.now() + 1000 * 60 * 60,
-                responseDisposition: `attachment; filename="${filename}"`,
-                responseType: "application/zip",
+                action: "read", expires: Date.now() + 1000 * 60 * 60, responseDisposition: `attachment; filename="${filename}"`, responseType: "application/zip",
             });
-
             return { ok: true, url, addedCount };
-
         } catch (e: any) {
-            console.error("[ZIP Error]", e);
             throw new HttpsError("internal", e.message || "ZIP creation failed");
         }
     }
@@ -871,7 +850,6 @@ export const onPrintFileFinalized = onObjectFinalized(
     async (event) => {
         const filePath = event.data.name;
         if (!filePath || !filePath.endsWith("_print.jpg")) return;
-
         const match = filePath.match(/\/orders\/([^/]+)\/items\/(\d+)_print\.jpg$/);
         if (!match) return;
 
@@ -891,18 +869,11 @@ export const onPrintFileFinalized = onObjectFinalized(
 
             const db = getFirestore();
             const orderRef = db.collection("orders").doc(orderId);
-
             const itemsRef = orderRef.collection("items");
             const q = itemsRef.where("index", "==", index).limit(1);
             const snap = await q.get();
 
-            const printMeta = {
-                width,
-                height,
-                ok5000,
-                checkedAt: new Date().toISOString(),
-                source: "storage_finalize",
-            };
+            const printMeta = { width, height, ok5000, checkedAt: new Date().toISOString(), source: "storage_finalize" };
 
             if (!snap.empty) {
                 await snap.docs[0].ref.update({ "assets.printMeta": printMeta });
@@ -910,22 +881,14 @@ export const onPrintFileFinalized = onObjectFinalized(
                 await db.runTransaction(async (t) => {
                     const docSnap = await t.get(orderRef);
                     if (!docSnap.exists) return;
-                    const data = docSnap.data();
-                    const items = (data as any)?.items;
-
+                    const items = (docSnap.data() as any)?.items;
                     if (Array.isArray(items)) {
                         let found = false;
                         const newItems = items.map((it: any) => {
-                            if (it.index === index) {
-                                found = true;
-                                return { ...it, assets: { ...(it.assets || {}), printMeta } };
-                            }
+                            if (it.index === index) { found = true; return { ...it, assets: { ...(it.assets || {}), printMeta } }; }
                             return it;
                         });
-
-                        if (found) {
-                            t.update(orderRef, { items: newItems });
-                        }
+                        if (found) t.update(orderRef, { items: newItems });
                     }
                 });
             }
@@ -939,173 +902,160 @@ export const onPrintFileFinalized = onObjectFinalized(
    SCHEDULED FUNCTIONS
    ========================================================================= */
 
-export const cleanupAbandonedPendingOrders = onSchedule(
+// ✨ 신규: 매일 오전 4시에 돌면서 '배송중(shipping)'으로 바뀐 지 3일 된 주문을 '배송완료(delivered)'로 자동 변경!
+export const autoCompleteDeliveredOrders = onSchedule(
     {
-        schedule: "every 1 hours",
+        schedule: "0 4 * * *", // 매일 새벽 4시 실행 (태국 시간 기준 오전 11시)
         timeZone: "Asia/Bangkok",
         region: "us-central1"
     },
     async (event) => {
         const db = getFirestore();
-        const bucket = getStorage().bucket();
         const now = new Date();
+        // 딱 3일(72시간) 전 시간 계산
+        const threeDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (3 * 24 * 60 * 60 * 1000)));
 
         try {
+            // 상태가 shipping이고, 업데이트된 지 3일이 넘은 주문 검색
             const snapshot = await db.collection("orders")
-                .where("status", "==", "pending")
+                .where("status", "==", "shipping")
+                .where("statusUpdatedAt", "<=", threeDaysAgo) // 상태가 바뀐 지 3일!
                 .get();
 
             if (snapshot.empty) return;
 
             const batch = db.batch();
             let processedCount = 0;
+            const notifications: { userId: string, title: string, body: string }[] = [];
 
             for (const docSnap of snapshot.docs) {
                 const data = docSnap.data();
                 const orderRef = docSnap.ref;
+                const userId = data.userId || data.uid || data.customer?.uid || data.customer?.id || data.createdBy;
 
-                if (!data.createdAt) continue;
-                const createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
-                const diffHours = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
-
-                if (diffHours < 24) continue;
-
-                if (data.storageBasePath) {
-                    try {
-                        await bucket.deleteFiles({ prefix: data.storageBasePath });
-                    } catch (storageErr) {
-                        console.error(`[Storage 삭제 실패] 경로: ${data.storageBasePath}`, storageErr);
-                    }
-                }
-
-                const itemsSnap = await orderRef.collection("items").get();
-                itemsSnap.forEach(item => batch.delete(item.ref));
-
-                // 🚨 본 주문서를 삭제(delete)하지 않고, "deleted" 상태로 덮어씌웁니다.
+                // 1. 상태를 Delivered로 덮어쓰기
                 batch.update(orderRef, {
-                    status: "deleted",
-                    adminNote: "24시간 결제 미완료로 인한 시스템 자동 삭제 (사진 파기 완료)",
-                    deletedAt: FieldValue.serverTimestamp(),
-                    updatedAt: FieldValue.serverTimestamp()
+                    status: "delivered",
+                    deliveredAt: FieldValue.serverTimestamp(),
+                    updatedAt: FieldValue.serverTimestamp(),
+                    statusUpdatedAt: FieldValue.serverTimestamp(), // 이것도 업데이트
+                    adminNote: (data.adminNote ? data.adminNote + "\n" : "") + "🚚 시스템 자동 배송완료 처리 (발송 후 3일 경과)"
                 });
 
+                // 2. 이벤트 히스토리에 기록
+                batch.set(orderRef.collection("events").doc(), {
+                    type: "STATUS_CHANGED",
+                    to: "delivered",
+                    reason: "3일 경과 자동 배송완료 처리",
+                    byUid: "system",
+                    createdAt: FieldValue.serverTimestamp(),
+                });
+
+                // 3. 고객에게 보낼 알림 장전 (태국어)
+                if (userId) {
+                    notifications.push({
+                        userId,
+                        title: "🎁 พัสดุจัดส่งสำเร็จ!",
+                        body: "หวังว่าคุณจะชอบ MemoTile ของคุณนะคะ ขอบคุณที่ใช้บริการค่ะ!"
+                    });
+                }
                 processedCount++;
             }
 
-            if (processedCount === 0) return;
             await batch.commit();
 
+            // 고객에게 실제 푸시 알림 쏘기
+            for (const noti of notifications) {
+                await sendExpoPushNotification(noti.userId, noti.title, noti.body);
+            }
+
+            // 대표님 슬랙으로 자동화 결과 보고 쏘기
             try {
                 await axios.post(SLACK_WEBHOOK_URL, {
-                    text: `🧹 *[팬딩 주문 자동 삭제 완료]* 24시간이 지난 결제 미완료(pending) 주문 *${processedCount}건*이 '자동 삭제(deleted)' 처리되었습니다. (사진 파일 영구 파기 완료)`
+                    text: `🚚 *[배송완료 자동처리 성공]* 발송 후 3일이 경과된 주문 *${processedCount}건*이 자동으로 'Delivered' 상태로 변경되고 고객에게 앱 알림이 발송되었습니다.`
                 });
             } catch (e) { }
 
-        } catch (e) {
-            console.error("cleanupAbandonedPendingOrders 실행 중 오류 발생:", e);
+        } catch (error) {
+            console.error("autoCompleteDeliveredOrders 실행 중 오류 발생:", error);
         }
     }
 );
 
-export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
-    const db = getFirestore();
-    const now = new Date();
-    const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
-
+export const cleanupAbandonedPendingOrders = onSchedule({ schedule: "every 1 hours", timeZone: "Asia/Bangkok", region: "us-central1" }, async (event) => {
+    const db = getFirestore(); const bucket = getStorage().bucket(); const now = new Date();
     try {
-        const snapshot = await db.collection("orders")
-            .where("status", "==", "paid")
-            .where("createdAt", "<=", twentyFourHoursAgo)
-            .orderBy("createdAt", "asc")
-            .get();
-
+        const snapshot = await db.collection("orders").where("status", "==", "pending").get();
         if (snapshot.empty) return;
 
+        const batch = db.batch(); let processedCount = 0;
+        for (const docSnap of snapshot.docs) {
+            const data = docSnap.data(); const orderRef = docSnap.ref;
+            if (!data.createdAt) continue;
+            const createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+            const diffHours = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+
+            if (diffHours < 24) continue;
+            if (data.storageBasePath) { try { await bucket.deleteFiles({ prefix: data.storageBasePath }); } catch (storageErr) { } }
+
+            const itemsSnap = await orderRef.collection("items").get();
+            itemsSnap.forEach(item => batch.delete(item.ref));
+
+            batch.update(orderRef, { status: "deleted", adminNote: "24시간 결제 미완료로 인한 시스템 자동 삭제 (사진 파기 완료)", deletedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+            processedCount++;
+        }
+
+        if (processedCount === 0) return;
+        await batch.commit();
+        try { await axios.post(SLACK_WEBHOOK_URL, { text: `🧹 *[팬딩 주문 자동 삭제 완료]* 24시간이 지난 결제 미완료 주문 *${processedCount}건*이 '자동 삭제' 처리되었습니다.` }); } catch (e) { }
+    } catch (e) { console.error("cleanupAbandonedPendingOrders 에러:", e); }
+});
+
+export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
+    const db = getFirestore(); const now = new Date();
+    const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
+    try {
+        const snapshot = await db.collection("orders").where("status", "==", "paid").where("createdAt", "<=", twentyFourHoursAgo).orderBy("createdAt", "asc").get();
+        if (snapshot.empty) return;
         const count = snapshot.size;
-        const orderDetails = snapshot.docs.map(doc => {
-            const data = doc.data();
-            const code = data.orderCode || doc.id;
-            const name = data.customer?.fullName || data.shipping?.fullName || 'Guest';
-            return `• 주문번호: ${code} (고객: ${name})`;
-        }).join("\n");
-
-        const message = {
+        const orderDetails = snapshot.docs.map(doc => `• 주문번호: ${doc.data().orderCode || doc.id} (고객: ${doc.data().customer?.fullName || 'Guest'})`).join("\n");
+        await axios.post(SLACK_WEBHOOK_URL, {
             text: `🚨 *[방치 주문 알림]* 24시간 동안 '결제완료' 상태에서 변동이 없는 주문이 *${count}건* 있습니다.`,
-            attachments: [{
-                color: "#FF0000",
-                title: "조치 필요 주문 목록",
-                text: orderDetails,
-                footer: "Memotile Admin Bot",
-                ts: Math.floor(now.getTime() / 1000)
-            }]
-        };
-
-        await axios.post(SLACK_WEBHOOK_URL, message);
+            attachments: [{ color: "#FF0000", title: "조치 필요 주문 목록", text: orderDetails, footer: "Memotile Admin Bot", ts: Math.floor(now.getTime() / 1000) }]
+        });
     } catch (e: any) { }
 });
 
 export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
-    const db = getFirestore();
-    const now = new Date();
+    const db = getFirestore(); const now = new Date();
     const sevenDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)));
-
     const statusesToArchive = ["delivered", "canceled", "refunded"];
     let totalArchived = 0;
 
     for (const status of statusesToArchive) {
-        const snapshot = await db.collection("orders")
-            .where("status", "==", status)
-            .where("updatedAt", "<=", sevenDaysAgo)
-            .limit(500)
-            .get();
-
+        const snapshot = await db.collection("orders").where("status", "==", status).where("updatedAt", "<=", sevenDaysAgo).limit(500).get();
         if (snapshot.empty) continue;
-
         const batch = db.batch();
-        snapshot.docs.forEach((doc) => {
-            batch.update(doc.ref, {
-                status: "archived",
-                archivedAt: FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp()
-            });
-            totalArchived++;
-        });
-
+        snapshot.docs.forEach((doc) => { batch.update(doc.ref, { status: "archived", archivedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }); totalArchived++; });
         await batch.commit();
     }
-
     if (totalArchived > 0) {
-        try {
-            await axios.post(SLACK_WEBHOOK_URL, {
-                text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 완료/취소 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.`
-            });
-        } catch (e) { }
+        try { await axios.post(SLACK_WEBHOOK_URL, { text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.` }); } catch (e) { }
     }
 });
 
 export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
-        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Admin 전용 기능입니다.");
-        }
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) throw new HttpsError("permission-denied", "Admin 전용 기능입니다.");
         const { orderId } = req.data || {};
         if (!orderId) throw new HttpsError("invalid-argument", "orderId가 필요합니다.");
-
-        const db = getFirestore();
-        const orderRef = db.collection("orders").doc(String(orderId));
-
+        const db = getFirestore(); const orderRef = db.collection("orders").doc(String(orderId));
         const items = await orderRef.collection("items").get();
         const batch = db.batch();
-        items.forEach(doc => batch.delete(doc.ref));
-        batch.delete(orderRef);
-
+        items.forEach(doc => batch.delete(doc.ref)); batch.delete(orderRef);
         await batch.commit();
         return { ok: true };
-    } catch (e: any) {
-        console.error("[adminDeleteOrder] failed", e);
-        if (e instanceof HttpsError) throw e;
-        throw new HttpsError("internal", e?.message || "Delete failed");
-    }
+    } catch (e: any) { throw new HttpsError("internal", e?.message || "Delete failed"); }
 });
 
 /* =========================================================================
@@ -1121,120 +1071,50 @@ const PAYLETTER_URL = "https://api.payletter.com/api/payment/request";
 
 export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
-
     const { orderId, amount, email, fullName, pgcode, platform, webUrl, appScheme } = req.data || {};
     if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
 
     const returnQuery = `?platform=${platform || ''}&webUrl=${encodeURIComponent(webUrl || '')}&appScheme=${encodeURIComponent(appScheme || '')}`;
-
     const paymentData = {
-        pginfo: pgcode || "PLCreditCard",
-        storeid: PAYLETTER_CLIENT_ID,
-        currency: "USD",
-        storeorderno: orderId,
-        amount: Number(amount).toFixed(2),
-        payerid: req.auth.uid,
-        payeremail: email || "",
-        payername: fullName || "Guest",
-        servicename: "MemoTile",
-        returnurl: `${BASE_URL}/payletterReturn${returnQuery}`,
-        notiurl: `${BASE_URL}/payletterWebhook`
+        pginfo: pgcode || "PLCreditCard", storeid: PAYLETTER_CLIENT_ID, currency: "USD", storeorderno: orderId, amount: Number(amount).toFixed(2),
+        payerid: req.auth.uid, payeremail: email || "", payername: fullName || "Guest", servicename: "MemoTile",
+        returnurl: `${BASE_URL}/payletterReturn${returnQuery}`, notiurl: `${BASE_URL}/payletterWebhook`
     };
 
     try {
-        const response = await axios.post(PAYLETTER_URL, paymentData, {
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `GPLKEY ${PAYLETTER_API_KEY}`
-            }
-        });
-
-        if (response.data.mobile_url || response.data.online_url) {
-            return {
-                ok: true,
-                paymentUrl: response.data.mobile_url || response.data.online_url
-            };
-        } else {
-            throw new Error(response.data.error?.message || "Failed to receive payment URL.");
-        }
-    } catch (e: any) {
-        console.error("[Payletter Request Error]", e.response?.data || e.message);
-        throw new HttpsError("internal", "Payment server communication failed.");
-    }
+        const response = await axios.post(PAYLETTER_URL, paymentData, { headers: { "Content-Type": "application/json", "Authorization": `GPLKEY ${PAYLETTER_API_KEY}` } });
+        if (response.data.mobile_url || response.data.online_url) return { ok: true, paymentUrl: response.data.mobile_url || response.data.online_url };
+        else throw new Error(response.data.error?.message || "Failed to receive payment URL.");
+    } catch (e: any) { throw new HttpsError("internal", "Payment server communication failed."); }
 });
 
 export const payletterWebhook = onRequest({ region: "us-central1" }, async (req, res) => {
     const data = req.body;
     const { storeid, currency, storeorderno, payamt, payerid, timestamp, hash, notifytype, paytoken, retcode } = data;
-
     const rawString = `${storeid}${currency}${storeorderno}${payamt}${payerid}${timestamp}${PAYLETTER_API_KEY}`;
     const generatedHash = crypto.createHash('sha256').update(rawString).digest('hex');
 
-    if (hash !== generatedHash) {
-        res.status(400).send("Hash mismatch");
-        return;
-    }
-
+    if (hash !== generatedHash) { res.status(400).send("Hash mismatch"); return; }
     if (String(notifytype) === "1" && String(retcode) === "0") {
         const db = getFirestore();
         try {
-            await db.collection("orders").doc(storeorderno).update({
-                status: "paid",
-                payToken: paytoken,
-                paidAt: FieldValue.serverTimestamp(),
-            });
-            res.status(200).send("<RESULT>OK</RESULT>");
-            return;
-        } catch (error) {
-            res.status(500).send("DB Error");
-            return;
-        }
+            await db.collection("orders").doc(storeorderno).update({ status: "paid", payToken: paytoken, paidAt: FieldValue.serverTimestamp() });
+            res.status(200).send("<RESULT>OK</RESULT>"); return;
+        } catch (error) { res.status(500).send("DB Error"); return; }
     }
     res.status(200).send("<RESULT>OK</RESULT>");
 });
 
 export const payletterReturn = onRequest({ region: "us-central1" }, async (req, res) => {
-    const platform = req.query.platform as string;
-    const webUrl = req.query.webUrl as string;
-    const appScheme = req.query.appScheme as string;
-    const retcode = req.body?.retcode;
+    const platform = req.query.platform as string; const webUrl = req.query.webUrl as string; const appScheme = req.query.appScheme as string; const retcode = req.body?.retcode;
 
     if (platform === 'web' && webUrl) {
-        if (String(retcode) === "0") {
-            res.redirect(302, webUrl);
-        } else {
-            const fallbackWebUrl = webUrl.split('/myorder/success')[0] || "/";
-            res.redirect(302, fallbackWebUrl);
-        }
+        if (String(retcode) === "0") res.redirect(302, webUrl);
+        else res.redirect(302, webUrl.split('/myorder/success')[0] || "/");
         return;
     }
 
-    const fallbackScheme = "memotile://";
-    const targetScheme = appScheme || fallbackScheme;
-
-    const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Payment Processed</title>
-            <style>
-                body { text-align: center; padding-top: 60px; font-family: -apple-system, sans-serif; background: #fff; color: #111; }
-                h2 { color: #111; font-size: 24px; margin-bottom: 12px; }
-                p { color: #6B7280; font-size: 15px; margin-bottom: 30px; line-height: 1.5; padding: 0 20px; }
-                .btn { display: inline-block; padding: 14px 28px; background: #111; color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; }
-            </style>
-        </head>
-        <body>
-            <h2>Payment Processed</h2>
-            <p>If the app doesn't open automatically, please tap <b>"Return to App"</b>.</p>
-            <a href="${targetScheme}" class="btn">Return to App</a>
-            <script>
-                setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);
-            </script>
-        </body>
-        </html>
-    `;
+    const targetScheme = appScheme || "memotile://";
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1"><title>Payment Processed</title><style>body { text-align: center; padding-top: 60px; font-family: -apple-system, sans-serif; background: #fff; color: #111; } h2 { color: #111; font-size: 24px; margin-bottom: 12px; } p { color: #6B7280; font-size: 15px; margin-bottom: 30px; line-height: 1.5; padding: 0 20px; } .btn { display: inline-block; padding: 14px 28px; background: #111; color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; }</style></head><body><h2>Payment Processed</h2><p>If the app doesn't open automatically, please tap <b>"Return to App"</b>.</p><a href="${targetScheme}" class="btn">Return to App</a><script>setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);</script></body></html>`;
     res.status(200).send(html);
 });
