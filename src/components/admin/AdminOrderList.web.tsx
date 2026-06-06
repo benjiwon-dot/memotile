@@ -19,7 +19,7 @@ import {
     Users,
     Package,
     X,
-    ClipboardPaste // ✨ 엑셀 아이콘 추가
+    ClipboardPaste
 } from "lucide-react";
 
 import { getFirestore, doc, deleteDoc, collection, addDoc, getDocs } from "firebase/firestore";
@@ -107,7 +107,6 @@ export default function AdminOrderList() {
     const [showTrackingModal, setShowTrackingModal] = useState(false);
     const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
 
-    // ✨ 신규: 엑셀 복붙 모달 상태
     const [showExcelModal, setShowExcelModal] = useState(false);
     const [excelText, setExcelText] = useState("");
 
@@ -284,16 +283,15 @@ export default function AdminOrderList() {
         }
     };
 
-    // ✨ 신규: 엑셀 파싱 및 매칭 로직 (주문번호 기준!)
     const parsedExcelData = useMemo(() => {
         if (!excelText.trim()) return [];
         const lines = excelText.trim().split('\n');
         return lines.map(line => {
-            const [rawCode, rawTracking] = line.split('\t');
-            const code = rawCode?.trim() || "";
-            const tracking = rawTracking?.trim() || "";
+            // ✨ 정규식 적용: 탭(\t) 또는 스페이스바 무관하게 완벽하게 분리
+            const parts = line.trim().split(/[\t ]+/);
+            const code = parts[0] || "";
+            const tracking = parts[1] || "";
 
-            // 핵심 로직: 이름/번호가 아니라 '주문번호(orderCode)'가 완벽히 일치하는 주문 찾기
             const matchedOrder = orders.find(o => o.orderCode === code);
 
             return {
@@ -446,6 +444,25 @@ export default function AdminOrderList() {
 
     const isAllVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selectedIds.has(o.id));
 
+    // ✨ 신규: 텍스트창 안에서 탭(Tab) 키를 눌렀을 때 버튼으로 안 넘어가고 엑셀처럼 띄어쓰기가 되게 하는 함수
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const target = e.target as HTMLTextAreaElement;
+            const start = target.selectionStart;
+            const end = target.selectionEnd;
+
+            // 현재 텍스트에서 커서 위치에 탭(Tab) 문자를 삽입
+            const newValue = excelText.substring(0, start) + '\t' + excelText.substring(end);
+            setExcelText(newValue);
+
+            // 상태 업데이트 후 커서를 탭 뒤로 이동
+            setTimeout(() => {
+                target.selectionStart = target.selectionEnd = start + 1;
+            }, 0);
+        }
+    };
+
     return (
         <div className="flex flex-col gap-4 w-full pb-32">
             <div className="shrink-0 flex flex-col gap-4 sticky top-0 z-20 bg-white py-4 -mt-4">
@@ -497,7 +514,6 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
-                        {/* ✨ 엑셀 모달 버튼 추가! */}
                         <button onClick={() => setShowExcelModal(true)} disabled={bulkLoading} className="bg-green-600 text-white hover:bg-green-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <ClipboardPaste size={12} />
                             엑셀 일괄 등록
@@ -573,7 +589,6 @@ export default function AdminOrderList() {
                                     </td>
                                     <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">
                                         <div className="text-blue-600">{order.orderCode}</div>
-                                        {/* 운송장 번호 표시 */}
                                         <div className="text-xs text-zinc-500 mt-1">
                                             {order.trackingNumber ? `🚚 ${order.trackingNumber}` : "운송장 미입력"}
                                         </div>
@@ -636,14 +651,16 @@ export default function AdminOrderList() {
                         <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
                             <div className="w-full md:w-1/3 p-5 border-r border-zinc-100 flex flex-col gap-3 bg-zinc-50 overflow-y-auto">
                                 <div className="text-xs text-zinc-500 bg-blue-50 p-3 rounded-lg border border-blue-100">
-                                    <p className="font-bold text-blue-800 mb-1">📌 입력 방법 (주문번호 기준)</p>
-                                    엑셀에서 <b>[주문번호]</b>와 <b>[송장번호]</b> 두 열만 드래그해서 복사한 후, 아래 빈칸에 그대로 붙여넣기(Ctrl+V) 하세요.
+                                    <p className="font-bold text-blue-800 mb-1">📌 입력 방법 (직접 입력 지원)</p>
+                                    엑셀 복사, 띄어쓰기, <b>[Tab] 키</b> 모두 완벽하게 엑셀처럼 인식합니다.<br />
+                                    (예: <b>주문번호 치고 ➡️ Tab키 누르고 ➡️ 송장번호 입력</b>)
                                 </div>
                                 <textarea
                                     className="flex-1 w-full border border-zinc-300 rounded-lg p-3 text-sm font-mono focus:outline-none focus:border-green-500 resize-none whitespace-pre"
                                     placeholder={`[예시]\n20260530-0001\tTH0123456\n20260530-0002\tTH9876543`}
                                     value={excelText}
                                     onChange={(e) => setExcelText(e.target.value)}
+                                    onKeyDown={handleKeyDown} /* ✨ 바로 이 부분이 탭(Tab) 키를 가로채는 기능입니다! */
                                 />
                             </div>
 
@@ -666,7 +683,7 @@ export default function AdminOrderList() {
                                         </thead>
                                         <tbody>
                                             {parsedExcelData.length === 0 ? (
-                                                <tr><td colSpan={4} className="p-8 text-center text-zinc-400">왼쪽에 엑셀 데이터를 붙여넣어 주세요.</td></tr>
+                                                <tr><td colSpan={4} className="p-8 text-center text-zinc-400">왼쪽에 데이터를 입력해 주세요.</td></tr>
                                             ) : parsedExcelData.map((item, i) => (
                                                 <tr key={i} className={`border-b last:border-0 ${item.isValid ? 'bg-white' : 'bg-rose-50'}`}>
                                                     <td className="p-3 font-bold">
