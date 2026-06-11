@@ -835,9 +835,15 @@ export const adminExportZipPrints = onCall(
             await uploadPromise;
 
             const filename = `Batch_${orderIds.length}orders_${new Date().toISOString().slice(0, 10)}.zip`;
+
+            // 🚨 핵심 수정 완료! 여기서 유효기간을 1시간에서 7일(1000 * 60 * 60 * 24 * 7)로 완벽하게 늘렸습니다!
             const [url] = await zipFile.getSignedUrl({
-                action: "read", expires: Date.now() + 1000 * 60 * 60, responseDisposition: `attachment; filename="${filename}"`, responseType: "application/zip",
+                action: "read",
+                expires: Date.now() + 1000 * 60 * 60 * 24 * 7,
+                responseDisposition: `attachment; filename="${filename}"`,
+                responseType: "application/zip",
             });
+
             return { ok: true, url, addedCount };
         } catch (e: any) {
             throw new HttpsError("internal", e.message || "ZIP creation failed");

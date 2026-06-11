@@ -618,7 +618,10 @@ export default function AdminOrderList() {
                                             {qty}
                                         </div>
                                     </td>
-                                    <td className="p-4 font-black text-sm whitespace-nowrap">฿{order.pricing?.total?.toLocaleString() || 0}</td>
+                                    {/* 🚨 핵심 변경 부분 (새 버전의 금액 구조 반영 완료) */}
+                                    <td className="p-4 font-black text-sm whitespace-nowrap">
+                                        ฿{((order as any).totals?.total ?? order.pricing?.total ?? 0).toLocaleString()}
+                                    </td>
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
                                             <StatusBadge status={order.status} />
@@ -660,7 +663,7 @@ export default function AdminOrderList() {
                                     placeholder={`[예시]\n20260530-0001\tTH0123456\n20260530-0002\tTH9876543`}
                                     value={excelText}
                                     onChange={(e) => setExcelText(e.target.value)}
-                                    onKeyDown={handleKeyDown} /* ✨ 바로 이 부분이 탭(Tab) 키를 가로채는 기능입니다! */
+                                    onKeyDown={handleKeyDown}
                                 />
                             </div>
 
