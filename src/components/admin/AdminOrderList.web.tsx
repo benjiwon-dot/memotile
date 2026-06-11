@@ -620,7 +620,7 @@ export default function AdminOrderList() {
                                     </td>
                                     {/* 🚨 핵심 변경 부분 (새 버전의 금액 구조 반영 완료) */}
                                     <td className="p-4 font-black text-sm whitespace-nowrap">
-                                        ฿{((order as any).totals?.total ?? order.pricing?.total ?? 0).toLocaleString()}
+                                        ฿{Number((order as any).totals?.total ?? (order as any).pricing?.total ?? (order as any).total ?? 0).toLocaleString()}
                                     </td>
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
