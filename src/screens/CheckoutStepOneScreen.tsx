@@ -101,8 +101,11 @@ export default function CheckoutStepOneScreen() {
 
     const [pricePerTile, setPricePerTile] = useState<number>(locale === "TH" ? 300 : 8.85);
 
+    // ✨ 수량 할인 데이터를 저장할 상태 추가
+    const [volumeDiscounts, setVolumeDiscounts] = useState<{ minQty: number, discountPercent: number }[]>([]);
+
     useEffect(() => {
-        const fetchPrice = async () => {
+        const fetchPriceAndDiscounts = async () => {
             try {
                 const db = getFirestore();
                 const docRef = doc(db, "config", "prices");
@@ -112,13 +115,19 @@ export default function CheckoutStepOneScreen() {
                     const data = docSnap.data();
                     const remotePrice = locale === "TH" ? data.price_thb : data.price_usd;
                     setPricePerTile(remotePrice);
+
+                    // ✨ 수량 할인표 가져오기
+                    if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
+                        const sortedTiers = [...data.volumeDiscounts].sort((a, b) => b.minQty - a.minQty);
+                        setVolumeDiscounts(sortedTiers);
+                    }
                 }
             } catch (error) {
                 console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
             }
         };
 
-        fetchPrice();
+        fetchPriceAndDiscounts();
     }, [locale]);
 
     const PRICE_PER_TILE = pricePerTile;
@@ -163,8 +172,20 @@ export default function CheckoutStepOneScreen() {
         return unsub;
     }, []);
 
-    const subtotal = useMemo(() => safePhotos.length * PRICE_PER_TILE, [safePhotos.length, PRICE_PER_TILE]);
-    const total = subtotal;
+    // ✨ 할인 계산 로직 추가
+    const safePhotosCount = safePhotos.length;
+    const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
+
+    let autoDiscountPercent = 0;
+    for (const tier of volumeDiscounts) {
+        if (safePhotosCount >= tier.minQty) {
+            autoDiscountPercent = tier.discountPercent;
+            break;
+        }
+    }
+
+    const autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
+    const total = Math.max(0, Number((rawSubtotal - autoDiscountAmount).toFixed(2)));
 
     const handleGoogleLogin = async () => {
         if (Platform.OS === 'web') {
@@ -312,13 +333,25 @@ export default function CheckoutStepOneScreen() {
                     <View style={styles.summaryBlock}>
                         <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>
-                                {safePhotos.length} {(t as any)["tilesSize"] || "Tiles"}
+                                {safePhotosCount} {(t as any)["tilesSize"] || "Tiles"}
                             </Text>
                             <Text style={styles.summaryValue}>
                                 {CURRENCY_SYMBOL}
-                                {subtotal.toFixed(2)}
+                                {rawSubtotal.toFixed(2)}
                             </Text>
                         </View>
+
+                        {/* ✨ 자동 할인 표시 */}
+                        {autoDiscountAmount > 0 && (
+                            <View style={styles.summaryRow}>
+                                <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
+                                    Volume Discount ({autoDiscountPercent}%)
+                                </Text>
+                                <Text style={[styles.summaryValue, { color: "#10B981" }]}>
+                                    -{CURRENCY_SYMBOL}{autoDiscountAmount.toFixed(2)}
+                                </Text>
+                            </View>
+                        )}
 
                         <View style={styles.summaryRow}>
                             <Text style={[styles.summaryLabel, { color: "#10B981" }]}>

@@ -2,7 +2,7 @@
     "expo": {
         "name": "MemoTile",
         "slug": "memotile-app-anti",
-        "version": "1.1.9",
+        "version": "1.1.10",
         "orientation": "portrait",
         "icon": "./assets/icon.png",
         "userInterfaceStyle": "light",
@@ -43,7 +43,7 @@
             "@react-native-firebase/crashlytics"
         ],
         "ios": {
-            "buildNumber": "33",
+            "buildNumber": "34",
             "supportsTablet": true,
             "bundleIdentifier": "com.benjiwon.memotileappanti",
             "googleServicesFile": "./GoogleService-Info.plist",
@@ -71,7 +71,7 @@
             }
         },
         "android": {
-            "versionCode": 10,
+            "versionCode": 11,
             "package": "com.memotile.android",
             "googleServicesFile": "./google-services.json",
             "adaptiveIcon": {

@@ -54,8 +54,6 @@ export default function CheckoutStepTwoScreen() {
     const scrollViewRef = useRef<ScrollView>(null);
 
     // 🚨 [애플 심사 모드 스위치] 
-    // 우리가 내부 테스트할 때는 false로 둡니다. (모든 결제수단 노출)
-    // 애플에 심사를 올릴 때는 무조건 true로 바꿉니다. (래빗페이 및 트루머니 숨김)
     const IS_APPLE_REVIEW_MODE = false;
 
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
@@ -114,10 +112,9 @@ export default function CheckoutStepTwoScreen() {
     const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 300 : 8.85);
     const [basePriceUSD, setBasePriceUSD] = useState<number>(8.85);
 
-    // ✨ [핵심 추가] 파이어베이스에서 가져올 "자동 할인 구간 배열"
+    // ✨ 파이어베이스에서 가져올 "자동 할인 구간 배열"
     const [volumeDiscounts, setVolumeDiscounts] = useState<{ minQty: number, discountPercent: number }[]>([]);
 
-    // ✨ Firebase Firestore 가격 및 자동 할인 데이터 실시간 불러오기
     useEffect(() => {
         const fetchPriceAndDiscounts = async () => {
             try {
@@ -130,7 +127,6 @@ export default function CheckoutStepTwoScreen() {
                     setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
                     setBasePriceUSD(data.price_usd || 8.85);
 
-                    // ✨ 파이어베이스에서 다량 구매 자동 할인표를 가져옵니다. (내림차순 정렬)
                     if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
                         const sortedTiers = [...data.volumeDiscounts].sort((a, b) => b.minQty - a.minQty);
                         setVolumeDiscounts(sortedTiers);
@@ -215,7 +211,7 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    // ✨ [강력해진 결제 금액 계산 로직]
+    // ✨ [강력해진 결제 금액 계산 로직 - 중복 할인 방지 탑재!]
     const PRICE_PER_TILE = pricePerTile;
     const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
     const BASE_PRICE_USD = basePriceUSD;
@@ -224,7 +220,7 @@ export default function CheckoutStepTwoScreen() {
     // 1. 순수 원금 (할인 전)
     const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
 
-    // 2. 파이어베이스 세팅에 의한 "자동 수량 할인" 적용 (예: 10개 이상 20%)
+    // 2. 파이어베이스 세팅에 의한 "자동 수량 할인" 파악
     let autoDiscountPercent = 0;
     for (const tier of volumeDiscounts) {
         if (safePhotosCount >= tier.minQty) {
@@ -232,28 +228,33 @@ export default function CheckoutStepTwoScreen() {
             break;
         }
     }
-    const autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
-    const subtotalAfterAuto = rawSubtotal - autoDiscountAmount; // 자동할인이 빠진 실결제 예정액
 
-    // 3. 프로모션(쿠폰) 할인 적용 (자동할인 된 금액에서 한 번 더 깎아줌)
+    let autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
+
+    // 3. 프로모션(쿠폰) 할인 적용 및 중복 할인 무효화!
     let promoDiscountAmount = 0;
     if (promoResult?.success && promoResult.discountAmount) {
         promoDiscountAmount = Number(promoResult.discountAmount.toFixed(2));
+
+        // 🔥 쿠폰이 적용되었다면, 수량 할인을 취소(0원) 시킵니다!
+        autoDiscountAmount = 0;
+        autoDiscountPercent = 0;
     }
 
     const totalDiscount = autoDiscountAmount + promoDiscountAmount;
     const shippingFee = 0;
     const total = Math.max(0, Number((rawSubtotal - totalDiscount + shippingFee).toFixed(2)));
 
-    // USD 환산 처리
+    // USD 환산 처리 (동일한 중복 할인 방지 적용)
     const rawSubtotalUSD = safePhotosCount * basePriceUSD;
-    const autoDiscountAmountUSD = rawSubtotalUSD * (autoDiscountPercent / 100);
-    const subtotalAfterAutoUSD = rawSubtotalUSD - autoDiscountAmountUSD;
+    let autoDiscountAmountUSD = rawSubtotalUSD * (autoDiscountPercent / 100); // 쿠폰 적용시 percent가 0이므로 알아서 0됨
+
     let promoDiscountRatio = 0;
-    if (promoResult?.success && subtotalAfterAuto > 0) {
-        promoDiscountRatio = promoDiscountAmount / subtotalAfterAuto;
+    if (promoResult?.success && rawSubtotal > 0) {
+        // 🔥 원금을 기준으로 쿠폰 할인율 비율을 구합니다.
+        promoDiscountRatio = promoDiscountAmount / rawSubtotal;
     }
-    const promoDiscountAmountUSD = subtotalAfterAutoUSD * promoDiscountRatio;
+    const promoDiscountAmountUSD = rawSubtotalUSD * promoDiscountRatio;
     const totalInUSD = Math.max(0, Number((rawSubtotalUSD - autoDiscountAmountUSD - promoDiscountAmountUSD).toFixed(2)));
 
     // ✨ 쿠폰 코드 적용 핸들러
@@ -261,8 +262,8 @@ export default function CheckoutStepTwoScreen() {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
-            // 🚨 [핵심 변경] 쿠폰은 '자동 할인이 끝난 금액(subtotalAfterAuto)'을 기준으로 계산하도록 던집니다!
-            const res = await validatePromo(promoCode, currentUser?.uid || "anon", subtotalAfterAuto, safePhotosCount, PRICE_PER_TILE);
+            // 🚨 쿠폰 검증시 '할인 전 원금(rawSubtotal)'을 던지도록 수정!
+            const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, PRICE_PER_TILE);
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
@@ -414,7 +415,6 @@ export default function CheckoutStepTwoScreen() {
 
                                         if (orderData?.status === 'paid') {
 
-                                            // 🚨 [핵심 버그 수정 완료!] 유료 결제 성공 시에도 얌체 사용을 막기 위해 '쿠폰 사용 완료' 도장을 확실하게 찍습니다.
                                             if (promoResult?.success && promoResult.promoCode) {
                                                 try {
                                                     const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
@@ -529,7 +529,6 @@ export default function CheckoutStepTwoScreen() {
                         paidAt: new Date().toISOString()
                     });
 
-                    // ✨ 무료 결제 성공 시 쿠폰 사용 도장 쾅!
                     if (promoResult?.success && promoResult.promoCode) {
                         const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${user!.uid}`);
                         await setDoc(redemptionRef, {
@@ -728,7 +727,7 @@ export default function CheckoutStepTwoScreen() {
                             <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{rawSubtotal.toFixed(2)}</Text>
                         </View>
 
-                        {/* ✨ 자동 할인 표시 */}
+                        {/* ✨ 자동 할인 표시 (쿠폰 적용시 사라짐) */}
                         {autoDiscountAmount > 0 && (
                             <View style={styles.summaryRow}>
                                 <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
