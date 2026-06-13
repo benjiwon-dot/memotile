@@ -1,0 +1,12 @@
+diff --git a/node_modules/react-native/third-party-podspecs/fmt.podspec b/node_modules/react-native/third-party-podspecs/fmt.podspec
+index 121be50..5bd7163 100644
+--- a/node_modules/react-native/third-party-podspecs/fmt.podspec
++++ b/node_modules/react-native/third-party-podspecs/fmt.podspec
+@@ -9,6 +9,7 @@ fmt_git_url = fmt_config[:git]
+ Pod::Spec.new do |spec|
+   spec.name = "fmt"
+   spec.version = "11.0.2"
++  spec.compiler_flags = "-DFMT_CONSTEVAL=constexpr"
+   spec.license = { :type => "MIT" }
+   spec.homepage = "https://github.com/fmtlib/fmt"
+   spec.summary = "{fmt} is an open-source formatting library for C++. It can be used as a safe and fast alternative to (s)printf and iostreams."

@@ -8,7 +8,8 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "server": "ts-node server/server.ts"
+    "server": "ts-node server/server.ts",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo/vector-icons": "~14.0.4",
