@@ -8,7 +8,8 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "server": "ts-node server/server.ts"
+    "server": "ts-node server/server.ts",
+    "eas-build-pre-build": "find ios/Pods -type f -name '*.h' -exec sed -i '' 's/define FMT_CONSTEVAL consteval/define FMT_CONSTEVAL constexpr/g' {} + 2>/dev/null || true"
   },
   "dependencies": {
     "@expo/vector-icons": "~14.0.4",
