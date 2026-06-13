@@ -1,0 +1,10 @@
+diff --git a/node_modules/react-native/ReactCommon/yoga/yoga/fmt/format.h b/node_modules/react-native/ReactCommon/yoga/yoga/fmt/format.h
+index 1234567..89abcdef 100644
+--- a/node_modules/react-native/ReactCommon/yoga/yoga/fmt/format.h
++++ b/node_modules/react-native/ReactCommon/yoga/yoga/fmt/format.h
+@@ -100,7 +100,7 @@
+ #  define FMT_CONSTEVAL
+ #endif
+ 
+-#define FMT_CONSTEVAL consteval
++#define FMT_CONSTEVAL
