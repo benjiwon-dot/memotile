@@ -14,7 +14,7 @@
     "production": {
       "autoIncrement": true,
       "ios": {
-        "image": "macos-14-xcode-15.4"
+        "image": "macos-sonoma-14.5-xcode-15.4"
       }
     }
   },
