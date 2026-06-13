@@ -9,20 +9,23 @@ module.exports = function withFmtFix(config) {
       const podfile = path.join(config.modRequest.platformProjectRoot, 'Podfile');
       if (fs.existsSync(podfile)) {
         let contents = fs.readFileSync(podfile, 'utf-8');
-        const fix = `post_install do |installer|
+        const fixCode = `
   installer.pods_project.targets.each do |target|
-    if target.name == 'fmt'
-      target.build_configurations.each do |config|
-        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
-      end
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'FMT_HAS_CONSTEVAL=0'
     end
-  end`;
-        if (!contents.includes("target.name == 'fmt'")) {
-          contents = contents.replace(/post_install do \|installer\|/g, fix);
+  end
+`;
+        if (!contents.includes('FMT_HAS_CONSTEVAL=0')) {
+          contents = contents.replace(
+            /post_install do \|installer\|/g,
+            `post_install do |installer|\n${fixCode}`
+          );
           fs.writeFileSync(podfile, contents);
         }
       }
       return config;
-    }
+    },
   ]);
 };

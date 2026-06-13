@@ -6,6 +6,10 @@
         "orientation": "portrait",
         "icon": "./assets/icon.png",
         "userInterfaceStyle": "light",
+        "locales": {
+            "en": "./languages/en.json",
+            "th": "./languages/th.json"
+        },
         "splash": {
             "image": "./assets/splash.png",
             "resizeMode": "contain",
@@ -53,10 +57,6 @@
                 "applinks:memotile.com",
                 "applinks:www.memotile.com"
             ],
-            "locales": {
-                "en": "./languages/en.json",
-                "th": "./languages/th.json"
-            },
             "infoPlist": {
                 "NSPhotoLibraryUsageDescription": "We need access to your photo gallery so you can select and upload photos to create your custom photo tiles.",
                 "CFBundleAllowMixedLocalizations": true,
@@ -76,11 +76,11 @@
             "package": "com.memotile.android",
             "googleServicesFile": "./google-services.json",
             "adaptiveIcon": {
-                "foregroundImage": "./assets/icon_android.png",
+                "foregroundImage": "./assets/icon.png",
                 "backgroundColor": "#ffffff"
             },
             "splash": {
-                "image": "./assets/splash_android.png",
+                "image": "./assets/splash.png",
                 "resizeMode": "contain",
                 "backgroundColor": "#ffffff"
             },
