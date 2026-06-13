@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "web": "expo start --web",
     "server": "ts-node server/server.ts",
-    "postinstall": "patch-package"
+    "eas-build-pre-build": "find node_modules -name \"format.h\" -exec sed -i '' 's/#define FMT_CONSTEVAL consteval/#define FMT_CONSTEVAL/' {} + || true"
   },
   "dependencies": {
     "@expo/vector-icons": "~14.0.4",
