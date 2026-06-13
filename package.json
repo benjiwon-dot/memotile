@@ -8,8 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "server": "ts-node server/server.ts",
-    "eas-build-pre-build": "find node_modules -name \"format.h\" -exec sed -i '' 's/#define FMT_CONSTEVAL consteval/#define FMT_CONSTEVAL/' {} + || true"
+    "server": "ts-node server/server.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "~14.0.4",
@@ -75,7 +74,6 @@
     "@types/react": "~18.3.12",
     "autoprefixer": "^10.4.20",
     "babel-plugin-module-resolver": "^5.0.2",
-    "patch-package": "^8.0.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.9.2"
