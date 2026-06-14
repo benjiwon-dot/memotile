@@ -17,7 +17,6 @@
         "scheme": "memotile",
         "plugins": [
             "expo-router",
-            "./withFmtFix.js",
             [
                 "expo-build-properties",
                 {
