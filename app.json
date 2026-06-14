@@ -70,7 +70,7 @@
             }
         },
         "android": {
-            "versionCode": 16,
+            "versionCode": 17,
             "package": "com.memotile.android",
             "googleServicesFile": "./google-services.json",
             "adaptiveIcon": {
