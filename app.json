@@ -23,8 +23,9 @@
                     "android": {
                         "targetSdkVersion": 35,
                         "compileSdkVersion": 35,
-                        "useLegacyPackaging": false,
-                        "ndkVersion": "27.1.12297006"
+                        "gradleProperties": {
+                            "android.use16KPageAlignment": "true"
+                        }
                     }
                 }
             ],
@@ -69,7 +70,7 @@
             }
         },
         "android": {
-            "versionCode": 15,
+            "versionCode": 16,
             "package": "com.memotile.android",
             "googleServicesFile": "./google-services.json",
             "adaptiveIcon": {
