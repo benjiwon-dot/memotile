@@ -117,6 +117,9 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    // ✨ 메모 관리를 위한 별도 상태 추가
+    const [noteText, setNoteText] = useState("");
+
     const [resolved, setResolved] = useState<
         Record<number, { previewUrl?: string | null; printUrl?: string | null }>
     >({});
@@ -135,6 +138,13 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             aliveRef.current = false;
         };
     }, []);
+
+    // ✨ 주문 데이터가 불러와지면 메모 텍스트 동기화
+    useEffect(() => {
+        if (order) {
+            setNoteText((order as any).adminNote || "");
+        }
+    }, [order]);
 
     const copyText = async (text: string) => {
         if (!isWeb) return;
@@ -394,6 +404,19 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
+    // ✨ 메모 전용 저장/삭제 함수 추가
+    const handleSaveNote = async () => {
+        await handleSaveOps({ adminNote: noteText });
+        alert("✅ 메모가 성공적으로 저장되었습니다.");
+    };
+
+    const handleDeleteNote = async () => {
+        if (!confirm("작성된 메모를 정말 삭제하시겠습니까?")) return;
+        setNoteText("");
+        await handleSaveOps({ adminNote: "" });
+        alert("🗑️ 메모가 삭제되었습니다.");
+    };
+
     const handleCancel = async () => {
         if (!order || !isWeb) return;
         if (!confirm("Are you sure you want to CANCEL this order?")) return;
@@ -492,7 +515,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 </div>
             )}
 
-            {/* ✨ 추가된 HOLD 상태 알림창 시작 */}
             {order.status === "hold" && (
                 <div className="bg-orange-50 border-2 border-orange-400 p-5 rounded-xl flex flex-col gap-3 shrink-0 shadow-sm mb-2">
                     <div className="flex items-center gap-2 text-orange-800 font-black text-lg">
@@ -510,7 +532,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     )}
                 </div>
             )}
-            {/* ✨ 추가된 HOLD 상태 알림창 끝 */}
 
             <div className="flex flex-col md:flex-row justify-between gap-6 shrink-0">
                 <div className="flex items-center gap-4">
@@ -627,13 +648,42 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
                 <div className="admin-card p-4 space-y-3">
                     <div className="text-xs font-black text-zinc-400 uppercase">Ops</div>
+
                     <div className="flex items-center gap-2">
                         <Truck size={16} />
                         <input className="admin-input w-full" placeholder="Tracking number" defaultValue={orderOps?.trackingNumber || ""} onBlur={(e) => handleSaveOps({ trackingNumber: e.target.value })} disabled={busy} />
                     </div>
-                    <div className="flex items-start gap-2">
-                        <StickyNote size={16} className="mt-2" />
-                        <textarea className="admin-input w-full" rows={3} placeholder="Admin note (internal)" defaultValue={orderOps?.adminNote || ""} onBlur={(e) => handleSaveOps({ adminNote: e.target.value })} disabled={busy} />
+
+                    {/* ✨ 새롭게 수정된 메모 입력창 및 버튼 영역 */}
+                    <div className="flex flex-col gap-2 mt-2 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
+                        <div className="flex items-center gap-2 text-zinc-700 font-bold text-sm">
+                            <StickyNote size={16} />
+                            Admin Note (내부 메모)
+                        </div>
+                        <textarea
+                            className="admin-input w-full"
+                            rows={3}
+                            placeholder="주문 관련 특이사항이나 보류 사유를 적어주세요."
+                            value={noteText}
+                            onChange={(e) => setNoteText(e.target.value)}
+                            disabled={busy}
+                        />
+                        <div className="flex gap-2 justify-end mt-1">
+                            <button
+                                onClick={handleDeleteNote}
+                                disabled={busy || !orderOps?.adminNote}
+                                className="px-3 py-1.5 text-xs font-bold rounded-md bg-white text-zinc-500 border border-zinc-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
+                            >
+                                삭제 (Delete)
+                            </button>
+                            <button
+                                onClick={handleSaveNote}
+                                disabled={busy}
+                                className="px-3 py-1.5 text-xs font-bold rounded-md bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
+                            >
+                                저장 (Save)
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
