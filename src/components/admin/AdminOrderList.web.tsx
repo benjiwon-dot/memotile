@@ -19,7 +19,8 @@ import {
     Users,
     Package,
     X,
-    ClipboardPaste
+    ClipboardPaste,
+    PauseCircle // ✨ HOLD 버튼용 아이콘 추가
 } from "lucide-react";
 
 import { getFirestore, doc, deleteDoc, collection, addDoc, getDocs } from "firebase/firestore";
@@ -42,8 +43,9 @@ const isMatch = (target: string, query: string) => {
 
 const normStatus = (s: unknown) => String(s ?? "").trim().toUpperCase();
 
+// ✨ HOLD 상태 허용 목록에 추가
 const ALLOWED_STATUSES = new Set([
-    "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED",
+    "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED",
 ]);
 
 const toCsv = (rows: Record<string, unknown>[]) => {
@@ -88,12 +90,10 @@ const getSafeDate = (val: any) => {
     return new Date(val);
 };
 
-// 금액 파싱 헬퍼 (새 버전 금액 구조 반영)
 const getOrderTotal = (order: any): number => {
     return Number(order?.totals?.total ?? order?.pricing?.total ?? order?.total ?? 0);
 };
 
-// 주소 텍스트 조합 헬퍼
 const getFullAddress = (shipping: any): string => {
     return [shipping?.address1, shipping?.address2, shipping?.city, shipping?.state]
         .filter(Boolean)
@@ -234,7 +234,7 @@ export default function AdminOrderList() {
 
             setTimeout(() => {
                 fetchOrders();
-                alert("상태 변경 및 알림 발송을 요청했습니다!");
+                alert(`상태를 ${newStatus}(으)로 변경했습니다!`);
                 setBulkLoading(false);
             }, 1500);
 
@@ -298,7 +298,6 @@ export default function AdminOrderList() {
         if (!excelText.trim()) return [];
         const lines = excelText.trim().split('\n');
         return lines.map(line => {
-            // 탭(\t) 또는 스페이스바 무관하게 분리
             const parts = line.trim().split(/[\t ]+/);
             const code = parts[0] || "";
             const tracking = parts[1] || "";
@@ -462,7 +461,6 @@ export default function AdminOrderList() {
 
     const isAllVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selectedIds.has(o.id));
 
-    // 텍스트창 안에서 탭(Tab) 키를 눌렀을 때 버튼으로 안 넘어가고 엑셀처럼 띄어쓰기가 되게 하는 함수
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Tab') {
             e.preventDefault();
@@ -483,7 +481,8 @@ export default function AdminOrderList() {
         <div className="flex flex-col gap-4 w-full pb-32">
             <div className="shrink-0 flex flex-col gap-4 sticky top-0 z-20 bg-white py-4 -mt-4">
                 <div className="flex gap-2 overflow-x-auto border-b pb-2">
-                    {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map((st) => (
+                    {/* ✨ HOLD 탭 추가 */}
+                    {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map((st) => (
                         <button
                             key={st}
                             onClick={() => setStatusFilter(st)}
@@ -517,6 +516,8 @@ export default function AdminOrderList() {
                 <div className="bg-zinc-900 text-white p-3 rounded-xl flex flex-col md:flex-row gap-3 md:justify-between md:items-center">
                     <span className="font-bold">{selectedIds.size} selected</span>
                     <div className="flex flex-wrap gap-2 items-center">
+
+                        {/* ✨ 상태 변경 드롭다운에 HOLD 추가 */}
                         <select
                             disabled={bulkLoading || selectedIds.size === 0}
                             onChange={(e) => {
@@ -527,8 +528,18 @@ export default function AdminOrderList() {
                             className="bg-zinc-800 text-xs px-2 py-2 rounded"
                         >
                             <option value="">Set Status</option>
-                            {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
+                            {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
+
+                        {/* ✨ 원클릭 HOLD 버튼 추가 (주황색) */}
+                        <button
+                            onClick={() => handleBulkStatus("HOLD")}
+                            disabled={bulkLoading || selectedIds.size === 0}
+                            className="bg-orange-500 text-white hover:bg-orange-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm"
+                        >
+                            <PauseCircle size={12} />
+                            문제고객 HOLD
+                        </button>
 
                         <button onClick={() => setShowExcelModal(true)} disabled={bulkLoading} className="bg-green-600 text-white hover:bg-green-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
                             <ClipboardPaste size={12} />
@@ -588,7 +599,6 @@ export default function AdminOrderList() {
                             const abandoned = order.status === 'pending' && (new Date().getTime() - orderDate.getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
 
-                            // 헬퍼 함수 적용
                             const fullAddress = getFullAddress(order.shipping);
                             const totalAmount = getOrderTotal(order);
                             const qty = order.itemsCount || 0;
@@ -638,7 +648,6 @@ export default function AdminOrderList() {
                                         </div>
                                     </td>
                                     <td className="p-4 font-black text-sm whitespace-nowrap">
-                                        {/* 개선된 금액 표시 */}
                                         ฿{totalAmount.toLocaleString()}
                                     </td>
                                     <td className="p-4 w-px whitespace-nowrap">
