@@ -22,7 +22,7 @@ import {
     Link as LinkIcon,
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc, getDoc } from "firebase/firestore";
+import { getFirestore, doc, deleteDoc, getDoc, updateDoc } from "firebase/firestore"; // ✨ updateDoc 추가
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -117,7 +117,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // ✨ 메모 관리를 위한 별도 상태 추가
+    // ✨ 메모 상태 관리
     const [noteText, setNoteText] = useState("");
 
     const [resolved, setResolved] = useState<
@@ -139,7 +139,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         };
     }, []);
 
-    // ✨ 주문 데이터가 불러와지면 메모 텍스트 동기화
+    // ✨ DB에서 주문 정보를 가져왔을 때 메모창에 띄워주기
     useEffect(() => {
         if (order) {
             setNoteText((order as any).adminNote || "");
@@ -391,7 +391,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    const handleSaveOps = async (patch: { trackingNumber?: string; adminNote?: string }) => {
+    const handleSaveOps = async (patch: { trackingNumber?: string }) => {
         setBusy(true);
         try {
             const fn = httpsCallable(functions, "adminUpdateOrderOps");
@@ -404,17 +404,42 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✨ 메모 전용 저장/삭제 함수 추가
-    const handleSaveNote = async () => {
-        await handleSaveOps({ adminNote: noteText });
-        alert("✅ 메모가 성공적으로 저장되었습니다.");
+    // ✨ 백엔드를 거치지 않고 DB에 직통으로 영구 저장하는 핵심 로직
+    const handleSaveNoteDirect = async () => {
+        setBusy(true);
+        try {
+            const orderDocRef = doc(db, "orders", orderId);
+            await updateDoc(orderDocRef, {
+                adminNote: noteText
+            });
+            alert("✅ 메모가 파이어베이스 DB에 영구 저장되었습니다.");
+            await refetch(); // 화면 데이터 최신화
+        } catch (e: any) {
+            console.error(e);
+            alert(`메모 저장 실패: ${e.message}`);
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleDeleteNote = async () => {
-        if (!confirm("작성된 메모를 정말 삭제하시겠습니까?")) return;
-        setNoteText("");
-        await handleSaveOps({ adminNote: "" });
-        alert("🗑️ 메모가 삭제되었습니다.");
+    // ✨ 메모 직통 영구 삭제 로직
+    const handleDeleteNoteDirect = async () => {
+        if (!confirm("작성된 메모를 완전히 삭제하시겠습니까?")) return;
+        setBusy(true);
+        try {
+            const orderDocRef = doc(db, "orders", orderId);
+            await updateDoc(orderDocRef, {
+                adminNote: ""
+            });
+            setNoteText("");
+            alert("🗑️ 메모가 DB에서 삭제되었습니다.");
+            await refetch();
+        } catch (e: any) {
+            console.error(e);
+            alert(`메모 삭제 실패: ${e.message}`);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const handleCancel = async () => {
@@ -530,6 +555,19 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             (아직 작성된 메모가 없습니다. 화면 맨 아래 'Admin note' 칸에 사유를 적어주시면 여기에 표시됩니다.)
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* ✨ 저장된 메모가 확실히 박혔는지 눈으로 확인하는 고정 노란색 메모판 */}
+            {orderOps?.adminNote && (
+                <div className="bg-yellow-50 border-2 border-yellow-300 p-4 rounded-xl flex flex-col gap-1 shadow-sm shrink-0">
+                    <div className="flex items-center gap-2 text-yellow-800 font-extrabold text-sm uppercase tracking-wider">
+                        <StickyNote size={16} className="text-yellow-600" />
+                        📌 현재 이 주문에 저장된 관리자 메모
+                    </div>
+                    <div className="text-zinc-800 font-medium text-sm whitespace-pre-wrap pl-6 pt-1">
+                        {orderOps.adminNote}
+                    </div>
                 </div>
             )}
 
@@ -670,14 +708,14 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         />
                         <div className="flex gap-2 justify-end mt-1">
                             <button
-                                onClick={handleDeleteNote}
+                                onClick={handleDeleteNoteDirect}
                                 disabled={busy || !orderOps?.adminNote}
                                 className="px-3 py-1.5 text-xs font-bold rounded-md bg-white text-zinc-500 border border-zinc-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
                             >
                                 삭제 (Delete)
                             </button>
                             <button
-                                onClick={handleSaveNote}
+                                onClick={handleSaveNoteDirect}
                                 disabled={busy}
                                 className="px-3 py-1.5 text-xs font-bold rounded-md bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
                             >
