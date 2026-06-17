@@ -22,7 +22,7 @@ import {
     Link as LinkIcon,
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc, getDoc, updateDoc } from "firebase/firestore"; // ✨ updateDoc 추가
+import { getFirestore, doc, deleteDoc, getDoc, updateDoc } from "firebase/firestore";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -117,7 +117,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // ✨ 메모 상태 관리
+    // ✨ 파이어베이스 DB 연동 메모 상태
     const [noteText, setNoteText] = useState("");
 
     const [resolved, setResolved] = useState<
@@ -139,7 +139,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         };
     }, []);
 
-    // ✨ DB에서 주문 정보를 가져왔을 때 메모창에 띄워주기
+    // ✨ DB에서 주문 정보를 가져올 때, 저장된 메모가 있다면 입력창에 미리 세팅
     useEffect(() => {
         if (order) {
             setNoteText((order as any).adminNote || "");
@@ -412,8 +412,8 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             await updateDoc(orderDocRef, {
                 adminNote: noteText
             });
-            alert("✅ 메모가 파이어베이스 DB에 영구 저장되었습니다.");
-            await refetch(); // 화면 데이터 최신화
+            alert("✅ 메모가 파이어베이스 DB에 영구 저장되었습니다. 이제 어디서든 확인할 수 있습니다.");
+            await refetch(); // 화면 데이터를 최신 상태로 새로고침
         } catch (e: any) {
             console.error(e);
             alert(`메모 저장 실패: ${e.message}`);
@@ -424,7 +424,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     // ✨ 메모 직통 영구 삭제 로직
     const handleDeleteNoteDirect = async () => {
-        if (!confirm("작성된 메모를 완전히 삭제하시겠습니까?")) return;
+        if (!confirm("작성된 메모를 완전히 삭제하시겠습니까? (삭제 시 모든 기기에서 지워집니다)")) return;
         setBusy(true);
         try {
             const orderDocRef = doc(db, "orders", orderId);
@@ -432,7 +432,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 adminNote: ""
             });
             setNoteText("");
-            alert("🗑️ 메모가 DB에서 삭제되었습니다.");
+            alert("🗑️ 메모가 DB에서 완전히 삭제되었습니다.");
             await refetch();
         } catch (e: any) {
             console.error(e);
@@ -507,19 +507,14 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     }
 
     const customerName = safeName(order.customer?.fullName || order.shipping?.fullName || "Guest");
-    const dateKey = yyyymmddFromISO(order.createdAt);
     const orderOps = order as any;
-
     const promoCode = orderOps.promoCode || orderOps.promo?.code || "";
-    const discountAmount = orderOps.discount ?? orderOps.pricing?.discount ?? 0;
-    const totalPaid = orderOps.total ?? orderOps.pricing?.total ?? 0;
 
     const shipFullName = order.shipping?.fullName || customerName;
     const shipAddress1 = order.shipping?.address1 || "";
     const shipAddress2 = order.shipping?.address2 || "";
     const shipCityState = [order.shipping?.city, order.shipping?.state].filter(Boolean).join(", ");
     const shipPostal = order.shipping?.postalCode || "";
-    const shipCountry = order.shipping?.country || "";
     const shipPhone = order.shipping?.phone || order.customer?.phone || "";
 
     const customerEmail = order.customer?.email || order.shipping?.email || "-";
@@ -558,12 +553,12 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 </div>
             )}
 
-            {/* ✨ 저장된 메모가 확실히 박혔는지 눈으로 확인하는 고정 노란색 메모판 */}
+            {/* ✨ 상세 페이지 빈 공간 최상단에 항상 고정되는 노란색 메모판 */}
             {orderOps?.adminNote && (
                 <div className="bg-yellow-50 border-2 border-yellow-300 p-4 rounded-xl flex flex-col gap-1 shadow-sm shrink-0">
                     <div className="flex items-center gap-2 text-yellow-800 font-extrabold text-sm uppercase tracking-wider">
                         <StickyNote size={16} className="text-yellow-600" />
-                        📌 현재 이 주문에 저장된 관리자 메모
+                        📌 이 주문에 저장된 관리자 메모
                     </div>
                     <div className="text-zinc-800 font-medium text-sm whitespace-pre-wrap pl-6 pt-1">
                         {orderOps.adminNote}
@@ -692,16 +687,16 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <input className="admin-input w-full" placeholder="Tracking number" defaultValue={orderOps?.trackingNumber || ""} onBlur={(e) => handleSaveOps({ trackingNumber: e.target.value })} disabled={busy} />
                     </div>
 
-                    {/* ✨ 새롭게 수정된 메모 입력창 및 버튼 영역 */}
+                    {/* ✨ 파이어베이스 실시간 연동 메모 입력창 */}
                     <div className="flex flex-col gap-2 mt-2 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
                         <div className="flex items-center gap-2 text-zinc-700 font-bold text-sm">
                             <StickyNote size={16} />
-                            Admin Note (내부 메모)
+                            Admin Note (전체 연동)
                         </div>
                         <textarea
                             className="admin-input w-full"
                             rows={3}
-                            placeholder="주문 관련 특이사항이나 보류 사유를 적어주세요."
+                            placeholder="주문 관련 특이사항을 적어주세요. (저장 시 DB 연동)"
                             value={noteText}
                             onChange={(e) => setNoteText(e.target.value)}
                             disabled={busy}
