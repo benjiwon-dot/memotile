@@ -117,8 +117,9 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // ✨ 파이어베이스 DB 연동 메모 상태
+    // ✨ 프론트엔드 직통 메모 전용 상태 관리 (기존 백엔드 필터링 우회)
     const [noteText, setNoteText] = useState("");
+    const [savedNote, setSavedNote] = useState("");
 
     const [resolved, setResolved] = useState<
         Record<number, { previewUrl?: string | null; printUrl?: string | null }>
@@ -139,12 +140,23 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         };
     }, []);
 
-    // ✨ DB에서 주문 정보를 가져올 때, 저장된 메모가 있다면 입력창에 미리 세팅
+    // ✨ 페이지 로드 시, 백엔드를 거치지 않고 파이어베이스에서 메모만 직접 뽑아옵니다.
     useEffect(() => {
-        if (order) {
-            setNoteText((order as any).adminNote || "");
-        }
-    }, [order]);
+        const fetchNoteDirectly = async () => {
+            try {
+                const docRef = doc(db, "orders", orderId);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const fetchedNote = docSnap.data().adminNote || "";
+                    setSavedNote(fetchedNote);
+                    setNoteText(fetchedNote); // 입력창에도 세팅
+                }
+            } catch (e) {
+                console.error("[Admin] Failed to fetch note directly", e);
+            }
+        };
+        fetchNoteDirectly();
+    }, [orderId, db]);
 
     const copyText = async (text: string) => {
         if (!isWeb) return;
@@ -287,7 +299,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             "Phone Number": order.shipping?.phone || order.customer?.phone || "-",
             "Address": shipAddress,
             "Photo Quantity": order.items.length,
-            "Admin Note": (order as any).adminNote || ""
+            "Admin Note": savedNote || "" // ✨ JSON 추출 시에도 직통 메모값 사용
         };
 
         const jsonString = JSON.stringify(cleanData, null, 2);
@@ -298,20 +310,13 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     };
 
     const sendOrderPushNotification = async (userId: string, newStatus: string) => {
-        console.log(`[Push] Attempting to find token for User: ${userId}`);
         try {
             const userDoc = await getDoc(doc(db, "users", userId));
-            if (!userDoc.exists()) {
-                console.error(`[Push] User document ${userId} not found in Firestore.`);
-                return;
-            }
+            if (!userDoc.exists()) return;
 
-            const userData = userDoc.data();
-            const pushToken = userData.pushToken;
-
+            const pushToken = userDoc.data().pushToken;
             if (!pushToken) {
-                console.error(`[Push] No pushToken field for user ${userId}.`);
-                alert(`알림 전송 실패: 해당 유저(${userId})의 푸시 토큰이 DB에 없습니다.`);
+                alert(`알림 전송 실패: 해당 유저(${userId})의 푸시 토큰이 없습니다.`);
                 return;
             }
 
@@ -336,7 +341,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 data: { orderId: orderId, status: newStatus },
             };
 
-            const response = await fetch('https://exp.host/--/api/v2/push/send', {
+            await fetch('https://exp.host/--/api/v2/push/send', {
                 method: 'POST',
                 headers: {
                     Accept: 'application/json',
@@ -346,20 +351,16 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 body: JSON.stringify(message),
             });
 
-            const result = await response.json();
-            console.log("[Push] Expo API Response:", result);
-
             alert(`✅ ${newStatus.toUpperCase()} notification sent to customer!`);
         } catch (error) {
             console.error("[Push] Error:", error);
-            alert("알림 발송 중 오류가 발생했습니다. 콘솔을 확인하세요.");
+            alert("알림 발송 중 오류가 발생했습니다.");
         }
     };
 
     const handleUpdateStatus = async (status: string) => {
         if (!order) return;
         setBusy(true);
-        console.log(`[Admin] Updating status to: ${status}`);
 
         try {
             const fn = httpsCallable(functions, "adminUpdateOrderOps");
@@ -373,16 +374,10 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     (order as any).customer?.uid ||
                     (order as any).customer?.id;
 
-                console.log("[Admin] Resolved Customer ID:", customerId);
-
                 if (customerId) {
                     await sendOrderPushNotification(customerId, status);
-                } else {
-                    console.warn("[Admin] Could not find any User ID in the order object.", order);
-                    alert("주문 데이터에서 유저 ID를 찾을 수 없어 푸시 알림을 보내지 못했습니다.");
                 }
             }
-
             await refetch();
         } catch (e: any) {
             alertCallableError("Update failed:", e);
@@ -404,7 +399,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✨ 백엔드를 거치지 않고 DB에 직통으로 영구 저장하는 핵심 로직
+    // ✨ DB에 직접 저장하고, refetch 없이 화면만 즉시 업데이트 (낙관적 업데이트)
     const handleSaveNoteDirect = async () => {
         setBusy(true);
         try {
@@ -412,8 +407,8 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             await updateDoc(orderDocRef, {
                 adminNote: noteText
             });
-            alert("✅ 메모가 파이어베이스 DB에 영구 저장되었습니다. 이제 어디서든 확인할 수 있습니다.");
-            await refetch(); // 화면 데이터를 최신 상태로 새로고침
+            setSavedNote(noteText); // ✨ 즉시 메모판에 적용시킴!
+            alert("✅ 메모가 파이어베이스 DB에 영구 저장되었습니다.");
         } catch (e: any) {
             console.error(e);
             alert(`메모 저장 실패: ${e.message}`);
@@ -422,9 +417,9 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
-    // ✨ 메모 직통 영구 삭제 로직
+    // ✨ DB 직통 삭제 및 화면 즉시 업데이트
     const handleDeleteNoteDirect = async () => {
-        if (!confirm("작성된 메모를 완전히 삭제하시겠습니까? (삭제 시 모든 기기에서 지워집니다)")) return;
+        if (!confirm("작성된 메모를 완전히 삭제하시겠습니까?")) return;
         setBusy(true);
         try {
             const orderDocRef = doc(db, "orders", orderId);
@@ -432,8 +427,8 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 adminNote: ""
             });
             setNoteText("");
-            alert("🗑️ 메모가 DB에서 완전히 삭제되었습니다.");
-            await refetch();
+            setSavedNote(""); // ✨ 즉시 메모판 지움!
+            alert("🗑️ 메모가 완전히 삭제되었습니다.");
         } catch (e: any) {
             console.error(e);
             alert(`메모 삭제 실패: ${e.message}`);
@@ -462,15 +457,12 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     const handleDeleteOrder = async () => {
         if (!order || !isWeb) return;
-        if (!confirm("🚨 WARNING: Are you sure you want to permanently delete this order? This cannot be undone.")) return;
+        if (!confirm("🚨 WARNING: Are you sure you want to permanently delete this order?")) return;
 
         const challenge = getDeleteChallenge();
         const userInput = prompt(`Please enter the following code to confirm deletion: ${challenge}`);
 
-        if (userInput !== challenge) {
-            alert("Code does not match. Deletion cancelled.");
-            return;
-        }
+        if (userInput !== challenge) return;
 
         setBusy(true);
         try {
@@ -541,9 +533,10 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <AlertCircle size={24} className="text-orange-600" />
                         ⚠️ 보류(HOLD)된 주문입니다. 문제 사유를 확인하세요!
                     </div>
-                    {orderOps?.adminNote ? (
+                    {/* ✨ 직통 메모(savedNote) 상태 연동 */}
+                    {savedNote ? (
                         <div className="bg-white p-4 rounded-lg border border-orange-200 text-zinc-800 font-medium whitespace-pre-wrap shadow-inner">
-                            {orderOps.adminNote}
+                            {savedNote}
                         </div>
                     ) : (
                         <div className="text-sm font-bold text-orange-600/70 bg-orange-100/50 p-3 rounded-lg">
@@ -553,15 +546,15 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 </div>
             )}
 
-            {/* ✨ 상세 페이지 빈 공간 최상단에 항상 고정되는 노란색 메모판 */}
-            {orderOps?.adminNote && (
+            {/* ✨ 직통 메모(savedNote) 노란색 메모판 연동 */}
+            {savedNote && (
                 <div className="bg-yellow-50 border-2 border-yellow-300 p-4 rounded-xl flex flex-col gap-1 shadow-sm shrink-0">
                     <div className="flex items-center gap-2 text-yellow-800 font-extrabold text-sm uppercase tracking-wider">
                         <StickyNote size={16} className="text-yellow-600" />
                         📌 이 주문에 저장된 관리자 메모
                     </div>
                     <div className="text-zinc-800 font-medium text-sm whitespace-pre-wrap pl-6 pt-1">
-                        {orderOps.adminNote}
+                        {savedNote}
                     </div>
                 </div>
             )}
@@ -687,7 +680,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <input className="admin-input w-full" placeholder="Tracking number" defaultValue={orderOps?.trackingNumber || ""} onBlur={(e) => handleSaveOps({ trackingNumber: e.target.value })} disabled={busy} />
                     </div>
 
-                    {/* ✨ 파이어베이스 실시간 연동 메모 입력창 */}
                     <div className="flex flex-col gap-2 mt-2 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
                         <div className="flex items-center gap-2 text-zinc-700 font-bold text-sm">
                             <StickyNote size={16} />
@@ -696,7 +688,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <textarea
                             className="admin-input w-full"
                             rows={3}
-                            placeholder="주문 관련 특이사항을 적어주세요. (저장 시 DB 연동)"
+                            placeholder="주문 관련 특이사항을 적어주세요. (저장 시 DB 직통 연동)"
                             value={noteText}
                             onChange={(e) => setNoteText(e.target.value)}
                             disabled={busy}
@@ -704,7 +696,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <div className="flex gap-2 justify-end mt-1">
                             <button
                                 onClick={handleDeleteNoteDirect}
-                                disabled={busy || !orderOps?.adminNote}
+                                disabled={busy || !savedNote} // ✨ 저장된 메모가 있을때만 삭제 활성화
                                 className="px-3 py-1.5 text-xs font-bold rounded-md bg-white text-zinc-500 border border-zinc-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
                             >
                                 삭제 (Delete)
