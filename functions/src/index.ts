@@ -188,9 +188,6 @@ export const onNewOrderCreated = onDocumentCreated(
         const orderId = event.params.orderId;
         const orderCode = data.orderCode || orderId;
 
-        // "pending" 이나 "paid" 상태 등으로 새로 들어온 주문만 필터링할 수 있지만,
-        // 보통 문서가 '처음 생성'될 때 트리거되므로 장바구니 결제 시작 직후(pending)에 알림이 갑니다.
-
         const customerName = data.customer?.fullName || data.shipping?.fullName || "Guest";
         const itemsCount = data.itemsCount || 0;
 
@@ -471,7 +468,7 @@ export const processAdminTask = onDocumentCreated(
                     const updates: any = { updatedAt: timestamp };
                     if (status !== undefined) {
                         updates.status = status;
-                        updates.statusUpdatedAt = timestamp; // ✨ 자동화를 위한 시간 기록
+                        updates.statusUpdatedAt = timestamp;
                     }
                     if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
                     if (adminNote !== undefined) updates.adminNote = adminNote;
@@ -487,14 +484,17 @@ export const processAdminTask = onDocumentCreated(
                         createdAt: timestamp,
                     });
 
-                    // 100% 태국어 알림 로직
                     if (userId) {
                         let pushTitle = "";
                         let pushBody = "";
+                        let isHold = false; // ✨ HOLD 판별용 플래그
 
                         if (status) {
                             const s = status.toLowerCase();
-                            if (s === "processing") {
+                            // ✨ HOLD 상태일 경우 푸시 알림 차단을 위해 isHold를 true로 설정
+                            if (s === "hold") {
+                                isHold = true;
+                            } else if (s === "processing") {
                                 pushTitle = "🎨 เราเริ่มทำ MemoTile ของคุณแล้ว!";
                                 pushBody = "ทีมงานของเรากำลังพิมพ์ภาพถ่ายของคุณอย่างละเอียด";
                             } else if (s === "printed") {
@@ -517,7 +517,8 @@ export const processAdminTask = onDocumentCreated(
                             pushBody = `หมายเลขพัสดุของคุณคือ: ${trackingNumber} สามารถตรวจสอบสถานะได้เลยค่ะ!`;
                         }
 
-                        if (pushTitle) {
+                        // ✨ isHold가 true면 푸시 알림 목록에 추가하지 않음 (발송 완전 차단)
+                        if (pushTitle && !isHold) {
                             notifications.push({ userId, title: pushTitle, body: pushBody });
                         }
                     }
@@ -761,7 +762,7 @@ export const adminExportPrinterJSON = onCall(
             const file = bucket.file(jsonName);
             await file.save(Buffer.from(jsonText, "utf8"), { contentType: "application/json; charset=utf-8", resumable: false });
 
-            const filename = `memotile_printer_${Date.now()}.json`;
+            const filename = `Batch_${orderIds.length}orders_${Date.now()}.json`;
             const [url] = await file.getSignedUrl({
                 action: "read", expires: Date.now() + 1000 * 60 * 60 * 24 * 7, responseDisposition: `attachment; filename="${filename}"`, responseType: "application/json",
             });
@@ -835,15 +836,9 @@ export const adminExportZipPrints = onCall(
             await uploadPromise;
 
             const filename = `Batch_${orderIds.length}orders_${new Date().toISOString().slice(0, 10)}.zip`;
-
-            // 🚨 핵심 수정 완료! 여기서 유효기간을 1시간에서 7일(1000 * 60 * 60 * 24 * 7)로 완벽하게 늘렸습니다!
             const [url] = await zipFile.getSignedUrl({
-                action: "read",
-                expires: Date.now() + 1000 * 60 * 60 * 24 * 7,
-                responseDisposition: `attachment; filename="${filename}"`,
-                responseType: "application/zip",
+                action: "read", expires: Date.now() + 1000 * 60 * 60 * 24 * 7, responseDisposition: `attachment; filename="${filename}"`, responseType: "application/zip",
             });
-
             return { ok: true, url, addedCount };
         } catch (e: any) {
             throw new HttpsError("internal", e.message || "ZIP creation failed");
@@ -908,24 +903,21 @@ export const onPrintFileFinalized = onObjectFinalized(
    SCHEDULED FUNCTIONS
    ========================================================================= */
 
-// ✨ 신규: 매일 오전 4시에 돌면서 '배송중(shipping)'으로 바뀐 지 3일 된 주문을 '배송완료(delivered)'로 자동 변경!
 export const autoCompleteDeliveredOrders = onSchedule(
     {
-        schedule: "0 4 * * *", // 매일 새벽 4시 실행 (태국 시간 기준 오전 11시)
+        schedule: "0 4 * * *",
         timeZone: "Asia/Bangkok",
         region: "us-central1"
     },
     async (event) => {
         const db = getFirestore();
         const now = new Date();
-        // 딱 3일(72시간) 전 시간 계산
         const threeDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (3 * 24 * 60 * 60 * 1000)));
 
         try {
-            // 상태가 shipping이고, 업데이트된 지 3일이 넘은 주문 검색
             const snapshot = await db.collection("orders")
                 .where("status", "==", "shipping")
-                .where("statusUpdatedAt", "<=", threeDaysAgo) // 상태가 바뀐 지 3일!
+                .where("statusUpdatedAt", "<=", threeDaysAgo)
                 .get();
 
             if (snapshot.empty) return;
@@ -939,16 +931,14 @@ export const autoCompleteDeliveredOrders = onSchedule(
                 const orderRef = docSnap.ref;
                 const userId = data.userId || data.uid || data.customer?.uid || data.customer?.id || data.createdBy;
 
-                // 1. 상태를 Delivered로 덮어쓰기
                 batch.update(orderRef, {
                     status: "delivered",
                     deliveredAt: FieldValue.serverTimestamp(),
                     updatedAt: FieldValue.serverTimestamp(),
-                    statusUpdatedAt: FieldValue.serverTimestamp(), // 이것도 업데이트
+                    statusUpdatedAt: FieldValue.serverTimestamp(),
                     adminNote: (data.adminNote ? data.adminNote + "\n" : "") + "🚚 시스템 자동 배송완료 처리 (발송 후 3일 경과)"
                 });
 
-                // 2. 이벤트 히스토리에 기록
                 batch.set(orderRef.collection("events").doc(), {
                     type: "STATUS_CHANGED",
                     to: "delivered",
@@ -957,7 +947,6 @@ export const autoCompleteDeliveredOrders = onSchedule(
                     createdAt: FieldValue.serverTimestamp(),
                 });
 
-                // 3. 고객에게 보낼 알림 장전 (태국어)
                 if (userId) {
                     notifications.push({
                         userId,
@@ -970,12 +959,10 @@ export const autoCompleteDeliveredOrders = onSchedule(
 
             await batch.commit();
 
-            // 고객에게 실제 푸시 알림 쏘기
             for (const noti of notifications) {
                 await sendExpoPushNotification(noti.userId, noti.title, noti.body);
             }
 
-            // 대표님 슬랙으로 자동화 결과 보고 쏘기
             try {
                 await axios.post(SLACK_WEBHOOK_URL, {
                     text: `🚚 *[배송완료 자동처리 성공]* 발송 후 3일이 경과된 주문 *${processedCount}건*이 자동으로 'Delivered' 상태로 변경되고 고객에게 앱 알림이 발송되었습니다.`

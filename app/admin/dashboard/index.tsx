@@ -130,7 +130,7 @@ export default function DashboardPage() {
                     else if (platform === 'android') androidCount++;
                 });
 
-                // ✨ [핵심 조치] 파이어베이스 엔진에 정렬(orderBy)을 시키지 않고 가볍게 통째로 가져옵니다! (무한 로딩 원천 차단)
+                // ✨ 파이어베이스 엔진에 정렬(orderBy)을 시키지 않고 가볍게 통째로 가져옵니다! (무한 로딩 원천 차단)
                 const ordersSnap = await getDocs(collection(db, "orders"));
 
                 const allOrdersList = ordersSnap.docs.map(doc => {
@@ -195,7 +195,10 @@ export default function DashboardPage() {
                     const amount = order.totalAmount !== undefined ? order.totalAmount : (order.total !== undefined ? order.total : 0);
                     const currency = (order.currency || 'THB').toUpperCase();
 
-                    if (order.status === "paid" || order.status === "completed" || order.status === "printing" || order.status === "processing") {
+                    // ✨ [핵심 수정] 배송중, 배송완료, 보류, 아카이브 상태까지 모두 정상 결제 건으로 취급
+                    const validStatuses = ["paid", "completed", "printing", "processing", "shipping", "delivered", "hold", "archived"];
+
+                    if (validStatuses.includes(order.status?.toLowerCase())) {
                         if (currency === 'USD') tempRevenueUSD += amount;
                         else tempRevenueTHB += amount;
 
@@ -290,15 +293,24 @@ export default function DashboardPage() {
     }, [timeFilter, startDate, endDate, refreshKey]);
 
     const getStatusBadge = (status: string) => {
-        switch (status) {
+        const s = status ? status.toLowerCase() : "";
+        switch (s) {
             case "paid": case "completed": case "printing":
                 return <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-md">결제완료</span>;
             case "processing":
                 return <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-md">처리중</span>;
+            case "shipping":
+                return <span className="px-2 py-1 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-md">배송중</span>;
+            case "delivered":
+                return <span className="px-2 py-1 bg-teal-100 text-teal-700 text-xs font-bold rounded-md">배송완료</span>;
+            case "hold":
+                return <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-bold rounded-md">보류</span>;
             case "pending":
                 return <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-md">결제대기</span>;
             case "cancelled": case "refunded": case "canceled":
                 return <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-md">취소됨</span>;
+            case "archived":
+                return <span className="px-2 py-1 bg-zinc-200 text-zinc-600 text-xs font-bold rounded-md">아카이브</span>;
             case "deleted":
                 return <span className="px-2 py-1 bg-zinc-200 text-zinc-500 text-xs font-black rounded-md line-through">자동삭제</span>;
             default:

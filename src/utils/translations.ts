@@ -255,6 +255,7 @@ export const STRINGS = {
         promoMaxed: "Promo code limit reached",
         promoInactive: "Promo code is not active",
         discountLabel: "Discount",
+        volumeDiscount: "Volume Discount",
         subtotalLabel: "Subtotal",
 
         // Photo Permission
@@ -655,6 +656,7 @@ export const STRINGS = {
         promoMaxed: "โค้ดส่วนลดถูกใช้ครบแล้ว",
         promoInactive: "โค้ดส่วนลดไม่ active",
         discountLabel: "ส่วนลด",
+        volumeDiscount: "ส่วนลดตามจำนวน",
         subtotalLabel: "ยอดรวมย่อย",
 
         // Photo Permission

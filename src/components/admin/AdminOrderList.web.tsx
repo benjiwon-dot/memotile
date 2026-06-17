@@ -31,31 +31,30 @@ import { app } from "@/lib/firebase";
 
 const isWeb = typeof window !== "undefined";
 
-function norm(s: any) {
-    return String(s || "").toLowerCase().trim();
-}
+// --- Helper Functions ---
+const norm = (s: unknown) => String(s || "").toLowerCase().trim();
 
-function isMatch(target: string, query: string) {
+const isMatch = (target: string, query: string) => {
     const t = norm(target).replace(/\s+/g, "");
     const q = norm(query).replace(/\s+/g, "");
     return t.includes(q);
-}
+};
 
-const normStatus = (s: any) => String(s ?? "").trim().toUpperCase();
+const normStatus = (s: unknown) => String(s ?? "").trim().toUpperCase();
 
 const ALLOWED_STATUSES = new Set([
     "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "CANCELED", "REFUNDED", "ARCHIVED",
 ]);
 
-function toCsv(rows: Record<string, any>[]) {
+const toCsv = (rows: Record<string, unknown>[]) => {
     if (!rows.length) return "";
     const headers = Object.keys(rows[0] || {});
-    const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))];
     return lines.join("\n");
-}
+};
 
-function downloadTextFile(filename: string, text: string, mime = "text/csv;charset=utf-8") {
+const downloadTextFile = (filename: string, text: string, mime = "text/csv;charset=utf-8") => {
     if (!isWeb) return;
     const blob = new Blob([text], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -66,27 +65,39 @@ function downloadTextFile(filename: string, text: string, mime = "text/csv;chars
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-}
+};
 
-function alertCallableError(prefix: string, e: any) {
+const alertCallableError = (prefix: string, e: any) => {
     const code = e?.code || "unknown";
     const msg = e?.message || String(e);
     console.error(prefix, e);
     alert(`${prefix}\ncode: ${code}\nmessage: ${msg}`);
-}
+};
 
-function getDeleteChallenge() {
+const getDeleteChallenge = () => {
     const d = new Date();
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `delete${y}${m}${day}`;
-}
+};
 
 const getSafeDate = (val: any) => {
     if (!val) return new Date();
     if (typeof val.toDate === 'function') return val.toDate();
     return new Date(val);
+};
+
+// 금액 파싱 헬퍼 (새 버전 금액 구조 반영)
+const getOrderTotal = (order: any): number => {
+    return Number(order?.totals?.total ?? order?.pricing?.total ?? order?.total ?? 0);
+};
+
+// 주소 텍스트 조합 헬퍼
+const getFullAddress = (shipping: any): string => {
+    return [shipping?.address1, shipping?.address2, shipping?.city, shipping?.state]
+        .filter(Boolean)
+        .join(" ");
 };
 
 export default function AdminOrderList() {
@@ -287,7 +298,7 @@ export default function AdminOrderList() {
         if (!excelText.trim()) return [];
         const lines = excelText.trim().split('\n');
         return lines.map(line => {
-            // ✨ 정규식 적용: 탭(\t) 또는 스페이스바 무관하게 완벽하게 분리
+            // 탭(\t) 또는 스페이스바 무관하게 분리
             const parts = line.trim().split(/[\t ]+/);
             const code = parts[0] || "";
             const tracking = parts[1] || "";
@@ -336,7 +347,10 @@ export default function AdminOrderList() {
                 setBulkLoading(false);
                 alert(`성공! ${validItems.length}건의 송장 저장 및 Shipping 알림 발송이 완료되었습니다.`);
             }, 1500);
-        } catch (error) { alert("오류 발생"); setBulkLoading(false); }
+        } catch (error) {
+            alert("오류 발생");
+            setBulkLoading(false);
+        }
     };
 
     const handleBulkDelete = async () => {
@@ -396,21 +410,25 @@ export default function AdminOrderList() {
                 } catch { zipUrl = "Link Error"; }
 
                 const orderDateObj = (o as any).createdAtSafe || getSafeDate(o.createdAt);
+                const address = getFullAddress(o.shipping);
 
                 rows.push({
                     "Order Number": o.orderCode,
                     "Date": orderDateObj.toLocaleDateString("en-US"),
                     "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
                     "Phone Number": o.shipping?.phone || o.customer?.phone || "",
-                    "Address": `${o.shipping?.address1 || ""} ${o.shipping?.address2 || ""} ${o.shipping?.city || ""} ${o.shipping?.state || ""}`.trim(),
+                    "Address": address,
                     "Photo Qty": o.itemsCount || 0,
                     "Admin Note": (o as any).adminNote || "",
                     "Print URL": zipUrl,
                 });
             }
             downloadTextFile(`Printer_Orders_${new Date().toISOString().slice(0, 10)}.csv`, "\uFEFF" + toCsv(rows));
-        } catch (e: any) { alertCallableError("CSV Export failed", e); }
-        finally { setBulkLoading(false); }
+        } catch (e: any) {
+            alertCallableError("CSV Export failed", e);
+        } finally {
+            setBulkLoading(false);
+        }
     };
 
     const handleExportInstaInfo = async () => {
@@ -423,7 +441,7 @@ export default function AdminOrderList() {
         try {
             const rows = targets.map(o => ({
                 "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
-                "Address": `${o.shipping?.address1 || ""} ${o.shipping?.address2 || ""} ${o.shipping?.city || ""} ${o.shipping?.state || ""}`.trim(),
+                "Address": getFullAddress(o.shipping),
                 "Phone Number": o.shipping?.phone || o.customer?.phone || "",
                 "Instagram": (o as any).instagramId || (o.customer as any)?.instagram || ""
             }));
@@ -444,7 +462,7 @@ export default function AdminOrderList() {
 
     const isAllVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selectedIds.has(o.id));
 
-    // ✨ 신규: 텍스트창 안에서 탭(Tab) 키를 눌렀을 때 버튼으로 안 넘어가고 엑셀처럼 띄어쓰기가 되게 하는 함수
+    // 텍스트창 안에서 탭(Tab) 키를 눌렀을 때 버튼으로 안 넘어가고 엑셀처럼 띄어쓰기가 되게 하는 함수
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Tab') {
             e.preventDefault();
@@ -452,11 +470,9 @@ export default function AdminOrderList() {
             const start = target.selectionStart;
             const end = target.selectionEnd;
 
-            // 현재 텍스트에서 커서 위치에 탭(Tab) 문자를 삽입
             const newValue = excelText.substring(0, start) + '\t' + excelText.substring(end);
             setExcelText(newValue);
 
-            // 상태 업데이트 후 커서를 탭 뒤로 이동
             setTimeout(() => {
                 target.selectionStart = target.selectionEnd = start + 1;
             }, 0);
@@ -571,7 +587,10 @@ export default function AdminOrderList() {
                             const orderDate = (order as any).createdAtSafe || getSafeDate(order.createdAt);
                             const abandoned = order.status === 'pending' && (new Date().getTime() - orderDate.getTime() > 24 * 60 * 60 * 1000);
                             const instaId = (order as any).instagramId || (order.customer as any)?.instagram;
-                            const fullAddress = [order.shipping?.address1, order.shipping?.address2, order.shipping?.city, order.shipping?.state].filter(Boolean).join(" ");
+
+                            // 헬퍼 함수 적용
+                            const fullAddress = getFullAddress(order.shipping);
+                            const totalAmount = getOrderTotal(order);
                             const qty = order.itemsCount || 0;
 
                             return (
@@ -618,9 +637,9 @@ export default function AdminOrderList() {
                                             {qty}
                                         </div>
                                     </td>
-                                    {/* 🚨 핵심 변경 부분 (새 버전의 금액 구조 반영 완료) */}
                                     <td className="p-4 font-black text-sm whitespace-nowrap">
-                                        ฿{Number((order as any).totals?.total ?? (order as any).pricing?.total ?? (order as any).total ?? 0).toLocaleString()}
+                                        {/* 개선된 금액 표시 */}
+                                        ฿{totalAmount.toLocaleString()}
                                     </td>
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
@@ -640,7 +659,7 @@ export default function AdminOrderList() {
                 </table>
             </div>
 
-            {/* ✨ 엑셀 일괄 등록 모달 */}
+            {/* 엑셀 일괄 등록 모달 */}
             {showExcelModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl flex flex-col h-[85vh]">
@@ -715,7 +734,7 @@ export default function AdminOrderList() {
                 </div>
             )}
 
-            {/* 기존 퀵입력 모달 */}
+            {/* 개별 퀵입력 모달 */}
             {showTrackingModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-2xl flex flex-col max-h-[85vh]">

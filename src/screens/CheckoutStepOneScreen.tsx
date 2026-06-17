@@ -345,7 +345,7 @@ export default function CheckoutStepOneScreen() {
                         {autoDiscountAmount > 0 && (
                             <View style={styles.summaryRow}>
                                 <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
-                                    Volume Discount ({autoDiscountPercent}%)
+                                    {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({autoDiscountPercent}%)
                                 </Text>
                                 <Text style={[styles.summaryValue, { color: "#10B981" }]}>
                                     -{CURRENCY_SYMBOL}{autoDiscountAmount.toFixed(2)}
