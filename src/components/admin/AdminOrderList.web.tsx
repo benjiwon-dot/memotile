@@ -23,7 +23,8 @@ import {
     PauseCircle
 } from "lucide-react";
 
-import { getFirestore, doc, deleteDoc, collection, addDoc, getDocs } from "firebase/firestore";
+// ✨ 완전삭제(deleteDoc) 대신 정보 업데이트용 updateDoc 추가
+import { getFirestore, doc, deleteDoc, updateDoc, collection, addDoc, getDocs } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { OrderHeader } from "@/lib/admin/types";
@@ -43,8 +44,9 @@ const isMatch = (target: string, query: string) => {
 
 const normStatus = (s: unknown) => String(s ?? "").trim().toUpperCase();
 
+// ✨ 상태 목록에 TRASH(휴지통) 추가
 const ALLOWED_STATUSES = new Set([
-    "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED",
+    "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED", "TRASH"
 ]);
 
 const toCsv = (rows: Record<string, unknown>[]) => {
@@ -172,7 +174,10 @@ export default function AdminOrderList() {
         const tab = normStatus(statusFilter);
 
         const statusFiltered = orders.filter((o) => {
-            if (tab === "ALL") return true;
+            if (tab === "ALL") {
+                // ALL 탭에서는 TRASH(휴지통) 목록을 안 보이게 필터링
+                return normStatus(o.status) !== "TRASH";
+            }
             const s = normStatus(o.status);
             return ALLOWED_STATUSES.has(tab) && s === tab;
         });
@@ -192,7 +197,7 @@ export default function AdminOrderList() {
         });
     }, [orders, q, statusFilter]);
 
-    // ✨ 강력한 안전장치: 탭(상태)을 바꾸거나 검색어를 치면 무조건 선택된 체크박스 초기화
+    // ✨ 강력한 안전장치: 탭(상태)을 바꾸거나 검색어를 치면 무조건 선택된 체크박스 리셋
     useEffect(() => {
         setSelectedIds(new Set());
     }, [statusFilter, q]);
@@ -218,7 +223,7 @@ export default function AdminOrderList() {
     const handleBulkStatus = async (newStatus: string) => {
         if (selectedIds.size === 0) return;
         const targetStatus = newStatus.toLowerCase();
-        if (isWeb && !window.confirm(`Update ${selectedIds.size} orders to ${newStatus}?`)) return;
+        if (isWeb && !window.confirm(`선택된 ${selectedIds.size}개 주문을 ${newStatus}(으)로 변경할까요?`)) return;
 
         setBulkLoading(true);
         const ids = Array.from(selectedIds);
@@ -238,7 +243,7 @@ export default function AdminOrderList() {
 
             setTimeout(() => {
                 fetchOrders();
-                alert(`상태를 ${newStatus}(으)로 변경했습니다!`);
+                alert(`상태를 ${newStatus}(으)로 성공적으로 변경했습니다!`);
                 setBulkLoading(false);
             }, 1500);
 
@@ -356,13 +361,66 @@ export default function AdminOrderList() {
         }
     };
 
-    const handleBulkDelete = async () => {
+    // ✨ 휴지통으로 이동 (Soft Delete)
+    const handleMoveToTrashBulk = async () => {
+        if (selectedIds.size === 0) return;
+        if (!window.confirm(`🚨 선택한 ${selectedIds.size}개의 주문을 휴지통으로 이동하시겠습니까? (5일 후 자동 영구 삭제)`)) return;
+
+        setBulkLoading(true);
+        try {
+            const now = new Date();
+            const expireAt = new Date();
+            expireAt.setDate(now.getDate() + 5);
+
+            const ids = Array.from(selectedIds);
+            for (const id of ids) {
+                await updateDoc(doc(db, "orders", id), {
+                    status: "trash",
+                    deletedAt: now.toISOString(),
+                    ttlExpireAt: expireAt
+                });
+            }
+            await fetchOrders();
+            alert("✅ 휴지통으로 안전하게 이동되었습니다.");
+        } catch (e: any) {
+            alertCallableError("휴지통 이동 실패:", e);
+        } finally {
+            setBulkLoading(false);
+        }
+    };
+
+    // ✨ 휴지통에서 정상 상태로 복구
+    const handleRestoreFromTrashBulk = async () => {
+        if (selectedIds.size === 0) return;
+        if (!window.confirm(`🔄 선택한 ${selectedIds.size}개의 주문을 다시 정상 상태(PAID)로 복구하시겠습니까?`)) return;
+
+        setBulkLoading(true);
+        try {
+            const ids = Array.from(selectedIds);
+            for (const id of ids) {
+                await updateDoc(doc(db, "orders", id), {
+                    status: "paid",
+                    deletedAt: null,
+                    ttlExpireAt: null
+                });
+            }
+            await fetchOrders();
+            alert("✅ 정상 주문으로 복구되었습니다.");
+        } catch (e: any) {
+            alertCallableError("복구 실패:", e);
+        } finally {
+            setBulkLoading(false);
+        }
+    };
+
+    // ✨ 완전 영구 삭제 (최후의 수단, TRASH 탭에서만 활성화)
+    const handleHardDeleteBulk = async () => {
         if (selectedIds.size === 0) return;
         const count = selectedIds.size;
         const challenge = getDeleteChallenge();
-        const userInput = prompt(`🚨 DANGER: Delete ${count} orders permanently.\nEnter code: ${challenge}`);
+        const userInput = prompt(`🚨 경고: ${count}개 주문을 데이터베이스에서 영원히 파괴합니다.\n확인을 위해 아래 코드를 입력하세요:\n${challenge}`);
         if (userInput !== challenge) {
-            alert("Code mismatch. Cancelled.");
+            alert("입력 코드가 일치하지 않아 취소되었습니다.");
             return;
         }
         setBulkLoading(true);
@@ -372,9 +430,9 @@ export default function AdminOrderList() {
                 await deleteDoc(doc(db, "orders", id));
             }
             await fetchOrders();
-            alert("Deleted successfully.");
+            alert("🔥 영구 삭제가 완료되었습니다.");
         } catch (e: any) {
-            alertCallableError("Bulk delete error:", e);
+            alertCallableError("영구 삭제 에러:", e);
         } finally {
             setBulkLoading(false);
         }
@@ -485,13 +543,17 @@ export default function AdminOrderList() {
         <div className="flex flex-col gap-4 w-full pb-32">
             <div className="shrink-0 flex flex-col gap-4 sticky top-0 z-20 bg-white py-4 -mt-4">
                 <div className="flex gap-2 overflow-x-auto border-b pb-2">
-                    {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map((st) => (
+                    {/* ✨ 탭 목록에 TRASH 추가 (스타일링은 눈에 띄게 붉은색으로 처리) */}
+                    {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED", "TRASH"].map((st) => (
                         <button
                             key={st}
                             onClick={() => setStatusFilter(st)}
-                            className={`px-4 py-2 rounded-full text-xs font-black uppercase whitespace-nowrap ${statusFilter === st ? "bg-zinc-900 text-white" : "bg-white text-zinc-400 border"}`}
+                            className={`px-4 py-2 rounded-full text-xs font-black uppercase whitespace-nowrap transition-colors ${statusFilter === st
+                                    ? st === "TRASH" ? "bg-rose-600 text-white" : "bg-zinc-900 text-white"
+                                    : "bg-white text-zinc-400 border hover:bg-zinc-100"
+                                }`}
                         >
-                            {st}
+                            {st === "TRASH" ? "🗑️ TRASH" : st}
                         </button>
                     ))}
                 </div>
@@ -517,58 +579,69 @@ export default function AdminOrderList() {
                 </div>
 
                 <div className="bg-zinc-900 text-white p-3 rounded-xl flex flex-col md:flex-row gap-3 md:justify-between md:items-center">
-                    <span className="font-bold">{selectedIds.size} selected</span>
+                    <span className="font-bold text-emerald-400">{selectedIds.size}개 항목 선택됨</span>
                     <div className="flex flex-wrap gap-2 items-center">
 
-                        <select
-                            disabled={bulkLoading || selectedIds.size === 0}
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                if (val) setTimeout(() => handleBulkStatus(val), 100);
-                                e.target.value = "";
-                            }}
-                            className="bg-zinc-800 text-xs px-2 py-2 rounded"
-                        >
-                            <option value="">Set Status</option>
-                            {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        {/* TRASH 탭이 아닐 때만 보이는 액션들 */}
+                        {statusFilter !== "TRASH" && (
+                            <>
+                                <select
+                                    disabled={bulkLoading || selectedIds.size === 0}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val) setTimeout(() => handleBulkStatus(val), 100);
+                                        e.target.value = "";
+                                    }}
+                                    className="bg-zinc-800 text-xs px-2 py-2 rounded"
+                                >
+                                    <option value="">Set Status</option>
+                                    {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
 
-                        <button
-                            onClick={() => handleBulkStatus("HOLD")}
-                            disabled={bulkLoading || selectedIds.size === 0}
-                            className="bg-orange-500 text-white hover:bg-orange-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm"
-                        >
-                            <PauseCircle size={12} />
-                            문제고객 HOLD
-                        </button>
+                                <button onClick={() => handleBulkStatus("HOLD")} disabled={bulkLoading || selectedIds.size === 0} className="bg-orange-500 text-white hover:bg-orange-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                                    <PauseCircle size={12} /> 문제고객 HOLD
+                                </button>
 
-                        <button onClick={() => setShowExcelModal(true)} disabled={bulkLoading} className="bg-green-600 text-white hover:bg-green-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
-                            <ClipboardPaste size={12} />
-                            엑셀 일괄 등록
-                        </button>
+                                <button onClick={() => setShowExcelModal(true)} disabled={bulkLoading} className="bg-green-600 text-white hover:bg-green-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                                    <ClipboardPaste size={12} /> 엑셀 일괄 등록
+                                </button>
 
-                        <button onClick={openTrackingModal} disabled={bulkLoading || selectedIds.size === 0} className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
-                            <Package size={12} />
-                            개별 퀵입력
-                        </button>
+                                <button onClick={openTrackingModal} disabled={bulkLoading || selectedIds.size === 0} className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
+                                    <Package size={12} /> 개별 퀵입력
+                                </button>
+                            </>
+                        )}
 
                         <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
-                            {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
-                            Export CSV
+                            {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} Export CSV
                         </button>
 
                         <button onClick={handleExportInstaInfo} disabled={bulkLoading} className="bg-pink-600 text-white hover:bg-pink-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">
-                            <Users size={12} />
-                            Insta Info
+                            <Users size={12} /> Insta Info
                         </button>
 
                         <button onClick={handleBulkZipCopy} disabled={bulkLoading || selectedIds.size === 0} className="bg-white text-zinc-900 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
                             <LinkIcon size={12} /> Bulk ZIP Link
                         </button>
-                        {selectedIds.size > 0 && (
-                            <button onClick={handleBulkDelete} disabled={bulkLoading} className="bg-rose-600 text-white hover:bg-rose-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 ml-2 border border-rose-800">
-                                <Trash2 size={12} /> DELETE
-                            </button>
+
+                        {/* ✨ 상황에 맞게 바뀌는 삭제/복구 버튼 영역 */}
+                        {statusFilter === "TRASH" ? (
+                            selectedIds.size > 0 && (
+                                <>
+                                    <button onClick={handleRestoreFromTrashBulk} disabled={bulkLoading} className="bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 ml-2 shadow-sm">
+                                        <RefreshCw size={12} /> 정상 상태로 복구
+                                    </button>
+                                    <button onClick={handleHardDeleteBulk} disabled={bulkLoading} className="bg-black text-white hover:bg-zinc-800 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 ml-2 shadow-sm">
+                                        <Trash2 size={12} /> 즉시 영구 파괴
+                                    </button>
+                                </>
+                            )
+                        ) : (
+                            selectedIds.size > 0 && (
+                                <button onClick={handleMoveToTrashBulk} disabled={bulkLoading} className="bg-rose-600 text-white hover:bg-rose-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 ml-2 border border-rose-800 shadow-sm">
+                                    <Trash2 size={12} /> 휴지통(Delete)
+                                </button>
+                            )
                         )}
                     </div>
                 </div>
@@ -603,12 +676,13 @@ export default function AdminOrderList() {
                             const fullAddress = getFullAddress(order.shipping);
                             const totalAmount = getOrderTotal(order);
                             const qty = order.itemsCount || 0;
+                            const isTrash = normStatus(order.status) === "TRASH";
 
                             return (
-                                <tr key={order.id} className="border-b last:border-0 hover:bg-zinc-50 transition-colors h-[60px]">
+                                <tr key={order.id} className={`border-b last:border-0 hover:bg-zinc-50 transition-colors h-[60px] ${isTrash ? "bg-rose-50/50" : ""}`}>
                                     <td className="p-4 text-center">
                                         <button onClick={() => toggleSelect(order.id)}>
-                                            {selectedIds.has(order.id) ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} />}
+                                            {selectedIds.has(order.id) ? <CheckSquare size={16} className="text-emerald-500" /> : <Square size={16} />}
                                         </button>
                                     </td>
                                     <td className="p-4">
@@ -618,7 +692,7 @@ export default function AdminOrderList() {
                                         </div>
                                     </td>
                                     <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">
-                                        <div className="text-blue-600">{order.orderCode}</div>
+                                        <div className={isTrash ? "text-rose-600 line-through" : "text-blue-600"}>{order.orderCode}</div>
                                         <div className="text-xs text-zinc-500 mt-1">
                                             {order.trackingNumber ? `🚚 ${order.trackingNumber}` : "운송장 미입력"}
                                         </div>
@@ -654,7 +728,13 @@ export default function AdminOrderList() {
                                     <td className="p-4 w-px whitespace-nowrap">
                                         <div className="flex flex-col gap-1 items-start">
                                             <StatusBadge status={order.status} />
-                                            {abandoned && <span className="text-[9px] font-black text-rose-600 uppercase animate-pulse">🚨 24H 펜딩(자동취소 대상)</span>}
+                                            {abandoned && !isTrash && <span className="text-[9px] font-black text-rose-600 uppercase animate-pulse">🚨 24H 펜딩</span>}
+                                            {/* ✨ 휴지통 상태일 때 언제 지웠는지 표시 */}
+                                            {isTrash && (order as any).deletedAt && (
+                                                <span className="text-[10px] font-bold text-rose-500 bg-rose-100 px-1.5 py-0.5 rounded mt-1">
+                                                    지운날: {new Date((order as any).deletedAt).toLocaleDateString("ko-KR")}
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td className="p-4">
