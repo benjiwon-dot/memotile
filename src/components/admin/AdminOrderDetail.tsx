@@ -33,7 +33,6 @@ import { app } from "@/lib/firebase";
 
 const isWeb = typeof window !== "undefined";
 
-// ⭐️ 핵심 수정 부위: 미리보기 파일이 없으면 4K 인쇄용 파일(printUrl)을 썸네일로 사용!
 function pickAdminThumb(item: any): string | null {
     const uri =
         item?.assets?.previewUrl ||
@@ -42,8 +41,8 @@ function pickAdminThumb(item: any): string | null {
         item?.output?.viewUri ||
         item?.previewUrl ||
         item?.previewUri ||
-        item?.printUrl ||         // 👈 추가됨
-        item?.assets?.printUrl || // 👈 추가됨
+        item?.printUrl ||
+        item?.assets?.printUrl ||
         null;
 
     return typeof uri === "string" && uri.length > 8 ? uri : null;
@@ -493,6 +492,26 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 </div>
             )}
 
+            {/* ✨ 추가된 HOLD 상태 알림창 시작 */}
+            {order.status === "hold" && (
+                <div className="bg-orange-50 border-2 border-orange-400 p-5 rounded-xl flex flex-col gap-3 shrink-0 shadow-sm mb-2">
+                    <div className="flex items-center gap-2 text-orange-800 font-black text-lg">
+                        <AlertCircle size={24} className="text-orange-600" />
+                        ⚠️ 보류(HOLD)된 주문입니다. 문제 사유를 확인하세요!
+                    </div>
+                    {orderOps?.adminNote ? (
+                        <div className="bg-white p-4 rounded-lg border border-orange-200 text-zinc-800 font-medium whitespace-pre-wrap shadow-inner">
+                            {orderOps.adminNote}
+                        </div>
+                    ) : (
+                        <div className="text-sm font-bold text-orange-600/70 bg-orange-100/50 p-3 rounded-lg">
+                            (아직 작성된 메모가 없습니다. 화면 맨 아래 'Admin note' 칸에 사유를 적어주시면 여기에 표시됩니다.)
+                        </div>
+                    )}
+                </div>
+            )}
+            {/* ✨ 추가된 HOLD 상태 알림창 끝 */}
+
             <div className="flex flex-col md:flex-row justify-between gap-6 shrink-0">
                 <div className="flex items-center gap-4">
                     <button onClick={safeBack} className="admin-btn admin-btn-secondary !p-2">
@@ -532,7 +551,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         className="border px-3 py-2 rounded-lg text-sm font-bold"
                         disabled={busy}
                     >
-                        {["paid", "processing", "printed", "shipping", "delivered", "canceled", "refunded", "archived"].map((s) => (
+                        {["paid", "processing", "printed", "shipping", "delivered", "hold", "canceled", "refunded", "archived"].map((s) => (
                             <option key={s} value={s}>
                                 {s.toUpperCase()}
                             </option>

@@ -20,7 +20,7 @@ import {
     Package,
     X,
     ClipboardPaste,
-    PauseCircle // ✨ HOLD 버튼용 아이콘 추가
+    PauseCircle
 } from "lucide-react";
 
 import { getFirestore, doc, deleteDoc, collection, addDoc, getDocs } from "firebase/firestore";
@@ -43,7 +43,6 @@ const isMatch = (target: string, query: string) => {
 
 const normStatus = (s: unknown) => String(s ?? "").trim().toUpperCase();
 
-// ✨ HOLD 상태 허용 목록에 추가
 const ALLOWED_STATUSES = new Set([
     "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED",
 ]);
@@ -192,6 +191,11 @@ export default function AdminOrderList() {
             return targets.some(t => t && isMatch(String(t), query));
         });
     }, [orders, q, statusFilter]);
+
+    // ✨ 강력한 안전장치: 탭(상태)을 바꾸거나 검색어를 치면 무조건 선택된 체크박스 초기화
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [statusFilter, q]);
 
     const toggleSelect = (id: string) => {
         const next = new Set(selectedIds);
@@ -481,7 +485,6 @@ export default function AdminOrderList() {
         <div className="flex flex-col gap-4 w-full pb-32">
             <div className="shrink-0 flex flex-col gap-4 sticky top-0 z-20 bg-white py-4 -mt-4">
                 <div className="flex gap-2 overflow-x-auto border-b pb-2">
-                    {/* ✨ HOLD 탭 추가 */}
                     {["ALL", "PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map((st) => (
                         <button
                             key={st}
@@ -517,7 +520,6 @@ export default function AdminOrderList() {
                     <span className="font-bold">{selectedIds.size} selected</span>
                     <div className="flex flex-wrap gap-2 items-center">
 
-                        {/* ✨ 상태 변경 드롭다운에 HOLD 추가 */}
                         <select
                             disabled={bulkLoading || selectedIds.size === 0}
                             onChange={(e) => {
@@ -531,7 +533,6 @@ export default function AdminOrderList() {
                             {["PAID", "PROCESSING", "PRINTED", "SHIPPING", "DELIVERED", "HOLD", "CANCELED", "REFUNDED", "ARCHIVED"].map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
 
-                        {/* ✨ 원클릭 HOLD 버튼 추가 (주황색) */}
                         <button
                             onClick={() => handleBulkStatus("HOLD")}
                             disabled={bulkLoading || selectedIds.size === 0}
