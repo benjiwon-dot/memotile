@@ -1,18 +1,19 @@
 // src/components/BundlePricingTable.tsx
 //
-// 홈 화면용 "묶음 할인 가격표". config/prices(volumeDiscounts/shippingTiers) 단일 소스에서 자동 생성.
-// 정책 바꾸면(파이어베이스) 홈 표도 자동으로 바뀜. 태국어/영어.
+// 홈 "묶음 세트" 가격표. config/prices(volumeDiscounts/shippingTiers) 단일 소스에서 자동 생성.
+// 1·3·6·9·12·15 세트를 한눈에 보이게, 6장 세트를 주력(가장 인기)으로 강조.
 
 import React, { useEffect, useState, useMemo } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { doc, getDoc, getFirestore } from "firebase/firestore";
 import { colors } from "../theme/colors";
-import { getCurrencySymbol, type VolumeTier, type ShippingTier } from "../utils/pricing";
+import { computePricing, type VolumeTier, type ShippingTier } from "../utils/pricing";
 import { useLanguage } from "../context/LanguageContext";
 
 const DEFAULTS = {
     price_thb: 200,
-    price_usd: 5.71,
+    price_usd: 6.1,
     volumeDiscounts: [
         { minQty: 3, discountPercent: 25 },
         { minQty: 6, discountPercent: 37.5 },
@@ -27,12 +28,13 @@ const DEFAULTS = {
     ] as ShippingTier[],
 };
 
-type Row = { range: string; pct: number; perTile: number; free: boolean; popular: boolean };
+// 보여줄 묶음 세트 + 주력
+const BUNDLES = [1, 3, 6, 9, 12, 15];
+const POPULAR_QTY = 6;
 
 export default function BundlePricingTable() {
-    const { t, locale } = useLanguage();
+    const { locale } = useLanguage();
     const isTh = (locale || "").toUpperCase() === "TH";
-    const symbol = getCurrencySymbol(locale);
 
     const [price, setPrice] = useState<number>(isTh ? DEFAULTS.price_thb : DEFAULTS.price_usd);
     const [tiers, setTiers] = useState<VolumeTier[]>(DEFAULTS.volumeDiscounts);
@@ -49,115 +51,140 @@ export default function BundlePricingTable() {
                     if (Array.isArray(d?.volumeDiscounts)) setTiers([...d.volumeDiscounts].sort((a, b) => a.minQty - b.minQty));
                     if (Array.isArray(d?.shippingTiers)) setShipping([...d.shippingTiers].sort((a, b) => a.minQty - b.minQty));
                 }
-            } catch (e) { /* 기본값 사용 */ }
+            } catch { /* 기본값 사용 */ }
         })();
         return () => { alive = false; };
     }, [isTh]);
 
-    const freeShipQty = useMemo(() => shipping.find((s) => s.fee === 0)?.minQty ?? null, [shipping]);
+    const fmt = (n: number) => (isTh ? `฿${Math.round(n).toLocaleString()}` : `$${n.toFixed(2)}`);
 
-    const rows = useMemo<Row[]>(() => {
-        const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
-        const out: Row[] = [];
-
-        // 1구간 (할인 전)
-        const firstMin = sorted[0]?.minQty ?? 1;
-        out.push({
-            range: firstMin > 1 ? `1–${firstMin - 1}` : "1",
-            pct: 0,
-            perTile: price,
-            free: freeShipQty != null ? 1 >= freeShipQty : false,
-            popular: false,
+    const rows = useMemo(() => {
+        return BUNDLES.map((qty) => {
+            const p = computePricing({ count: qty, pricePerTile: price, volumeDiscounts: tiers, shippingTiers: shipping });
+            const bundlePrice = p.effectivePricePerTile * qty; // 상품가(배송 제외)
+            return {
+                qty,
+                bundlePrice,
+                perTile: p.effectivePricePerTile,
+                pct: p.volumeDiscountPercent,
+                free: p.isFreeShipping,
+                popular: qty === POPULAR_QTY,
+            };
         });
+    }, [price, tiers, shipping]);
 
-        sorted.forEach((tier, i) => {
-            const next = sorted[i + 1];
-            const range = next ? `${tier.minQty}–${next.minQty - 1}` : `${tier.minQty}+`;
-            out.push({
-                range,
-                pct: tier.discountPercent,
-                perTile: Number((price * (1 - tier.discountPercent / 100)).toFixed(2)),
-                free: freeShipQty != null ? tier.minQty >= freeShipQty : false,
-                popular: tier.minQty === 9, // '999฿ + 무료배송' 마법 구간
-            });
-        });
-        return out;
-    }, [tiers, price, freeShipQty]);
+    const tilesWord = isTh ? "ชิ้น" : "tiles";
 
     return (
         <View style={styles.wrap}>
-            <Text style={styles.title}>
-                {isTh ? "ยิ่งซื้อเยอะ ยิ่งถูก" : "Buy more, save more"}
-            </Text>
+            <Text style={styles.title}>{isTh ? "ยิ่งซื้อเยอะ ยิ่งคุ้ม" : "Buy more, save more"}</Text>
             <Text style={styles.sub}>
-                {isTh ? "ส่วนลดอัตโนมัติตามจำนวน + ส่งฟรีเมื่อครบกำหนด" : "Automatic volume discounts + free shipping on bigger sets"}
+                {isTh ? "ราคาต่อชิ้นถูกลงเรื่อยๆ + ส่งฟรีตั้งแต่ 9 ชิ้น" : "Lower price per tile as you add more · free shipping on 9+"}
             </Text>
 
-            <View style={styles.card}>
-                <View style={[styles.row, styles.headRow]}>
-                    <Text style={[styles.cell, styles.colQty, styles.headText]}>{isTh ? "จำนวน" : "Tiles"}</Text>
-                    <Text style={[styles.cell, styles.colPct, styles.headText]}>{isTh ? "ส่วนลด" : "Off"}</Text>
-                    <Text style={[styles.cell, styles.colPer, styles.headText]}>{isTh ? "ต่อชิ้น" : "Per tile"}</Text>
-                    <Text style={[styles.cell, styles.colShip, styles.headText]}>{isTh ? "ส่ง" : "Ship"}</Text>
-                </View>
+            <View style={{ gap: 10 }}>
+                {rows.map((r) => (
+                    <View
+                        key={r.qty}
+                        style={[styles.card, r.popular && styles.cardPopular]}
+                    >
+                        {r.popular && (
+                            <View style={styles.ribbon}>
+                                <Feather name="star" size={11} color="#fff" />
+                                <Text style={styles.ribbonText}>{isTh ? "ยอดนิยม" : "Most popular"}</Text>
+                            </View>
+                        )}
 
-                {rows.map((r, i) => (
-                    <View key={i} style={[styles.row, r.popular && styles.popularRow, i === rows.length - 1 && { borderBottomWidth: 0 }]}>
-                        <View style={[styles.cell, styles.colQty, { flexDirection: "row", alignItems: "center", gap: 6 }]}>
-                            <Text style={[styles.qtyText, r.popular && styles.popularText]}>{r.range}</Text>
-                            {r.popular && (
-                                <View style={styles.badge}><Text style={styles.badgeText}>{isTh ? "ฮิต" : "Best"}</Text></View>
-                            )}
+                        {/* 왼쪽: 수량 묶음 */}
+                        <View style={styles.left}>
+                            <Text style={[styles.qtyNum, r.popular && { color: "#047857" }]}>{r.qty}</Text>
+                            <Text style={styles.qtyLabel}>{tilesWord}</Text>
                         </View>
-                        <Text style={[styles.cell, styles.colPct, r.pct > 0 ? styles.pctOn : styles.pctOff]}>
-                            {r.pct > 0 ? `${r.pct}%` : "—"}
-                        </Text>
-                        <Text style={[styles.cell, styles.colPer, styles.perText]}>
-                            {symbol}{r.perTile.toFixed(isTh ? 0 : 2)}
-                        </Text>
-                        <Text style={[styles.cell, styles.colShip, r.free ? styles.freeText : styles.payText]}>
-                            {r.free ? (isTh ? "ฟรี" : "Free") : (isTh ? "เสีย" : "Paid")}
-                        </Text>
+
+                        {/* 가운데: 할인 + 장당 */}
+                        <View style={styles.mid}>
+                            {r.pct > 0 ? (
+                                <View style={[styles.discBadge, r.popular && { backgroundColor: "#10B981" }]}>
+                                    <Text style={[styles.discText, r.popular && { color: "#fff" }]}>
+                                        {isTh ? "ลด " : ""}{r.pct}%{isTh ? "" : " OFF"}
+                                    </Text>
+                                </View>
+                            ) : (
+                                <Text style={styles.regularText}>{isTh ? "ราคาปกติ" : "Regular"}</Text>
+                            )}
+                            <Text style={styles.perTile}>{fmt(r.perTile)} / {isTh ? "ชิ้น" : "tile"}</Text>
+                        </View>
+
+                        {/* 오른쪽: 세트 가격 + 배송 */}
+                        <View style={styles.right}>
+                            <Text style={[styles.price, r.popular && { color: "#047857" }]}>{fmt(r.bundlePrice)}</Text>
+                            <View style={styles.shipRow}>
+                                {r.free ? (
+                                    <>
+                                        <Feather name="truck" size={11} color="#059669" />
+                                        <Text style={styles.freeText}>{isTh ? "ส่งฟรี" : "Free ship"}</Text>
+                                    </>
+                                ) : (
+                                    <Text style={styles.paidText}>{isTh ? "+ ค่าส่ง" : "+ shipping"}</Text>
+                                )}
+                            </View>
+                        </View>
                     </View>
                 ))}
             </View>
-
-            <Text style={styles.note}>
-                {isTh
-                    ? `* ส่งฟรีเมื่อซื้อตั้งแต่ ${freeShipQty ?? "-"} ชิ้นขึ้นไป`
-                    : `* Free shipping on ${freeShipQty ?? "-"}+ tiles`}
-            </Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     wrap: { paddingHorizontal: 24, paddingVertical: 8 },
-    title: { fontSize: 22, fontWeight: "800", color: colors.ink, textAlign: "center", marginBottom: 6 },
-    sub: { fontSize: 13, color: colors.textMuted || "#6B7280", textAlign: "center", marginBottom: 18 },
+    title: { fontSize: 24, fontWeight: "800", color: colors.ink, textAlign: "center", marginBottom: 6 },
+    sub: { fontSize: 13, color: colors.textMuted || "#6B7280", textAlign: "center", marginBottom: 20 },
 
-    card: { borderWidth: 1, borderColor: "#EEF0F3", borderRadius: 18, overflow: "hidden", backgroundColor: "#fff" },
-    row: { flexDirection: "row", alignItems: "center", paddingVertical: 13, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: "#F1F3F6" },
-    headRow: { backgroundColor: "#FAFBFC", paddingVertical: 10 },
-    headText: { fontSize: 11.5, fontWeight: "700", color: "#94A3B8", textTransform: "uppercase", letterSpacing: 0.4 },
-    popularRow: { backgroundColor: "#F0FBF6" },
+    card: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#fff",
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "#EEF0F3",
+        paddingVertical: 16,
+        paddingHorizontal: 18,
+    },
+    cardPopular: {
+        borderColor: "#10B981",
+        borderWidth: 2,
+        backgroundColor: "#F0FBF6",
+        paddingTop: 22, // 리본 자리
+    },
+    ribbon: {
+        position: "absolute",
+        top: -1,
+        right: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        backgroundColor: "#10B981",
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+        borderBottomLeftRadius: 10,
+        borderBottomRightRadius: 10,
+    },
+    ribbonText: { color: "#fff", fontSize: 10, fontWeight: "800" },
 
-    cell: { fontSize: 14 },
-    colQty: { flex: 1.5 },
-    colPct: { flex: 1, textAlign: "center" },
-    colPer: { flex: 1.2, textAlign: "center" },
-    colShip: { flex: 0.9, textAlign: "right" },
+    left: { width: 58, alignItems: "center", justifyContent: "center" },
+    qtyNum: { fontSize: 30, fontWeight: "900", color: colors.ink, lineHeight: 32 },
+    qtyLabel: { fontSize: 11, color: "#9CA3AF", fontWeight: "700", marginTop: 2 },
 
-    qtyText: { fontSize: 14.5, fontWeight: "700", color: colors.ink },
-    popularText: { color: "#047857" },
-    badge: { backgroundColor: "#10B981", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-    badgeText: { color: "#fff", fontSize: 9.5, fontWeight: "800" },
+    mid: { flex: 1, paddingLeft: 16 },
+    discBadge: { alignSelf: "flex-start", backgroundColor: "#FEF3C7", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginBottom: 6 },
+    discText: { fontSize: 13, fontWeight: "800", color: "#b8860b" },
+    regularText: { fontSize: 13, fontWeight: "700", color: "#9CA3AF", marginBottom: 6 },
+    perTile: { fontSize: 12, color: "#6B7280", fontWeight: "600" },
 
-    pctOn: { color: "#059669", fontWeight: "800" },
-    pctOff: { color: "#B6BDC7", fontWeight: "600" },
-    perText: { color: colors.ink, fontWeight: "700" },
-    freeText: { color: "#059669", fontWeight: "800" },
-    payText: { color: "#9CA3AF", fontWeight: "600" },
-
-    note: { fontSize: 11.5, color: "#9CA3AF", textAlign: "center", marginTop: 12 },
+    right: { alignItems: "flex-end", minWidth: 90 },
+    price: { fontSize: 20, fontWeight: "900", color: colors.ink },
+    shipRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 },
+    freeText: { fontSize: 11.5, fontWeight: "800", color: "#059669" },
+    paidText: { fontSize: 11.5, fontWeight: "600", color: "#9CA3AF" },
 });

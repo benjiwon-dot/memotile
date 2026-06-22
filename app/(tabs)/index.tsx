@@ -180,11 +180,6 @@ export default function Index() {
 
     const currentBillboard = billboard[billboardIndex] || billboard[0];
 
-    // ✨ Hero 할인 티저 문구 (태국어/영어)
-    const discountTeaser = locale === 'TH'
-        ? '3 ชิ้นลด 25% · 9 ชิ้นส่งฟรี'
-        : 'Buy 3+ save 25% · free shipping on 9+';
-
     return (
         <View style={styles.container}>
             {hasDraft && user && !isGhost && (
@@ -260,12 +255,6 @@ export default function Index() {
                         ]}>
                             {t.heroSupporting?.replace(/\.$/, '')}
                         </Text>
-
-                        {/* ✨ 할인 티저 (구매 동기) */}
-                        <View style={styles.discountTeaserPill}>
-                            <Feather name={"gift" as any} size={13} color="#059669" style={{ marginRight: 6 }} />
-                            <Text style={styles.discountTeaserText}>{discountTeaser}</Text>
-                        </View>
 
                         <View style={styles.heroPreview}>
                             <View style={styles.slideshowContainer}>
@@ -511,7 +500,7 @@ const styles = StyleSheet.create({
 
     heroHeadline1: { ...typography.h1, textAlign: "center", color: colors.ink },
     heroHeadline2: { ...typography.h2, marginTop: 4, textAlign: "center", color: colors.ink },
-    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 16, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
+    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 30, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
 
     heroHeadline1_TH: { fontSize: 44, lineHeight: 56 },
     heroHeadline2_TH: { fontSize: 36, lineHeight: 46 },
@@ -520,20 +509,6 @@ const styles = StyleSheet.create({
     heroHeadline1_EN: { fontSize: 36, lineHeight: 48 },
     heroHeadline2_EN: { fontSize: 26, lineHeight: 40 },
     heroSupporting_EN: { fontSize: 16, lineHeight: 24 },
-
-    // ✨ 할인 티저
-    discountTeaserPill: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#ECFDF5",
-        borderColor: "#A7F3D0",
-        borderWidth: 1,
-        borderRadius: 100,
-        paddingVertical: 7,
-        paddingHorizontal: 14,
-        marginBottom: 28,
-    },
-    discountTeaserText: { fontSize: 13, fontWeight: "800", color: "#059669" },
 
     heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 34 },
     slideshowContainer: { width: 260, height: 260 },

@@ -4,8 +4,8 @@
 //  1) 표시금액 + USD 환산금액 모두 computePricing(단일 소스)
 //  2) 쿠폰 적용 시 수량할인 무효(중복 방지)는 computePricing 내부 처리
 //  3) "300 기본가" 깜빡임 제거: priceLoaded 전엔 금액 요약 스켈레톤
-//  4) 🆕 shippingTiers(수량별 배송비 38/41/0) 추가 — freeShipThreshold/shippingFee 는 폴백으로 유지
-//     USD 환산 시 배송 구간 fee 도 환율 변환
+//  4) shippingTiers(수량별 배송비 38/41/0) — freeShipThreshold/shippingFee 폴백 유지, USD 환산도 변환
+//  5) 🆕 작은 "사진 더 담기"(+) 버튼 (다시 기회) — addPhotos 로 기존 편집 유지하며 새 사진만 에디터로
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
@@ -27,6 +27,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker"; // 🆕
 
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from 'expo-linking';
@@ -67,7 +68,14 @@ export default function CheckoutStepTwoScreen() {
     // 🚨 [애플 심사 모드 스위치]
     const IS_APPLE_REVIEW_MODE = false;
 
-    const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
+    // 🆕 addPhotos / setCurrentIndex 추가 (이미 PhotoContext 에 존재)
+    const {
+        photos = [],
+        clearDraft = async () => { },
+        clearPhotos = () => { },
+        addPhotos = async () => { },
+        setCurrentIndex = async () => { },
+    } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
 
     const safePhotos = useMemo(() => {
@@ -113,6 +121,7 @@ export default function CheckoutStepTwoScreen() {
     const [progressCount, setProgressCount] = useState(0);
 
     const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+    const [isAddingPhotos, setIsAddingPhotos] = useState(false); // 🆕
 
     const [promoCode, setPromoCode] = useState("");
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
@@ -125,7 +134,7 @@ export default function CheckoutStepTwoScreen() {
     const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeTier[]>([]);
     const [freeShipThreshold, setFreeShipThreshold] = useState<number | undefined>(undefined);
     const [shippingFeeLocal, setShippingFeeLocal] = useState<number>(0);
-    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]); // 🆕 수량별 배송비
+    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]); // 수량별 배송비
     const [priceLoaded, setPriceLoaded] = useState(false);
 
     useEffect(() => {
@@ -147,7 +156,7 @@ export default function CheckoutStepTwoScreen() {
                         if (data.freeShipThreshold != null) setFreeShipThreshold(data.freeShipThreshold);
                         if (data.shippingFee != null) setShippingFeeLocal(data.shippingFee);
                         if (Array.isArray(data.shippingTiers)) {
-                            setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty)); // 🆕
+                            setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty));
                         }
                     }
                 }
@@ -247,7 +256,7 @@ export default function CheckoutStepTwoScreen() {
             count: safePhotosCount,
             pricePerTile,
             volumeDiscounts,
-            shippingTiers,        // 🆕 수량별 배송비(있으면 우선 적용)
+            shippingTiers,        // 수량별 배송비(있으면 우선 적용)
             freeShipThreshold,    // 폴백
             shippingFee: shippingFeeLocal, // 폴백
             promo: promoInput,
@@ -263,13 +272,11 @@ export default function CheckoutStepTwoScreen() {
     // 결제용 (USD 환산) — 동일 로직, 통화만 USD. 배송 구간 fee 도 환율 변환.
     const totalInUSD = useMemo(() => {
         const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
-        // 🆕 배송 구간을 USD 로 변환 (fee:0 = 무료 유지)
         const usdShippingTiers = (shippingTiers || []).map((s) => ({
             minQty: s.minQty,
             fee: s.fee === 0 ? 0 : Number((s.fee * rate).toFixed(2)),
         }));
 
-        // 쿠폰 할인율(원금 대비)을 USD 원금에 비례 적용
         const promoRatio = rawSubtotal > 0 ? pricing.promoDiscountAmount / rawSubtotal : 0;
         const usdSubtotal = safePhotosCount * basePriceUSD;
         const usdShippingFallback = pricing.shippingFee > 0 && pricePerTile > 0
@@ -280,19 +287,57 @@ export default function CheckoutStepTwoScreen() {
             count: safePhotosCount,
             pricePerTile: basePriceUSD,
             volumeDiscounts,
-            shippingTiers: usdShippingTiers.length ? usdShippingTiers : undefined, // 🆕 우선
+            shippingTiers: usdShippingTiers.length ? usdShippingTiers : undefined,
             freeShipThreshold,
-            shippingFee: usdShippingFallback, // 폴백
+            shippingFee: usdShippingFallback,
             promo: promoInput ? { success: true, discountAmount: Number((usdSubtotal * promoRatio).toFixed(2)) } : undefined,
         });
         return usdPricing.total;
     }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput]);
 
+    // 🆕 사진 더 담기 (작게, 다시 기회) — 기존 편집 유지, 새 사진만 에디터로
+    const handleAddMorePhotos = async () => {
+        if (isAddingPhotos) return;
+        if (Platform.OS === 'web') {
+            Alert.alert("Notice", "Adding photos is available in the mobile app.");
+            return;
+        }
+        try {
+            setIsAddingPhotos(true);
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) {
+                Alert.alert(
+                    (t as any)?.["permNeededTitle"] || "Permission needed",
+                    (t as any)?.["permNeededMsg"] || "Please allow photo access to add more tiles."
+                );
+                return;
+            }
+            const startIndex = (photos || []).length;
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsMultipleSelection: true,
+                quality: 1,
+                exif: false,
+            });
+            if (result.canceled || !result.assets?.length) return;
+
+            await addPhotos(result.assets, { persist: true, step: "editor" });
+            setTimeout(() => {
+                setCurrentIndex(startIndex, { persist: true, step: "editor" });
+                router.push("/create/editor");
+            }, 80);
+        } catch (e: any) {
+            console.error("[AddMore] failed", e);
+            Alert.alert("Error", e?.message || "Failed to add photos.");
+        } finally {
+            setIsAddingPhotos(false);
+        }
+    };
+
     const handleApplyPromo = async () => {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
-            // 쿠폰 검증시 '할인 전 원금(rawSubtotal)' 전달
             const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, pricePerTile);
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -762,9 +807,28 @@ export default function CheckoutStepTwoScreen() {
                             freeShipThreshold={freeShipThreshold}
                             shippingFee={shippingFeeLocal}
                             locale={safeLocale}
-                            style={{ marginBottom: 16 }}
+                            style={{ marginBottom: 12 }}
                         />
                     )}
+
+                    {/* 🆕 작은 "사진 더 담기"(+) — 다시 기회 */}
+                    <TouchableOpacity
+                        onPress={handleAddMorePhotos}
+                        style={styles.addMoreSmall}
+                        disabled={isAddingPhotos}
+                        activeOpacity={0.7}
+                    >
+                        {isAddingPhotos ? (
+                            <ActivityIndicator size="small" color="#059669" />
+                        ) : (
+                            <>
+                                <Ionicons name="add" size={16} color="#059669" />
+                                <Text style={styles.addMoreSmallText}>
+                                    {safeLocale === 'TH' ? "เพิ่มรูป" : "Add more"}
+                                </Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
 
                     {!priceLoaded ? (
                         <View style={[styles.summarySection, { alignItems: "center", minHeight: 90, justifyContent: "center" }]}>
@@ -980,6 +1044,11 @@ const styles = StyleSheet.create({
     promoApplyBtn: { height: 50, backgroundColor: "#000", borderRadius: 12, marginLeft: 8, paddingHorizontal: 20, justifyContent: "center" },
     promoApplyText: { color: "#fff", fontWeight: "700" },
     promoSuccessText: { color: colors?.primary || "#E4405F", fontSize: 13, marginTop: 8, fontWeight: "600" },
+
+    // 🆕 작은 사진 더 담기 버튼
+    addMoreSmall: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, alignSelf: "center", paddingVertical: 7, paddingHorizontal: 14, borderRadius: 100, borderWidth: 1, borderColor: "#BBEBD7", backgroundColor: "#F0FBF6", marginBottom: 18 },
+    addMoreSmallText: { fontSize: 12.5, fontWeight: "700", color: "#059669" },
+
     summarySection: { marginBottom: 32, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
     summaryLabel: { color: "#666", fontSize: 14 },
