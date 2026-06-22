@@ -1,4 +1,12 @@
 // src/screens/CheckoutStepTwoScreen.tsx
+//
+// ✅ 변경 요약 (이전 working 버전 기준, 추가만)
+//  1) 표시금액 + USD 환산금액 모두 computePricing(단일 소스)
+//  2) 쿠폰 적용 시 수량할인 무효(중복 방지)는 computePricing 내부 처리
+//  3) "300 기본가" 깜빡임 제거: priceLoaded 전엔 금액 요약 스켈레톤
+//  4) 🆕 shippingTiers(수량별 배송비 38/41/0) 추가 — freeShipThreshold/shippingFee 는 폴백으로 유지
+//     USD 환산 시 배송 구간 fee 도 환율 변환
+
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
     View,
@@ -42,9 +50,12 @@ import { getApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { exportQueue } from "../utils/exportQueue";
 
+// ✨ 가격 단일 소스 + 넛지
+import { computePricing, getCurrencySymbol, type VolumeTier, type ShippingTier } from "../utils/pricing";
+import VolumeTierBar from "../components/VolumeTierBar";
+
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || "";
 
-// ✨ 안드로이드에서 부드러운 UI 전환 애니메이션(스르륵 효과)을 켜주기 위한 설정
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -53,7 +64,7 @@ export default function CheckoutStepTwoScreen() {
     const router = useRouter();
     const scrollViewRef = useRef<ScrollView>(null);
 
-    // 🚨 [애플 심사 모드 스위치] 
+    // 🚨 [애플 심사 모드 스위치]
     const IS_APPLE_REVIEW_MODE = false;
 
     const { photos = [], clearDraft = async () => { }, clearPhotos = () => { } } = usePhoto() || {};
@@ -107,15 +118,18 @@ export default function CheckoutStepTwoScreen() {
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
-    // ✨ Firebase에서 불러올 가격 상태
+    // ✨ Firebase 가격 상태
     const safeLocale = locale || "EN";
     const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 300 : 8.85);
     const [basePriceUSD, setBasePriceUSD] = useState<number>(8.85);
-
-    // ✨ 파이어베이스에서 가져올 "자동 할인 구간 배열"
-    const [volumeDiscounts, setVolumeDiscounts] = useState<{ minQty: number, discountPercent: number }[]>([]);
+    const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeTier[]>([]);
+    const [freeShipThreshold, setFreeShipThreshold] = useState<number | undefined>(undefined);
+    const [shippingFeeLocal, setShippingFeeLocal] = useState<number>(0);
+    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]); // 🆕 수량별 배송비
+    const [priceLoaded, setPriceLoaded] = useState(false);
 
     useEffect(() => {
+        let alive = true;
         const fetchPriceAndDiscounts = async () => {
             try {
                 const firestoreDb = getFirestore();
@@ -124,20 +138,28 @@ export default function CheckoutStepTwoScreen() {
 
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
-                    setBasePriceUSD(data.price_usd || 8.85);
-
-                    if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
-                        const sortedTiers = [...data.volumeDiscounts].sort((a, b) => b.minQty - a.minQty);
-                        setVolumeDiscounts(sortedTiers);
+                    if (alive) {
+                        setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
+                        setBasePriceUSD(data.price_usd || 8.85);
+                        if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
+                            setVolumeDiscounts([...data.volumeDiscounts].sort((a, b) => a.minQty - b.minQty));
+                        }
+                        if (data.freeShipThreshold != null) setFreeShipThreshold(data.freeShipThreshold);
+                        if (data.shippingFee != null) setShippingFeeLocal(data.shippingFee);
+                        if (Array.isArray(data.shippingTiers)) {
+                            setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty)); // 🆕
+                        }
                     }
                 }
             } catch (error) {
                 console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
+            } finally {
+                if (alive) setPriceLoaded(true);
             }
         };
 
         fetchPriceAndDiscounts();
+        return () => { alive = false; };
     }, [safeLocale]);
 
     useEffect(() => {
@@ -211,59 +233,67 @@ export default function CheckoutStepTwoScreen() {
         Keyboard.dismiss();
     };
 
-    // ✨ [강력해진 결제 금액 계산 로직 - 중복 할인 방지 탑재!]
-    const PRICE_PER_TILE = pricePerTile;
-    const CURRENCY_SYMBOL = safeLocale === "TH" ? "฿" : "$";
-    const BASE_PRICE_USD = basePriceUSD;
+    // ✨ [결제 금액 계산 - 단일 소스]
+    const CURRENCY_SYMBOL = getCurrencySymbol(safeLocale);
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    // 1. 순수 원금 (할인 전)
-    const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
+    const promoInput = promoResult?.success
+        ? { success: true, discountAmount: promoResult.discountAmount }
+        : undefined;
 
-    // 2. 파이어베이스 세팅에 의한 "자동 수량 할인" 파악
-    let autoDiscountPercent = 0;
-    for (const tier of volumeDiscounts) {
-        if (safePhotosCount >= tier.minQty) {
-            autoDiscountPercent = tier.discountPercent;
-            break;
-        }
-    }
+    // 표시용 (locale 통화)
+    const pricing = useMemo(
+        () => computePricing({
+            count: safePhotosCount,
+            pricePerTile,
+            volumeDiscounts,
+            shippingTiers,        // 🆕 수량별 배송비(있으면 우선 적용)
+            freeShipThreshold,    // 폴백
+            shippingFee: shippingFeeLocal, // 폴백
+            promo: promoInput,
+        }),
+        [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput]
+    );
 
-    let autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
+    const rawSubtotal = pricing.subtotal;
+    const totalDiscount = pricing.totalDiscount;
+    const shippingFee = pricing.shippingFee;
+    const total = pricing.total;
 
-    // 3. 프로모션(쿠폰) 할인 적용 및 중복 할인 무효화!
-    let promoDiscountAmount = 0;
-    if (promoResult?.success && promoResult.discountAmount) {
-        promoDiscountAmount = Number(promoResult.discountAmount.toFixed(2));
+    // 결제용 (USD 환산) — 동일 로직, 통화만 USD. 배송 구간 fee 도 환율 변환.
+    const totalInUSD = useMemo(() => {
+        const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
+        // 🆕 배송 구간을 USD 로 변환 (fee:0 = 무료 유지)
+        const usdShippingTiers = (shippingTiers || []).map((s) => ({
+            minQty: s.minQty,
+            fee: s.fee === 0 ? 0 : Number((s.fee * rate).toFixed(2)),
+        }));
 
-        // 🔥 쿠폰이 적용되었다면, 수량 할인을 취소(0원) 시킵니다!
-        autoDiscountAmount = 0;
-        autoDiscountPercent = 0;
-    }
+        // 쿠폰 할인율(원금 대비)을 USD 원금에 비례 적용
+        const promoRatio = rawSubtotal > 0 ? pricing.promoDiscountAmount / rawSubtotal : 0;
+        const usdSubtotal = safePhotosCount * basePriceUSD;
+        const usdShippingFallback = pricing.shippingFee > 0 && pricePerTile > 0
+            ? Number((pricing.shippingFee * rate).toFixed(2))
+            : 0;
 
-    const totalDiscount = autoDiscountAmount + promoDiscountAmount;
-    const shippingFee = 0;
-    const total = Math.max(0, Number((rawSubtotal - totalDiscount + shippingFee).toFixed(2)));
+        const usdPricing = computePricing({
+            count: safePhotosCount,
+            pricePerTile: basePriceUSD,
+            volumeDiscounts,
+            shippingTiers: usdShippingTiers.length ? usdShippingTiers : undefined, // 🆕 우선
+            freeShipThreshold,
+            shippingFee: usdShippingFallback, // 폴백
+            promo: promoInput ? { success: true, discountAmount: Number((usdSubtotal * promoRatio).toFixed(2)) } : undefined,
+        });
+        return usdPricing.total;
+    }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput]);
 
-    // USD 환산 처리 (동일한 중복 할인 방지 적용)
-    const rawSubtotalUSD = safePhotosCount * basePriceUSD;
-    let autoDiscountAmountUSD = rawSubtotalUSD * (autoDiscountPercent / 100); // 쿠폰 적용시 percent가 0이므로 알아서 0됨
-
-    let promoDiscountRatio = 0;
-    if (promoResult?.success && rawSubtotal > 0) {
-        // 🔥 원금을 기준으로 쿠폰 할인율 비율을 구합니다.
-        promoDiscountRatio = promoDiscountAmount / rawSubtotal;
-    }
-    const promoDiscountAmountUSD = rawSubtotalUSD * promoDiscountRatio;
-    const totalInUSD = Math.max(0, Number((rawSubtotalUSD - autoDiscountAmountUSD - promoDiscountAmountUSD).toFixed(2)));
-
-    // ✨ 쿠폰 코드 적용 핸들러
     const handleApplyPromo = async () => {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
-            // 🚨 쿠폰 검증시 '할인 전 원금(rawSubtotal)'을 던지도록 수정!
-            const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, PRICE_PER_TILE);
+            // 쿠폰 검증시 '할인 전 원금(rawSubtotal)' 전달
+            const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, pricePerTile);
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
@@ -721,39 +751,65 @@ export default function CheckoutStepTwoScreen() {
                         {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
                     </View>
 
-                    <View style={styles.summarySection}>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text>
-                            <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{rawSubtotal.toFixed(2)}</Text>
+                    {/* ✨ 묶음 판매 넛지 (쿠폰 없을 때만 의미 있음) */}
+                    {priceLoaded && !promoResult?.success && (
+                        <VolumeTierBar
+                            variant="compact"
+                            count={safePhotosCount}
+                            pricePerTile={pricePerTile}
+                            volumeDiscounts={volumeDiscounts}
+                            shippingTiers={shippingTiers}
+                            freeShipThreshold={freeShipThreshold}
+                            shippingFee={shippingFeeLocal}
+                            locale={safeLocale}
+                            style={{ marginBottom: 16 }}
+                        />
+                    )}
+
+                    {!priceLoaded ? (
+                        <View style={[styles.summarySection, { alignItems: "center", minHeight: 90, justifyContent: "center" }]}>
+                            <ActivityIndicator color={colors?.ink || "#000"} />
                         </View>
-
-                        {/* ✨ 자동 할인 표시 (쿠폰 적용시 사라짐) */}
-                        {autoDiscountAmount > 0 && (
+                    ) : (
+                        <View style={styles.summarySection}>
                             <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
-                                    {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({autoDiscountPercent}%)
-                                </Text>
-                                <Text style={[styles.summaryValue, { color: "#10B981" }]}>-{CURRENCY_SYMBOL}{autoDiscountAmount.toFixed(2)}</Text>
+                                <Text style={styles.summaryLabel}>{(t as any)?.["subtotalLabel"] || "Subtotal"}</Text>
+                                <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{rawSubtotal.toFixed(2)}</Text>
                             </View>
-                        )}
 
-                        {/* 쿠폰 할인 표시 */}
-                        {promoDiscountAmount > 0 && (
-                            <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Promo Discount"}</Text>
-                                <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{promoDiscountAmount.toFixed(2)}</Text>
+                            {pricing.volumeDiscountAmount > 0 && (
+                                <View style={styles.summaryRow}>
+                                    <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
+                                        {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({pricing.volumeDiscountPercent}%)
+                                    </Text>
+                                    <Text style={[styles.summaryValue, { color: "#10B981" }]}>-{CURRENCY_SYMBOL}{pricing.volumeDiscountAmount.toFixed(2)}</Text>
+                                </View>
+                            )}
+
+                            {pricing.promoDiscountAmount > 0 && (
+                                <View style={styles.summaryRow}>
+                                    <Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Promo Discount"}</Text>
+                                    <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-{CURRENCY_SYMBOL}{pricing.promoDiscountAmount.toFixed(2)}</Text>
+                                </View>
+                            )}
+
+                            {!pricing.isFreeShipping && (
+                                <View style={styles.summaryRow}>
+                                    <Text style={styles.summaryLabel}>{(t as any)?.["shipping"] || "Shipping"}</Text>
+                                    <Text style={styles.summaryValue}>{CURRENCY_SYMBOL}{shippingFee.toFixed(2)}</Text>
+                                </View>
+                            )}
+
+                            <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
+                                <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
+                                <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
                             </View>
-                        )}
 
-                        <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
-                            <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
-                            <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
+                            {safeLocale === 'TH' && (
+                                <Text style={styles.exchangeRateNotice}>{(t as any)?.["exchangeRateNotice"]}</Text>
+                            )}
                         </View>
-
-                        {safeLocale === 'TH' && (
-                            <Text style={styles.exchangeRateNotice}>{(t as any)?.["exchangeRateNotice"]}</Text>
-                        )}
-                    </View>
+                    )}
 
                     <View style={styles.authBlockContainer}>
                         {currentUser ? (

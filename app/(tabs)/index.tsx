@@ -30,6 +30,9 @@ import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
 
+// ✨ 묶음 할인 가격표 (홈)
+import BundlePricingTable from "../../src/components/BundlePricingTable";
+
 import logoHorizontal from "../../assets/logo_horizontal.png";
 
 const heroNew1 = require("../../src/assets/hero_new_1.jpg") as ImageSource;
@@ -177,6 +180,11 @@ export default function Index() {
 
     const currentBillboard = billboard[billboardIndex] || billboard[0];
 
+    // ✨ Hero 할인 티저 문구 (태국어/영어)
+    const discountTeaser = locale === 'TH'
+        ? '3 ชิ้นลด 25% · 9 ชิ้นส่งฟรี'
+        : 'Buy 3+ save 25% · free shipping on 9+';
+
     return (
         <View style={styles.container}>
             {hasDraft && user && !isGhost && (
@@ -252,6 +260,12 @@ export default function Index() {
                         ]}>
                             {t.heroSupporting?.replace(/\.$/, '')}
                         </Text>
+
+                        {/* ✨ 할인 티저 (구매 동기) */}
+                        <View style={styles.discountTeaserPill}>
+                            <Feather name={"gift" as any} size={13} color="#059669" style={{ marginRight: 6 }} />
+                            <Text style={styles.discountTeaserText}>{discountTeaser}</Text>
+                        </View>
 
                         <View style={styles.heroPreview}>
                             <View style={styles.slideshowContainer}>
@@ -379,6 +393,19 @@ export default function Index() {
                     </View>
                 </View>
 
+                {/* ✨ 묶음 할인 가격표 + 2차 CTA (사용법 이해 직후 → 가격 → 즉시 시작) */}
+                <View style={[styles.section, { backgroundColor: colors.canvas }]}>
+                    <BundlePricingTable />
+                    <View style={{ alignItems: "center", marginTop: 24 }}>
+                        <Pressable style={primaryBtnStyle} onPress={handleStart}>
+                            <View style={styles.ctaInner}>
+                                <Feather name={"crop" as any} size={20} color="#fff" style={{ marginRight: 12 }} />
+                                <Text style={styles.ctaText}>{t.ctaStart}</Text>
+                            </View>
+                        </Pressable>
+                    </View>
+                </View>
+
                 <View style={styles.deliverySection}>
                     <Feather name={"truck" as any} size={40} color="#fff" style={{ marginBottom: 16 }} />
                     <Text style={styles.deliveryTitle}>{t.deliveryHeadline}</Text>
@@ -484,7 +511,7 @@ const styles = StyleSheet.create({
 
     heroHeadline1: { ...typography.h1, textAlign: "center", color: colors.ink },
     heroHeadline2: { ...typography.h2, marginTop: 4, textAlign: "center", color: colors.ink },
-    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 30, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
+    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 16, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
 
     heroHeadline1_TH: { fontSize: 44, lineHeight: 56 },
     heroHeadline2_TH: { fontSize: 36, lineHeight: 46 },
@@ -493,6 +520,20 @@ const styles = StyleSheet.create({
     heroHeadline1_EN: { fontSize: 36, lineHeight: 48 },
     heroHeadline2_EN: { fontSize: 26, lineHeight: 40 },
     heroSupporting_EN: { fontSize: 16, lineHeight: 24 },
+
+    // ✨ 할인 티저
+    discountTeaserPill: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#ECFDF5",
+        borderColor: "#A7F3D0",
+        borderWidth: 1,
+        borderRadius: 100,
+        paddingVertical: 7,
+        paddingHorizontal: 14,
+        marginBottom: 28,
+    },
+    discountTeaserText: { fontSize: 13, fontWeight: "800", color: "#059669" },
 
     heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 34 },
     slideshowContainer: { width: 260, height: 260 },

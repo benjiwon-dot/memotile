@@ -1,4 +1,11 @@
 // src/screens/CheckoutStepOneScreen.tsx
+//
+// ✅ 이번 버전 포함 내용 (이전 working 버전 기준, 추가만)
+//  - computePricing 단일 소스 + 가격 로딩 스켈레톤(300 깜빡임 제거)
+//  - VolumeTierBar(compact) 넛지
+//  - "사진 더 담기"(+) : 기존 크롭/필터 유지하며 추가 → 새 사진만 에디터로 (addPhotos)
+//  - 🆕 shippingTiers(수량별 배송비 38/41/0) 추가 — freeShipThreshold/shippingFee 는 폴백 유지
+
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import {
     View,
@@ -15,6 +22,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
@@ -28,6 +37,10 @@ import { useGoogleAuthRequest } from "../utils/firebaseAuth";
 // ✨ Apple Auth Imports
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
+
+// ✨ 가격 단일 소스 + 넛지
+import { computePricing, getCurrencySymbol, type VolumeTier, type ShippingTier } from "../utils/pricing";
+import VolumeTierBar from "../components/VolumeTierBar";
 
 const LoginButton = ({
     text,
@@ -73,7 +86,8 @@ async function waitForPreviewUrisSnapshot(photosRef: () => any[], timeoutMs = 15
 
 export default function CheckoutStepOneScreen() {
     const router = useRouter();
-    const { photos } = usePhoto();
+    // 🆕 addPhotos / setCurrentIndex 추가 (이미 PhotoContext 에 존재)
+    const { photos, addPhotos, setCurrentIndex } = usePhoto();
     const { t, locale } = useLanguage();
 
     const safePhotos = useMemo(() => {
@@ -98,13 +112,17 @@ export default function CheckoutStepOneScreen() {
     const [previewUri, setPreviewUri] = useState<string | null>(null);
     const [isWebLoggingIn, setIsWebLoggingIn] = useState(false);
     const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
+    const [isAddingPhotos, setIsAddingPhotos] = useState(false); // 🆕
 
     const [pricePerTile, setPricePerTile] = useState<number>(locale === "TH" ? 300 : 8.85);
-
-    // ✨ 수량 할인 데이터를 저장할 상태 추가
-    const [volumeDiscounts, setVolumeDiscounts] = useState<{ minQty: number, discountPercent: number }[]>([]);
+    const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeTier[]>([]);
+    const [freeShipThreshold, setFreeShipThreshold] = useState<number | undefined>(undefined);
+    const [shippingFee, setShippingFee] = useState<number>(0);
+    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]); // 🆕 수량별 배송비
+    const [priceLoaded, setPriceLoaded] = useState(false); // 300 깜빡임 방지
 
     useEffect(() => {
+        let alive = true;
         const fetchPriceAndDiscounts = async () => {
             try {
                 const db = getFirestore();
@@ -114,24 +132,30 @@ export default function CheckoutStepOneScreen() {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     const remotePrice = locale === "TH" ? data.price_thb : data.price_usd;
-                    setPricePerTile(remotePrice);
+                    if (alive && remotePrice != null) setPricePerTile(remotePrice);
 
-                    // ✨ 수량 할인표 가져오기
                     if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
-                        const sortedTiers = [...data.volumeDiscounts].sort((a, b) => b.minQty - a.minQty);
-                        setVolumeDiscounts(sortedTiers);
+                        const sortedTiers = [...data.volumeDiscounts].sort((a, b) => a.minQty - b.minQty);
+                        if (alive) setVolumeDiscounts(sortedTiers);
+                    }
+                    if (alive && data.freeShipThreshold != null) setFreeShipThreshold(data.freeShipThreshold);
+                    if (alive && data.shippingFee != null) setShippingFee(data.shippingFee);
+                    if (alive && Array.isArray(data.shippingTiers)) {
+                        setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty)); // 🆕
                     }
                 }
             } catch (error) {
                 console.error("가격 데이터 불러오기 실패 (기본값 사용):", error);
+            } finally {
+                if (alive) setPriceLoaded(true);
             }
         };
 
         fetchPriceAndDiscounts();
+        return () => { alive = false; };
     }, [locale]);
 
-    const PRICE_PER_TILE = pricePerTile;
-    const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
+    const CURRENCY_SYMBOL = getCurrencySymbol(locale);
 
     const { promptAsync, isReady, isSigningIn, error: authError, response } = useGoogleAuthRequest();
 
@@ -172,20 +196,66 @@ export default function CheckoutStepOneScreen() {
         return unsub;
     }, []);
 
-    // ✨ 할인 계산 로직 추가
+    // ✨ 가격/할인 계산 (단일 소스)
     const safePhotosCount = safePhotos.length;
-    const rawSubtotal = safePhotosCount * PRICE_PER_TILE;
+    const pricing = useMemo(
+        () => computePricing({
+            count: safePhotosCount,
+            pricePerTile,
+            volumeDiscounts,
+            shippingTiers,        // 🆕 수량별 배송비(있으면 우선 적용)
+            freeShipThreshold,    // 폴백
+            shippingFee,          // 폴백
+        }),
+        [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFee]
+    );
 
-    let autoDiscountPercent = 0;
-    for (const tier of volumeDiscounts) {
-        if (safePhotosCount >= tier.minQty) {
-            autoDiscountPercent = tier.discountPercent;
-            break;
+    // 🆕 사진 더 담기 (기존 크롭/필터 유지, 새 사진만 에디터로)
+    const handleAddMorePhotos = async () => {
+        if (isAddingPhotos) return;
+        if (Platform.OS === 'web') {
+            Alert.alert("Notice", "Adding photos is available in the mobile app.");
+            return;
         }
-    }
+        try {
+            setIsAddingPhotos(true);
 
-    const autoDiscountAmount = Number((rawSubtotal * (autoDiscountPercent / 100)).toFixed(2));
-    const total = Math.max(0, Number((rawSubtotal - autoDiscountAmount).toFixed(2)));
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) {
+                Alert.alert(
+                    (t as any)["permNeededTitle"] || "Permission needed",
+                    (t as any)["permNeededMsg"] || "Please allow photo access to add more tiles."
+                );
+                return;
+            }
+
+            const startIndex = (photosRef.current || []).length; // 첫 새 사진 위치
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsMultipleSelection: true,
+                quality: 1, // ⚠️ 메인 피커와 동일 옵션으로 맞추세요 (원본 화질 유지)
+                exif: false,
+            });
+
+            if (result.canceled || !result.assets?.length) return;
+
+            // 기존 사진들의 edits/output 은 그대로 유지된 채 뒤에 append (PhotoContext.addPhotos)
+            await addPhotos(result.assets, { persist: true, step: "editor" });
+
+            // 새 사진만 편집하도록 첫 새 인덱스로 이동 → 에디터
+            // (addPhotos 의 state 커밋을 기다리기 위해 짧은 지연: clamp 레이스 방지)
+            setTimeout(() => {
+                setCurrentIndex(startIndex, { persist: true, step: "editor" });
+                router.push("/create/editor");
+            }, 80);
+        } catch (e: any) {
+            console.error("[AddMore] failed", e);
+            Alert.alert("Error", e?.message || "Failed to add photos.");
+        } finally {
+            setIsAddingPhotos(false);
+        }
+    };
 
     const handleGoogleLogin = async () => {
         if (Platform.OS === 'web') {
@@ -328,49 +398,90 @@ export default function CheckoutStepOneScreen() {
                                 </TouchableOpacity>
                             );
                         })}
+
+                        {/* 🆕 사진 더 담기 (+) — 점선 타일 */}
+                        <TouchableOpacity
+                            onPress={handleAddMorePhotos}
+                            style={styles.addTile}
+                            disabled={isAddingPhotos}
+                            activeOpacity={0.7}
+                        >
+                            {isAddingPhotos ? (
+                                <ActivityIndicator color="#9CA3AF" />
+                            ) : (
+                                <>
+                                    <Ionicons name="add" size={26} color="#9CA3AF" />
+                                    <Text style={styles.addTileText}>{(t as any)["addMore"] || "Add"}</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
                     </ScrollView>
 
-                    <View style={styles.summaryBlock}>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>
-                                {safePhotosCount} {(t as any)["tilesSize"] || "Tiles"}
-                            </Text>
-                            <Text style={styles.summaryValue}>
-                                {CURRENCY_SYMBOL}
-                                {rawSubtotal.toFixed(2)}
+                    {/* ✨ 묶음 판매 넛지 */}
+                    {priceLoaded && (
+                        <VolumeTierBar
+                            variant="compact"
+                            count={safePhotosCount}
+                            pricePerTile={pricePerTile}
+                            volumeDiscounts={volumeDiscounts}
+                            shippingTiers={shippingTiers}
+                            freeShipThreshold={freeShipThreshold}
+                            shippingFee={shippingFee}
+                            locale={locale}
+                            style={{ marginBottom: 14 }}
+                        />
+                    )}
+
+                    {/* ✨ 가격 요약 (priceLoaded 전엔 스켈레톤) */}
+                    {!priceLoaded ? (
+                        <View style={[styles.summaryBlock, { alignItems: "center", justifyContent: "center", minHeight: 130 }]}>
+                            <ActivityIndicator color={colors.ink || "#000"} />
+                            <Text style={{ marginTop: 10, color: "#9CA3AF", fontSize: 13 }}>
+                                {(t as any)["loadingPrice"] || "Loading price…"}
                             </Text>
                         </View>
-
-                        {/* ✨ 자동 할인 표시 */}
-                        {autoDiscountAmount > 0 && (
+                    ) : (
+                        <View style={styles.summaryBlock}>
                             <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
-                                    {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({autoDiscountPercent}%)
+                                <Text style={styles.summaryLabel}>
+                                    {safePhotosCount} {(t as any)["tilesSize"] || "Tiles"}
                                 </Text>
-                                <Text style={[styles.summaryValue, { color: "#10B981" }]}>
-                                    -{CURRENCY_SYMBOL}{autoDiscountAmount.toFixed(2)}
+                                <Text style={styles.summaryValue}>
+                                    {CURRENCY_SYMBOL}{pricing.subtotal.toFixed(2)}
                                 </Text>
                             </View>
-                        )}
 
-                        <View style={styles.summaryRow}>
-                            <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
-                                {(t as any)["shipping"] || "Shipping"}
-                            </Text>
-                            <Text style={[styles.summaryValue, { color: "#10B981" }]}>
-                                {(t as any)["free"] || "Free"}
-                            </Text>
-                        </View>
+                            {pricing.volumeDiscountAmount > 0 && (
+                                <View style={styles.summaryRow}>
+                                    <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
+                                        {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({pricing.volumeDiscountPercent}%)
+                                    </Text>
+                                    <Text style={[styles.summaryValue, { color: "#10B981" }]}>
+                                        -{CURRENCY_SYMBOL}{pricing.volumeDiscountAmount.toFixed(2)}
+                                    </Text>
+                                </View>
+                            )}
 
-                        <View style={styles.divider} />
-                        <View style={styles.totalRow}>
-                            <Text style={styles.totalLabel}>{(t as any)["totalLabel"] || "Total"}</Text>
-                            <Text style={styles.totalValue}>
-                                {CURRENCY_SYMBOL}
-                                {total.toFixed(2)}
-                            </Text>
+                            <View style={styles.summaryRow}>
+                                <Text style={[styles.summaryLabel, { color: pricing.isFreeShipping ? "#10B981" : "#333" }]}>
+                                    {(t as any)["shipping"] || "Shipping"}
+                                </Text>
+                                <Text style={[styles.summaryValue, { color: pricing.isFreeShipping ? "#10B981" : "#333" }]}>
+                                    {pricing.isFreeShipping
+                                        ? ((t as any)["free"] || "Free")
+                                        : `${CURRENCY_SYMBOL}${pricing.shippingFee.toFixed(2)}`}
+                                </Text>
+                            </View>
+
+                            <View style={styles.divider} />
+                            <View style={styles.totalRow}>
+                                <Text style={styles.totalLabel}>{(t as any)["totalLabel"] || "Total"}</Text>
+                                <Text style={styles.totalValue}>
+                                    {CURRENCY_SYMBOL}{pricing.total.toFixed(2)}
+                                </Text>
+                            </View>
                         </View>
-                    </View>
+                    )}
 
                     <View style={styles.authSection}>
                         {!currentUser ? (
@@ -455,6 +566,14 @@ const styles = StyleSheet.create({
 
     imageScroll: { marginBottom: 16 },
     previewImage: { width: 100, height: 100, borderRadius: 8, backgroundColor: "#eee", resizeMode: "cover" },
+
+    // 🆕 사진 더 담기 타일
+    addTile: {
+        width: 100, height: 100, borderRadius: 8,
+        borderWidth: 1.5, borderColor: "#E5E7EB", borderStyle: "dashed",
+        alignItems: "center", justifyContent: "center", backgroundColor: "#FAFAFA",
+    },
+    addTileText: { fontSize: 11, color: "#9CA3AF", fontWeight: "600", marginTop: 2 },
 
     summaryBlock: {
         backgroundColor: "#fff",
