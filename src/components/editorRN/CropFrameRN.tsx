@@ -1,4 +1,8 @@
 // src/components/editorRN/CropFrameRN.tsx
+//
+// ✅ 변경: 타일 입체 그림자만 믹스타일풍으로 ~35% 강화 (animatedShadowStyle 의 resting 값만 조정).
+//    크롭 좌표 로직(base/CROP_SIZE/MARGIN/제스처/clampTransform/getLatestCrop/getFrameRect)은 한 글자도 안 건드림 → 좌표 안 깨짐.
+
 import React, { useEffect, useMemo, forwardRef, useImperativeHandle } from "react";
 import { View, StyleSheet, Text, Platform } from "react-native";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
@@ -192,12 +196,12 @@ const CropFrameRN = forwardRef((props: Props, ref) => {
         return { backgroundColor: bgColor };
     });
 
-    // ✅ 2. 타일 입체감(고급스러운 soft shadow) 애니메이션
+    // ✅ 타일 입체감(고급스러운 soft shadow) — 믹스타일풍 + ~35% 강화 (resting 값만 상향)
     const animatedShadowStyle = useAnimatedStyle(() => {
-        // 손을 뗐을 때(0)는 soft하고 두꺼운 그림자, 눌렀을 때(1)는 얇은 그림자
-        const shadowOp = interpolate(isInteracting.value, [0, 1], [0.22, 0.06], Extrapolate.CLAMP);
-        const shadowRadius = interpolate(isInteracting.value, [0, 1], [18, 4], Extrapolate.CLAMP);
-        const shadowHeight = interpolate(isInteracting.value, [0, 1], [10, 2], Extrapolate.CLAMP);
+        // 손을 뗐을 때(0)는 더 깊고 부드러운 그림자, 눌렀을 때(1)는 얇은 그림자
+        const shadowOp = interpolate(isInteracting.value, [0, 1], [0.30, 0.08], Extrapolate.CLAMP);   // 0.22 → 0.30
+        const shadowRadius = interpolate(isInteracting.value, [0, 1], [24, 6], Extrapolate.CLAMP);    // 18 → 24
+        const shadowHeight = interpolate(isInteracting.value, [0, 1], [14, 3], Extrapolate.CLAMP);    // 10 → 14
 
         return {
             shadowColor: "#000",

@@ -1,12 +1,12 @@
 // src/screens/EditorScreen.tsx
 //
-// ✅ 원본(819줄, isHighEndDevice 화질 분기 포함) 기준 — 기능 제거/축소 0건.
-//    추가된 것만:
-//    (A) 깜빡임 수정: 다음 사진 RNImage.prefetch 후 크로스페이드 / outgoing 실제 크기 / frozen 타이밍
-//    (B) 필름스트립: 하단 썸네일 바 탭 → 앞뒤 자유 이동 재수정 (점프 전 현재 사진 자동 commit)
+// ✅ freeze 해결 버전 — 취약한 dual-buffer 크로스페이드/commit 의존 제거.
+//    단일 CropFrameRN + "처리중 오버레이" + 다음 사진 prefetch 로 전환. 어떤 경우에도 isProcessing 은
+//    finally 에서 반드시 해제 → 필터/Next/필름스트립이 잠기지 않음.
 //
-//   화질/원본 분기(isHighEndDevice), bgPausedRef, 드래프트 저장, bake, 웹 폴백 전부 그대로 유지.
-//   데이터 계약(committed.cropRatio / output.printUri / updatePhoto) 동일 → orders.ts 인쇄 호환.
+//   보존: isHighEndDevice(원본 화질 분기), export/bake, committed.cropRatio, output.printUri,
+//         exportQueue, 드래프트 자동저장, 웹 폴백, 크롭 힌트, 필름스트립(앞뒤 재수정).
+//   필름스트립 썸네일 = output.previewUri(크롭·필터 적용된 중간화질) → 렉 없음. 탭하면 edits.ui 복원 → 크롭 안 깨짐.
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
@@ -35,7 +35,6 @@ import Animated, {
   withTiming,
   withSequence,
   withDelay,
-  runOnJS,
   cancelAnimation,
 } from "react-native-reanimated";
 
@@ -69,31 +68,15 @@ type ResolvedInfo = { uri: string; width: number; height: number };
 const getImageSizeAsync = (uri: string) =>
   new Promise<{ width: number; height: number }>((resolve, reject) => {
     if (!uri) return resolve({ width: 0, height: 0 });
-    RNImage.getSize(
-      uri,
-      (w, h) => resolve({ width: w, height: h }),
-      (err) => reject(err)
-    );
+    RNImage.getSize(uri, (w, h) => resolve({ width: w, height: h }), (err) => reject(err));
   });
 
 const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 const waitRaf = () => new Promise<void>((res) => requestAnimationFrame(() => res()));
 
 type BakeJob = {
-  uri: string;
-  w: number;
-  h: number;
-  matrix: ColorMatrix;
-  overlayColor?: string;
-  overlayOpacity?: number;
-  resolve: (out: string | null) => void;
-};
-
-type OutgoingFrame = {
-  index: number;
-  resolved: ResolvedInfo;
-  ui: EditState;
-  matrix: ColorMatrix;
+  uri: string; w: number; h: number; matrix: ColorMatrix;
+  overlayColor?: string; overlayOpacity?: number; resolve: (out: string | null) => void;
 };
 
 const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
@@ -101,21 +84,17 @@ const sanitizeCropRect = (r: any, srcW: number, srcH: number) => {
   const h = Math.max(1, Math.floor(Number.isFinite(r?.height) ? r.height : 1));
   let x = Math.floor(Number.isFinite(r?.x) ? r.x : 0);
   let y = Math.floor(Number.isFinite(r?.y) ? r.y : 0);
-
   x = Math.max(0, Math.min(x, Math.max(0, srcW - 1)));
   y = Math.max(0, Math.min(y, Math.max(0, srcH - 1)));
-
   const maxSizeW = Math.max(1, srcW - x);
   const maxSizeH = Math.max(1, srcH - y);
   const size = Math.max(1, Math.min(Math.max(w, h), maxSizeW, maxSizeH));
-
   if (x + size > srcW) x = Math.max(0, srcW - size);
   if (y + size > srcH) y = Math.max(0, srcH - size);
-
   return { x, y, width: size, height: size, isValid: true };
 };
 
-// 🚀 [핵심 분기 로직] 램 6GB 이상 고사양 폰 판독기 (OS 가용 오차 고려하여 5.5GB 기준)
+// 🚀 램 6GB 이상 고사양 폰 판독 (원본 초고화질 표시용)
 const isHighEndDevice = () => {
   if (Platform.OS === 'ios' || Platform.OS === 'web') return true;
   const ramGB = (Device.totalMemory || 0) / (1024 * 1024 * 1024);
@@ -129,15 +108,12 @@ export default function EditorScreen() {
   const { t, locale } = useLanguage();
 
   const photosRef = useRef<any[]>(photos as any[]);
-  useEffect(() => {
-    photosRef.current = photos as any[];
-  }, [photos]);
+  useEffect(() => { photosRef.current = photos as any[]; }, [photos]);
 
   const resolvedCache = useRef<Record<string, ResolvedInfo>>({});
   const currentPhoto = photos?.[currentIndex] as any;
 
   const isAliveRef = useRef(true);
-  const bgPausedRef = useRef(false);
 
   const [bakeJob, setBakeJob] = useState<BakeJob | null>(null);
   const bakeBusyRef = useRef(false);
@@ -158,35 +134,18 @@ export default function EditorScreen() {
   }, []);
 
   const [activeResolved, setActiveResolved] = useState<ResolvedInfo | null>(null);
-  const [incomingResolved, setIncomingResolved] = useState<ResolvedInfo | null>(null);
   const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
   const [viewportDim, setViewportDim] = useState<{ width: number; height: number } | null>(null);
-
-  const [isSwitchingPhoto, setIsSwitchingPhoto] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const isExporting = useRef(false);
-
-  const [frozenSnapshot, setFrozenSnapshot] = useState<{
-    uri: string;
-    crop: any;
-    matrix: ColorMatrix;
-    overlayColor?: string;
-    overlayOpacity?: number;
-  } | null>(null);
+  const busyRef = useRef(false); // 재진입 방지 (동기)
 
   const cropRef = useRef<any>(null);
-  const outgoingRef = useRef<OutgoingFrame | null>(null);
 
-  const outgoingOpacity = useSharedValue(0);
-  const incomingOpacity = useSharedValue(1);
   const hintOpacity = useSharedValue(0);
-
-  const outgoingStyle = useAnimatedStyle(() => ({ opacity: outgoingOpacity.value }));
-  const incomingStyle = useAnimatedStyle(() => ({ opacity: incomingOpacity.value }));
   const hintStyle = useAnimatedStyle(() => ({ opacity: hintOpacity.value }));
 
-  // 🚀 표시용 소스 해석 (isHighEndDevice 분기 유지 + content:// 복사 + 캐시). prefetch 와 함께 사용.
-  const resolveTargetInfo = useCallback(async (photo: any): Promise<ResolvedInfo> => {
+  // 표시용 소스 해석 (isHighEndDevice 분기 유지 + content:// 복사 + 캐시)
+  const resolveDisplayInfo = useCallback(async (photo: any): Promise<ResolvedInfo> => {
     const isHighEnd = isHighEndDevice();
     let targetUri = isHighEnd
       ? (photo?.originalUri || photo?.uri)
@@ -204,124 +163,54 @@ export default function EditorScreen() {
         inputUri = dest;
       } catch { }
     }
-
     try {
       const size = await getImageSizeAsync(inputUri);
       const info = { uri: inputUri, width: size.width, height: size.height };
       resolvedCache.current[targetUri] = info;
       return info;
-    } catch (e) {
+    } catch {
       return { uri: inputUri, width: photo?.width || 1000, height: photo?.height || 1000 };
     }
   }, []);
 
+  // 크롭 힌트 — 자동으로 안 사라지고 "첫 터치(드래그/핀치)" 전까지 계속 떠 있음 (사람들이 잘 보게)
   useEffect(() => {
-    if (!isSwitchingPhoto && viewportDim) {
+    if (!isProcessing && viewportDim && activeResolved) {
       cancelAnimation(hintOpacity);
       hintOpacity.value = 0;
-      hintOpacity.value = withSequence(
-        withDelay(400, withTiming(1, { duration: 400 })),
-        withDelay(3000, withTiming(0, { duration: 500 }))
-      );
+      hintOpacity.value = withDelay(400, withTiming(1, { duration: 400 }));
     }
-  }, [isSwitchingPhoto, currentIndex, viewportDim]);
+  }, [isProcessing, currentIndex, viewportDim, activeResolved]);
 
-  const commitCrossfade = useCallback(() => {
+  // 특정 인덱스 사진 로드 (표시 정보 + 저장된 UI 복원). prefetch 로 디코딩 후 표시.
+  const loadPhoto = useCallback(async (idx: number) => {
+    const photo = photosRef.current?.[idx];
+    if (!photo) return;
+    const info = await resolveDisplayInfo(photo);
+    try { await RNImage.prefetch(info.uri); } catch { }
+    const savedUi = photo?.edits?.ui;
+    const savedFilterId = photo?.edits?.filterId ?? "original";
     if (!isAliveRef.current) return;
-    bgPausedRef.current = false;
-    if (incomingResolved) setActiveResolved(incomingResolved);
-    setIncomingResolved(null);
-    outgoingRef.current = null;
+    setCurrentUi(savedUi ? { ...savedUi, filterId: savedFilterId } : { ...makeDefaultEdit(), filterId: savedFilterId });
+    setActiveResolved(info);
+  }, [resolveDisplayInfo]);
 
-    outgoingOpacity.value = 0;
-    incomingOpacity.value = 1;
-    setFrozenSnapshot(null); // ✅ 전환 끝난 뒤에만 frozen 제거 (깜빡임 방지)
-    setIsSwitchingPhoto(false);
-    setIsProcessing(false);
-  }, [incomingResolved, outgoingOpacity, incomingOpacity]);
-
-  const initialInfo = useMemo<ResolvedInfo | null>(() => {
-    if (!currentPhoto) return null;
-    const isHighEnd = isHighEndDevice();
-    const bestUri = isHighEnd
-      ? (currentPhoto.originalUri || currentPhoto.uri)
-      : (currentPhoto.cachedPreviewUri || currentPhoto.originalUri || currentPhoto.uri);
-    return { uri: bestUri, width: currentPhoto.width, height: currentPhoto.height };
-  }, [currentPhoto]);
-
+  // 최초 로드
   useEffect(() => {
-    if (!isSwitchingPhoto && initialInfo?.uri) {
-      setActiveResolved((prev) => {
-        if (!prev) return initialInfo;
-        if (prev.uri !== initialInfo.uri) return initialInfo;
-        return prev;
-      });
-    }
-  }, [initialInfo?.uri, isSwitchingPhoto]);
-
-  // 📌 초기 로드 / 뒤로가기용. 전환(스위치) 중엔 transitionTo 가 직접 처리하므로 건너뜀.
-  useEffect(() => {
-    if (isExporting.current) return;
-    if (isSwitchingPhoto) return; // ✅ 전환 중엔 resolve effect 비활성 (경쟁 방지)
-
     let alive = true;
-    const uri = currentPhoto?.uri;
-    if (!uri) {
-      setActiveResolved(null);
-      setIncomingResolved(null);
-      return;
-    }
-
-    const applyUiForIndex = (info: ResolvedInfo) => {
-      const p = photos?.[currentIndex] as any;
-      const savedUi = p?.edits?.ui;
-      const savedFilterId = p?.edits?.filterId ?? "original";
-
-      if (savedUi) {
-        setCurrentUi({ ...savedUi, filterId: savedFilterId });
-      } else {
-        setCurrentUi({ ...makeDefaultEdit(), filterId: "original", crop: { x: 0, y: 0, scale: 1 } });
-      }
+    (async () => {
+      if (!currentPhoto) { setActiveResolved(null); return; }
+      if (activeResolved) return;
+      const info = await resolveDisplayInfo(currentPhoto);
+      if (!alive) return;
+      const savedUi = currentPhoto?.edits?.ui;
+      const savedFilterId = currentPhoto?.edits?.filterId ?? "original";
+      setCurrentUi(savedUi ? { ...savedUi, filterId: savedFilterId } : { ...makeDefaultEdit(), filterId: savedFilterId });
       setActiveResolved(info);
-      setIncomingResolved(null);
-    };
-
-    const resolve = async () => {
-      const isHighEnd = isHighEndDevice();
-      let targetUri = isHighEnd
-        ? (currentPhoto?.originalUri || currentPhoto?.uri)
-        : (currentPhoto?.cachedPreviewUri || currentPhoto?.originalUri || currentPhoto?.uri);
-
-      try {
-        if (resolvedCache.current[targetUri]) {
-          if (!alive) return;
-          applyUiForIndex(resolvedCache.current[targetUri]);
-          return;
-        }
-
-        let inputUri = targetUri;
-        if (inputUri.startsWith("content://")) {
-          const baseDir = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
-          const dest = `${baseDir}editor_import_${Date.now()}.jpg`;
-          await FileSystem.copyAsync({ from: inputUri, to: dest });
-          inputUri = dest;
-        }
-
-        const size = await getImageSizeAsync(inputUri);
-        const info = { uri: inputUri, width: size.width, height: size.height };
-
-        if (!alive) return;
-        resolvedCache.current[targetUri] = info;
-        applyUiForIndex(info);
-      } catch (e) {
-        console.warn("에디터 로드 실패:", e);
-        applyUiForIndex({ uri: targetUri, width: 1000, height: 1000 });
-      }
-    };
-
-    resolve();
+    })();
     return () => { alive = false; };
-  }, [currentPhoto?.uri, currentIndex, photos, isSwitchingPhoto]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPhoto?.uri]);
 
   // 필름스트립 현재 위치로 스크롤
   useEffect(() => {
@@ -329,71 +218,47 @@ export default function EditorScreen() {
     try { filmRef.current.scrollTo({ x: Math.max(0, currentIndex * 60 - 120), animated: true }); } catch { }
   }, [currentIndex]);
 
-  const incomingDisplayResolved = isSwitchingPhoto
-    ? (incomingResolved || activeResolved || initialInfo)
-    : (activeResolved || initialInfo);
-
-  const displayUri = incomingDisplayResolved?.uri || currentPhoto?.uri;
+  const displayUri = activeResolved?.uri || currentPhoto?.uri;
   const thumbnailUri = (currentPhoto as any)?.cachedThumbnailUri || displayUri;
 
-  const activeFilterId = currentUi.filterId;
   const activeFilterObj = useMemo(
-    () => FILTERS.find((f) => f.id === activeFilterId) || FILTERS[0],
-    [activeFilterId]
+    () => FILTERS.find((f) => f.id === currentUi.filterId) || FILTERS[0],
+    [currentUi.filterId]
   );
-  const activeMatrix = useMemo(
-    () => (activeFilterObj.matrix ?? IDENTITY) as ColorMatrix,
-    [activeFilterObj]
-  );
+  const activeMatrix = useMemo(() => (activeFilterObj.matrix ?? IDENTITY) as ColorMatrix, [activeFilterObj]);
 
+  // 드래프트 자동저장
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedSigRef = useRef<string>("");
   const savingRef = useRef(false);
-
   const buildDraftSig = (ui: EditState, idx: number) => {
     const c = ui.crop;
-    const cropSig = `${Math.round(c.x)}|${Math.round(c.y)}|${Math.round(c.scale * 1000)}`;
-    return `${idx}|${ui.filterId}|${cropSig}`;
+    return `${idx}|${ui.filterId}|${Math.round(c.x)}|${Math.round(c.y)}|${Math.round(c.scale * 1000)}`;
   };
-
   useEffect(() => {
-    if (isSwitchingPhoto || isExporting.current) return;
+    if (isProcessing) return;
     const sig = buildDraftSig(currentUi, currentIndex);
     if (sig === lastSavedSigRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       if (savingRef.current) return;
       savingRef.current = true;
-      try {
-        await saveDraft("editor");
-        lastSavedSigRef.current = sig;
-      } catch { } finally { savingRef.current = false; }
+      try { await saveDraft("editor"); lastSavedSigRef.current = sig; } catch { } finally { savingRef.current = false; }
     }, 700);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [currentUi, currentIndex, saveDraft, isSwitchingPhoto]);
+  }, [currentUi, currentIndex, saveDraft, isProcessing]);
 
-  const handleBack = () => {
-    if (isSwitchingPhoto || isProcessing) return;
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
-    else router.replace("/create/select");
-  };
-
+  // Skia bake (필터 굽기)
   const requestSkiaBake = useCallback(
-    async (
-      uri: string, w: number, h: number, matrix: ColorMatrix,
-      opts?: { maxSide?: number; overlayColor?: string; overlayOpacity?: number }
-    ): Promise<string | null> => {
+    async (uri: string, w: number, h: number, matrix: ColorMatrix,
+      opts?: { maxSide?: number; overlayColor?: string; overlayOpacity?: number }): Promise<string | null> => {
       if (!isAliveRef.current) return null;
       const maxSide = Math.max(512, Math.floor(opts?.maxSide ?? 4000));
       let bakeUri = uri;
       let bakeW = Number(w) || 0;
       let bakeH = Number(h) || 0;
-
       if (!bakeW || !bakeH) {
-        try {
-          const real = await getImageSizeAsync(uri);
-          bakeW = real.width; bakeH = real.height;
-        } catch { }
+        try { const real = await getImageSizeAsync(uri); bakeW = real.width; bakeH = real.height; } catch { }
       }
       const bigger = Math.max(bakeW, bakeH);
       if (bigger > maxSide) {
@@ -401,107 +266,63 @@ export default function EditorScreen() {
           const scale = maxSide / bigger;
           const targetW = Math.max(1, Math.round(bakeW * scale));
           const targetH = Math.max(1, Math.round(bakeH * scale));
-          const resized = await manipulateAsync(
-            uri,
-            [{ resize: { width: targetW, height: targetH } }],
-            { compress: 0.98, format: SaveFormat.JPEG }
-          );
-          bakeUri = resized.uri;
-          bakeW = resized.width || targetW;
-          bakeH = resized.height || targetH;
+          const resized = await manipulateAsync(uri, [{ resize: { width: targetW, height: targetH } }], { compress: 0.98, format: SaveFormat.JPEG });
+          bakeUri = resized.uri; bakeW = resized.width || targetW; bakeH = resized.height || targetH;
         } catch (e) { console.warn("[Filter] Pre-resize failed", e); }
       }
-
-      while (bakeBusyRef.current) await waitRaf();
+      // bake busy 안전장치: 최대 2초 대기 후 진행
+      let waited = 0;
+      while (bakeBusyRef.current && waited < 2000) { await waitRaf(); waited += 16; }
       bakeBusyRef.current = true;
       try {
         if (!isAliveRef.current) return null;
         return await new Promise<string | null>((resolve) => {
           pendingBakeResolveRef.current = resolve;
-          setBakeJob({
-            uri: bakeUri, w: bakeW, h: bakeH, matrix,
-            overlayColor: opts?.overlayColor,
-            overlayOpacity: opts?.overlayOpacity,
-            resolve,
-          });
+          setBakeJob({ uri: bakeUri, w: bakeW, h: bakeH, matrix, overlayColor: opts?.overlayColor, overlayOpacity: opts?.overlayOpacity, resolve });
         });
       } finally {
         pendingBakeResolveRef.current = null;
         bakeBusyRef.current = false;
       }
-    },
-    []
-  );
+    }, []);
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (!bakeJob) return;
-
-      const finish = (out: string | null) => {
-        if (cancelled) return;
-        try { bakeJob.resolve(out); } catch { }
-        setBakeJob(null);
-      };
-
+      const finish = (out: string | null) => { if (cancelled) return; try { bakeJob.resolve(out); } catch { } setBakeJob(null); };
       if (!isAliveRef.current) return finish(null);
-
       for (let i = 0; i < 10; i++) {
         if (cancelled || !isAliveRef.current) return finish(null);
         const snapshot = filteredCanvasRef.current?.snapshot();
         if (snapshot) {
-          try {
-            const result = await bakeFilterFromCanvasSnapshot(snapshot);
-            if (result) return finish(result);
-          } catch (e) {
-            console.warn("Bake attempt failed", e);
-          }
+          try { const result = await bakeFilterFromCanvasSnapshot(snapshot); if (result) return finish(result); }
+          catch (e) { console.warn("Bake attempt failed", e); }
         }
         await sleep(100);
       }
       return finish(null);
     };
-
     run();
     return () => { cancelled = true; };
   }, [bakeJob]);
 
-  // 크로스페이드 (incomingResolved = 다음 사진 디코딩 완료 신호)
-  useEffect(() => {
-    if (!isSwitchingPhoto) return;
-    if (!incomingResolved) return;
-    if (!outgoingRef.current) return;
-    if (!isAliveRef.current) return;
-
-    cancelAnimation(outgoingOpacity);
-    cancelAnimation(incomingOpacity);
-
-    outgoingOpacity.value = 1;
-    incomingOpacity.value = 0;
-
-    incomingOpacity.value = withTiming(1, { duration: 200 });
-    outgoingOpacity.value = withTiming(0, { duration: 200 }, (finished) => {
-      if (finished) runOnJS(commitCrossfade)();
-    });
-  }, [incomingResolved, isSwitchingPhoto, commitCrossfade, outgoingOpacity, incomingOpacity]);
-
   // 🔑 현재 사진 export (크롭/필터 → updatePhoto). 인쇄는 orders.ts 가 committed.cropRatio 로 원본 재크롭.
-  //    원본 export 로직은 기존과 동일. {uiW,uiH} 반환(전환 outgoing 크기용).
-  const exportCurrentPhoto = async (currentPhotoUri: string, currentCrop: any): Promise<{ uiW: number; uiH: number } | null> => {
+  const exportCurrentPhoto = async () => {
     const idx = currentIndex;
-    const photo = { ...photos[idx] } as any;
+    const photo = { ...photosRef.current[idx] } as any;
     const vp = viewportDim;
-    if (!vp) return null;
+    if (!vp) return;
 
+    const currentPhotoUri = activeResolved?.uri || photo.uri;
+    const currentCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
     const activeFilter = activeFilterObj;
     const matrix = activeMatrix;
+    if (!currentPhotoUri) return;
 
-    let uiW = incomingDisplayResolved?.width ?? photo.width;
-    let uiH = incomingDisplayResolved?.height ?? photo.height;
-    try {
-      const real = await getImageSizeAsync(currentPhotoUri);
-      if (real?.width && real?.height) { uiW = real.width; uiH = real.height; }
-    } catch { }
+    let uiW = activeResolved?.width ?? photo.width;
+    let uiH = activeResolved?.height ?? photo.height;
+    try { const real = await getImageSizeAsync(currentPhotoUri); if (real?.width && real?.height) { uiW = real.width; uiH = real.height; } } catch { }
 
     const rawCropUI = calculatePrecisionCrop({
       sourceSize: { width: uiW, height: uiH },
@@ -509,7 +330,6 @@ export default function EditorScreen() {
       frameRect: cropRef.current?.getFrameRect() || { x: 0, y: 0, width: vp.width, height: vp.height },
       transform: { scale: currentCrop.scale, translateX: currentCrop.x, translateY: currentCrop.y },
     });
-
     const safeUI = sanitizeCropRect(rawCropUI, uiW, uiH);
     const finalCropUI = { x: Math.floor(safeUI.x), y: Math.floor(safeUI.y), width: Math.floor(safeUI.width), height: Math.floor(safeUI.width) };
 
@@ -517,7 +337,7 @@ export default function EditorScreen() {
       x: Math.max(0, Math.min(1, finalCropUI.x / uiW)),
       y: Math.max(0, Math.min(1, finalCropUI.y / uiH)),
       w: Math.max(0, Math.min(1, finalCropUI.width / uiW)),
-      h: Math.max(0, Math.min(1, finalCropUI.height / uiH))
+      h: Math.max(0, Math.min(1, finalCropUI.height / uiH)),
     };
 
     const previewRes = await generatePreviewExport(currentPhotoUri, finalCropUI);
@@ -528,203 +348,116 @@ export default function EditorScreen() {
       try {
         const originalSourceUri = photo.originalUri || photo.sourceUri || photo.uri;
         const trueMeta = await manipulateAsync(originalSourceUri, []);
-
-        let oX = Math.max(0, Math.min(Math.floor(trueMeta.width * cropRatio.x), trueMeta.width - 1));
-        let oY = Math.max(0, Math.min(Math.floor(trueMeta.height * cropRatio.y), trueMeta.height - 1));
-        let cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
-        let cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
-
-        const hrCrop = await manipulateAsync(
-          originalSourceUri,
-          [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }],
-          { compress: 1, format: SaveFormat.JPEG }
-        );
-
-        const bakedPrint = await requestSkiaBake(hrCrop.uri, hrCrop.width, hrCrop.height, matrix, {
-          maxSide: 2048,
-          overlayColor: activeFilter.overlayColor,
-          overlayOpacity: activeFilter.overlayOpacity
-        });
-
-        if (bakedPrint) {
-          finalPrintUri = bakedPrint;
-          finalPreviewUri = bakedPrint;
-        }
-      } catch (e) {
-        console.error("Filter bake error:", e);
-      }
+        const oX = Math.max(0, Math.min(Math.floor(trueMeta.width * cropRatio.x), trueMeta.width - 1));
+        const oY = Math.max(0, Math.min(Math.floor(trueMeta.height * cropRatio.y), trueMeta.height - 1));
+        const cW = Math.max(1, Math.min(Math.floor(trueMeta.width * cropRatio.w), trueMeta.width - oX));
+        const cH = Math.max(1, Math.min(Math.floor(trueMeta.height * cropRatio.h), trueMeta.height - oY));
+        const hrCrop = await manipulateAsync(originalSourceUri, [{ crop: { originX: oX, originY: oY, width: cW, height: cH } }], { compress: 1, format: SaveFormat.JPEG });
+        const bakedPrint = await requestSkiaBake(hrCrop.uri, hrCrop.width, hrCrop.height, matrix, { maxSide: 2048, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity });
+        if (bakedPrint) { finalPrintUri = bakedPrint; finalPreviewUri = bakedPrint; }
+      } catch (e) { console.error("Filter bake error:", e); }
     }
 
     await updatePhoto(idx, {
       edits: {
         crop: finalCropUI,
         filterId: currentUi.filterId,
-        filterParams: {
-          matrix,
-          overlayColor: activeFilter.overlayColor || null,
-          overlayOpacity: activeFilter.overlayOpacity || 0
-        },
+        filterParams: { matrix, overlayColor: activeFilter.overlayColor || null, overlayOpacity: activeFilter.overlayOpacity || 0 },
         ui: { ...currentUi, crop: currentCrop },
-        committed: {
-          cropRatio: cropRatio,
-          filterId: currentUi.filterId,
-          filterParams: { matrix }
-        },
+        committed: { cropRatio, filterId: currentUi.filterId, filterParams: { matrix } },
       } as any,
-      output: {
-        ...(photo.output || {}),
-        previewUri: finalPreviewUri || null,
-        viewUri: finalPreviewUri || null,
-        printUri: finalPrintUri
-      },
+      output: { ...(photo.output || {}), previewUri: finalPreviewUri || null, viewUri: finalPreviewUri || null, printUri: finalPrintUri },
     });
-
-    return { uiW, uiH };
   };
 
-  // 다음/임의 사진으로 부드럽게 전환 (prefetch 후 크로스페이드)
-  const transitionTo = async (targetIdx: number, currentPhotoUri: string, currentCrop: any, uiW: number, uiH: number) => {
-    const fromIdx = currentIndex;
-    const nextPhoto = photos[targetIdx] as any;
-
-    // ✅ 다음 사진 표시 이미지를 먼저 디코딩 (frozen 이 화면 덮는 동안)
-    const nextInfo = await resolveTargetInfo(nextPhoto);
-    try { await RNImage.prefetch(nextInfo.uri); } catch { }
-
-    // ✅ 빠져나가는(편집본) 사진을 실제 크기로 outgoing 레이어에
-    outgoingRef.current = {
-      index: fromIdx,
-      resolved: { uri: currentPhotoUri, width: uiW || 0, height: uiH || 0 },
-      ui: { crop: currentCrop, filterId: currentUi.filterId },
-      matrix: activeMatrix,
-    };
-
-    cancelAnimation(outgoingOpacity); cancelAnimation(incomingOpacity);
-    outgoingOpacity.value = 1; incomingOpacity.value = 0;
-
-    const savedUi = nextPhoto?.edits?.ui;
-    setCurrentUi(savedUi ? { ...savedUi, filterId: nextPhoto?.edits?.filterId ?? "original" } : makeDefaultEdit());
-
-    setActiveResolved(nextInfo);
-    setIncomingResolved(nextInfo);
-    setCurrentIndex(targetIdx);
-
-    setFrozenSnapshot(null);
-    setIsSwitchingPhoto(true);
-    setIsProcessing(false);
-    isExporting.current = false;
-  };
-
-  const handleNext = async () => {
-    if (!photos || photos.length === 0 || isExporting.current) return;
-    if (isSwitchingPhoto || isProcessing) return;
-
-    const idx = currentIndex;
-    const currentPhotoUri = incomingDisplayResolved?.uri || (photos[idx] as any).uri;
-    const currentCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
-    if (!currentPhotoUri) return;
-
+  const goNextOrCheckout = async () => {
+    if (busyRef.current) return;
+    if (!photos || photos.length === 0) return;
+    busyRef.current = true;
     setIsProcessing(true);
-    isExporting.current = true;
-    setFrozenSnapshot({
-      uri: currentPhotoUri, crop: currentCrop, matrix: activeMatrix,
-      overlayColor: activeFilterObj.overlayColor, overlayOpacity: activeFilterObj.overlayOpacity,
-    });
     await sleep(16);
-
     try {
-      const dims = await exportCurrentPhoto(currentPhotoUri, currentCrop);
-      if (!dims) { setFrozenSnapshot(null); setIsProcessing(false); isExporting.current = false; return; }
-
+      await exportCurrentPhoto();
+      const idx = currentIndex;
       if (idx < photos.length - 1) {
-        await transitionTo(idx + 1, currentPhotoUri, currentCrop, dims.uiW, dims.uiH);
-        return;
+        await loadPhoto(idx + 1);
+        setCurrentIndex(idx + 1);
+        await sleep(120); // 새 이미지가 그려질 시간 (오버레이가 가려줌)
+      } else {
+        router.push("/create/checkout");
       }
-
-      setFrozenSnapshot(null);
-      setIsProcessing(false);
-      isExporting.current = false;
-      router.push("/create/checkout");
     } catch (e) {
-      console.error(e);
-      setFrozenSnapshot(null); setIsProcessing(false); isExporting.current = false;
+      console.error("[Editor] next failed", e);
       Alert.alert("Error", "Failed to process image.");
+    } finally {
+      setIsProcessing(false);
+      busyRef.current = false;
     }
   };
 
-  // 🎞️ 필름스트립 탭 → 현재 사진 commit 후 해당 사진으로 점프 (앞뒤 자유 재수정)
+  // 🎞️ 필름스트립 탭 → 현재 commit 후 해당 사진으로 점프 (앞뒤 자유 재수정)
   const handleJumpTo = async (targetIdx: number) => {
+    if (busyRef.current) return;
     if (targetIdx === currentIndex) return;
-    if (!photos || photos.length === 0 || isExporting.current) return;
-    if (isSwitchingPhoto || isProcessing) return;
-    if (targetIdx < 0 || targetIdx >= photos.length) return;
-
-    const idx = currentIndex;
-    const currentPhotoUri = incomingDisplayResolved?.uri || (photos[idx] as any).uri;
-    const currentCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
-    if (!currentPhotoUri) return;
-
+    if (!photos || targetIdx < 0 || targetIdx >= photos.length) return;
+    busyRef.current = true;
     setIsProcessing(true);
-    isExporting.current = true;
-    setFrozenSnapshot({
-      uri: currentPhotoUri, crop: currentCrop, matrix: activeMatrix,
-      overlayColor: activeFilterObj.overlayColor, overlayOpacity: activeFilterObj.overlayOpacity,
-    });
     await sleep(16);
-
     try {
-      const dims = await exportCurrentPhoto(currentPhotoUri, currentCrop);
-      await transitionTo(targetIdx, currentPhotoUri, currentCrop, dims?.uiW || 0, dims?.uiH || 0);
+      await exportCurrentPhoto();
+      await loadPhoto(targetIdx);
+      setCurrentIndex(targetIdx);
+      await sleep(120);
     } catch (e) {
       console.error("[Editor] jump failed", e);
-      setFrozenSnapshot(null); setIsProcessing(false); isExporting.current = false;
       Alert.alert("Error", "Failed to switch photo.");
+    } finally {
+      setIsProcessing(false);
+      busyRef.current = false;
+    }
+  };
+
+  const handleBack = async () => {
+    if (busyRef.current) return;
+    if (currentIndex > 0) {
+      busyRef.current = true;
+      setIsProcessing(true);
+      try {
+        await loadPhoto(currentIndex - 1); // 뒤로가기는 export 없이 로드만 (원본 동작 유지)
+        setCurrentIndex(currentIndex - 1);
+        await sleep(120);
+      } finally {
+        setIsProcessing(false);
+        busyRef.current = false;
+      }
+    } else {
+      router.replace("/create/select");
     }
   };
 
   useFocusEffect(
     useCallback(() => {
-      if (isExporting.current) return;
-
-      setIsProcessing(false);
-      isExporting.current = false;
-
-      const p = photos?.[currentIndex] as any;
+      // 포커스 복귀 시 현재 사진 UI 동기화 (export 중이 아닐 때만)
+      if (busyRef.current) return;
+      const p = photosRef.current?.[currentIndex] as any;
       if (!p) return;
-
       const savedUi = p.edits?.ui;
       const savedFilterId = p.edits?.filterId ?? "original";
-
-      if (savedUi) {
-        setCurrentUi({ ...savedUi, filterId: savedFilterId });
-      } else {
-        setCurrentUi((prev) => ({ ...prev, filterId: savedFilterId }));
-      }
-
-      return () => {
-        isExporting.current = false;
-      };
-    }, [currentIndex, photos])
+      if (savedUi) setCurrentUi({ ...savedUi, filterId: savedFilterId });
+      else setCurrentUi((prev) => ({ ...prev, filterId: savedFilterId }));
+      return () => { };
+    }, [currentIndex])
   );
 
   const onSelectFilter = async (f: any) => {
-    if (isSwitchingPhoto || isProcessing) return;
+    if (busyRef.current) return;
     const newId = f.id;
     setCurrentUi((prev) => ({ ...prev, filterId: newId }));
-    const p = photos[currentIndex] as any;
+    const p = photosRef.current[currentIndex] as any;
     try {
-      await updatePhoto(currentIndex, {
-        edits: {
-          ...p?.edits,
-          filterId: newId,
-          ui: { ...currentUi, filterId: newId },
-        },
-      });
+      await updatePhoto(currentIndex, { edits: { ...p?.edits, filterId: newId, ui: { ...currentUi, filterId: newId } } });
     } catch (e) { console.warn("Failed to persist filter choice", e); }
   };
-
-  const outgoing = outgoingRef.current;
-  const busy = isSwitchingPhoto || isProcessing || isExporting.current;
 
   if (Platform.OS === 'web') {
     return (
@@ -740,12 +473,14 @@ export default function EditorScreen() {
     );
   }
 
-  const cropHintText = locale === 'TH' ? "แตะแล้วลากเพื่อครอบตัด" : "Drag to crop & adjust";
+  // 드래그 + 핀치 줌 둘 다 안내 (사람들이 줌 가능한 걸 모름)
+  const cropHintText = locale === 'TH' ? "ลากเพื่อเลื่อน · ใช้สองนิ้วซูม" : "Drag to move · pinch to zoom";
+  const editingDisabled = busyRef.current || isProcessing;
 
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
-        <TopBarRN current={currentIndex + 1} total={photos.length} onBack={handleBack} onNext={handleNext} />
+        <TopBarRN current={currentIndex + 1} total={photos.length} onBack={handleBack} onNext={goNextOrCheckout} />
       </View>
 
       <View
@@ -756,61 +491,40 @@ export default function EditorScreen() {
         }}
       >
         <View style={{ flex: 1, width: "100%", height: "100%" }}>
-          {isSwitchingPhoto && outgoing && viewportDim && (
-            <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingStyle]}>
-              <CropFrameRN
-                key={`out-${outgoing.index}`}
-                imageSrc={outgoing.resolved.uri}
-                imageWidth={outgoing.resolved.width || 1000}
-                imageHeight={outgoing.resolved.height || 1000}
-                containerWidth={viewportDim.width}
-                containerHeight={viewportDim.height}
-                crop={outgoing.ui.crop}
-                onChange={() => { }}
-                matrix={outgoing.matrix}
-                overlayColor={FILTERS.find(f => f.id === outgoing.ui.filterId)?.overlayColor}
-                overlayOpacity={FILTERS.find(f => f.id === outgoing.ui.filterId)?.overlayOpacity}
-                photoIndex={outgoing.index}
-              />
-            </Animated.View>
+          {viewportDim && activeResolved ? (
+            <CropFrameRN
+              key={`crop-${currentIndex}`}
+              ref={cropRef}
+              imageSrc={activeResolved.uri}
+              imageWidth={activeResolved.width || 1000}
+              imageHeight={activeResolved.height || 1000}
+              containerWidth={viewportDim.width}
+              containerHeight={viewportDim.height}
+              crop={currentUi.crop}
+              matrix={activeMatrix}
+              overlayColor={activeFilterObj.overlayColor}
+              overlayOpacity={activeFilterObj.overlayOpacity}
+              onChange={(newCrop: any) => {
+                if (isProcessing) return;
+                hintOpacity.value = withTiming(0, { duration: 150 });
+                setCurrentUi((prev) => {
+                  const p = prev.crop;
+                  const dx = Math.abs((newCrop?.x ?? 0) - p.x);
+                  const dy = Math.abs((newCrop?.y ?? 0) - p.y);
+                  const ds = Math.abs((newCrop?.scale ?? 1) - p.scale);
+                  if (dx < 0.25 && dy < 0.25 && ds < 0.0005) return prev;
+                  return { ...prev, crop: newCrop };
+                });
+              }}
+              photoIndex={currentIndex}
+            />
+          ) : (
+            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <ActivityIndicator size="large" color={colors.ink} style={{ flex: 1 }} />
+            </View>
           )}
 
-          <Animated.View pointerEvents={isSwitchingPhoto ? "none" : "auto"} style={[StyleSheet.absoluteFill, incomingStyle]}>
-            {viewportDim && (frozenSnapshot || incomingDisplayResolved) ? (
-              <CropFrameRN
-                key="main-crop-frame-fixed"
-                ref={cropRef}
-                imageSrc={frozenSnapshot?.uri || incomingDisplayResolved?.uri}
-                imageWidth={incomingDisplayResolved?.width || 1000}
-                imageHeight={incomingDisplayResolved?.height || 1000}
-                containerWidth={viewportDim.width}
-                containerHeight={viewportDim.height}
-                crop={frozenSnapshot?.crop || currentUi.crop}
-                matrix={frozenSnapshot?.matrix || activeMatrix}
-                overlayColor={frozenSnapshot?.overlayColor || activeFilterObj.overlayColor}
-                overlayOpacity={frozenSnapshot?.overlayOpacity || activeFilterObj.overlayOpacity}
-                onChange={(newCrop: any) => {
-                  if (frozenSnapshot) return;
-                  hintOpacity.value = withTiming(0, { duration: 150 });
-                  setCurrentUi((prev) => {
-                    const p = prev.crop;
-                    const dx = Math.abs((newCrop?.x ?? 0) - p.x);
-                    const dy = Math.abs((newCrop?.y ?? 0) - p.y);
-                    const ds = Math.abs((newCrop?.scale ?? 1) - p.scale);
-                    if (dx < 0.25 && dy < 0.25 && ds < 0.0005) return prev;
-                    return { ...prev, crop: newCrop };
-                  });
-                }}
-                photoIndex={currentIndex}
-              />
-            ) : isSwitchingPhoto ? null : (
-              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <ActivityIndicator size="large" color={colors.ink} />
-              </View>
-            )}
-          </Animated.View>
-
-          {!isSwitchingPhoto && viewportDim && (
+          {!isProcessing && viewportDim && activeResolved && (
             <Animated.View pointerEvents="none" style={[styles.cropHintWrapper, hintStyle]}>
               <View style={styles.cropHintBadge}>
                 <Feather name="crop" size={16} color="#fff" />
@@ -820,12 +534,10 @@ export default function EditorScreen() {
           )}
         </View>
 
+        {/* 필터 bake용 숨김 캔버스 */}
         <View pointerEvents="none" style={{ position: "absolute", width: 10, height: 10, top: '50%', left: '50%', opacity: 0.01, zIndex: -1 }}>
           {bakeJob?.uri ? (
-            <FilteredImageSkia
-              ref={filteredCanvasRef} uri={bakeJob.uri} width={bakeJob.w} height={bakeJob.h}
-              matrix={bakeJob.matrix} overlayColor={bakeJob.overlayColor} overlayOpacity={bakeJob.overlayOpacity}
-            />
+            <FilteredImageSkia ref={filteredCanvasRef} uri={bakeJob.uri} width={bakeJob.w} height={bakeJob.h} matrix={bakeJob.matrix} overlayColor={bakeJob.overlayColor} overlayOpacity={bakeJob.overlayOpacity} />
           ) : null}
         </View>
 
@@ -838,14 +550,9 @@ export default function EditorScreen() {
       </View>
 
       <View style={[styles.bottomBar, { paddingBottom: Math.max(20, insets.bottom) }]}>
-        {/* 🎞️ 필름스트립 — 탭하면 그 사진으로 점프해서 재수정 (저장된 크롭·필터 복원) */}
+        {/* 🎞️ 필름스트립 — 탭하면 그 사진으로 점프 (저장된 크롭·필터 복원) */}
         {photos.length > 1 && (
-          <ScrollView
-            ref={filmRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filmStrip}
-          >
+          <ScrollView ref={filmRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filmStrip}>
             {photos.map((p: any, i: number) => {
               const thumb = p?.output?.previewUri || p?.cachedThumbnailUri || p?.uri;
               const isCur = i === currentIndex;
@@ -853,14 +560,10 @@ export default function EditorScreen() {
                 <Pressable
                   key={p?.assetId || p?.uri || i}
                   onPress={() => handleJumpTo(i)}
-                  disabled={busy}
-                  style={[styles.filmThumbWrap, isCur && styles.filmThumbWrapActive, busy && { opacity: 0.6 }]}
+                  disabled={editingDisabled}
+                  style={[styles.filmThumbWrap, isCur && styles.filmThumbWrapActive, editingDisabled && { opacity: 0.6 }]}
                 >
-                  {thumb ? (
-                    <RNImage source={{ uri: thumb }} style={styles.filmThumb} />
-                  ) : (
-                    <View style={[styles.filmThumb, { backgroundColor: "#e5e7eb" }]} />
-                  )}
+                  {thumb ? <RNImage source={{ uri: thumb }} style={styles.filmThumb} /> : <View style={[styles.filmThumb, { backgroundColor: "#e5e7eb" }]} />}
                   <View style={styles.filmNumBadge}><Text style={styles.filmNumText}>{i + 1}</Text></View>
                 </Pressable>
               );
@@ -871,9 +574,9 @@ export default function EditorScreen() {
         <FilterStripRN currentFilter={activeFilterObj} imageSrc={thumbnailUri} onSelect={onSelectFilter} />
         <View style={styles.primaryBtnContainer}>
           <Pressable
-            style={[styles.primaryBtn, (!viewportDim || !activeResolved || isSwitchingPhoto || isProcessing) && { opacity: 0.5, backgroundColor: '#888' }]}
-            onPress={handleNext}
-            disabled={!viewportDim || !activeResolved || isSwitchingPhoto || isExporting.current || isProcessing}
+            style={[styles.primaryBtn, (!viewportDim || !activeResolved || isProcessing) && { opacity: 0.5, backgroundColor: '#888' }]}
+            onPress={goNextOrCheckout}
+            disabled={!viewportDim || !activeResolved || isProcessing}
           >
             {isProcessing ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>{currentIndex === photos.length - 1 ? ((t as any).saveCheckout || "Save & Checkout") : ((t as any).nextPhoto || "Next Photo")}</Text>}
           </Pressable>
@@ -887,20 +590,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
 
-  cropHintWrapper: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 40 : 80,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 100
-  },
-
+  cropHintWrapper: { position: 'absolute', top: Platform.OS === 'ios' ? 40 : 80, left: 0, right: 0, alignItems: 'center', zIndex: 100 },
   cropHintBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, gap: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
   cropHintText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
 
-  // 필름스트립
   filmStrip: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4, gap: 8 },
   filmThumbWrap: { width: 52, height: 52, borderRadius: 8, borderWidth: 2, borderColor: "transparent", overflow: "hidden", marginRight: 8 },
   filmThumbWrapActive: { borderColor: colors.ink || "#111" },
@@ -912,5 +607,5 @@ const styles = StyleSheet.create({
   primaryBtn: { width: "100%", maxWidth: 340, height: 52, backgroundColor: colors.ink, borderRadius: 26, alignItems: "center", justifyContent: "center", elevation: 6 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   fullLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.8)", zIndex: 9999, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 15, fontWeight: "700", color: "#111" }
+  loadingText: { marginTop: 15, fontWeight: "700", color: "#111" },
 });

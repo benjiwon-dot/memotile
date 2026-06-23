@@ -1,8 +1,8 @@
-// src/components/VolumeTierBar.tsx  (v4 — 세련/깔끔)
+// src/components/VolumeTierBar.tsx  (v5)
 //
-//  full  : "지금 구간 → 다음 구간"만 얇은 바 하나로 표현 (5개 마커 게이지 제거)
+//  full  : 원가(취소선) → 할인가 + 절약액 + "지금%→다음%" 게이지(넉넉하게 채움)
 //  compact : 한 줄 넛지
-//  문구: "몇% → 몇%" 직관형 + 무료배송 보조줄. 수치는 pricing.ts 단일 소스.
+//  수치는 pricing.ts(computePricing) 단일 소스.
 
 import React, { useMemo } from "react";
 import { View, Text, StyleSheet, ViewStyle } from "react-native";
@@ -38,6 +38,7 @@ const C = {
     idleText: "#64748B",
     track: "#E5E7EB",
     ink: "#0F172A",
+    strike: "#94A3B8",
 };
 
 export default function VolumeTierBar({
@@ -64,6 +65,9 @@ export default function VolumeTierBar({
     const curPct = pricing.volumeDiscountPercent;
     const isActive = saved > 0 || pricing.isFreeShipping;
 
+    const origTotal = pricing.subtotal;
+    const discTotal = Math.max(0, Number((pricing.subtotal - pricing.volumeDiscountAmount).toFixed(2)));
+
     // 넛지 문구
     const nudge = useMemo(() => {
         const first = pricing.tiers[0];
@@ -76,48 +80,54 @@ export default function VolumeTierBar({
         if (pricing.nextTier) {
             const left = pricing.qtyToNextTier;
             const nextPct = pricing.nextTier.discountPercent;
-            if (saved > 0) {
-                return isTh
-                    ? `ลดแล้ว ${savedStr} · เพิ่ม ${left} ชิ้น เป็น ${nextPct}%`
-                    : `Saved ${savedStr} · add ${left} for ${nextPct}%`;
-            }
-            return isTh ? `เพิ่มอีก ${left} ชิ้น ลด ${nextPct}%` : `Add ${left} more for ${nextPct}% off`;
+            return isTh ? `เพิ่มอีก ${left} ชิ้น → ลด ${nextPct}%` : `Add ${left} more → ${nextPct}% off`;
         }
         if (pricing.isMaxTier) {
-            return isTh ? `ส่วนลดสูงสุด ${curPct}% · ประหยัด ${savedStr}` : `Max ${curPct}% off · saved ${savedStr}`;
+            return isTh ? `ส่วนลดสูงสุด ${curPct}% แล้ว` : `Max ${curPct}% off unlocked`;
         }
-        return isTh ? `ลดแล้ว ${savedStr} (${curPct}%)` : `Saved ${savedStr} (${curPct}%)`;
-    }, [pricing, count, saved, savedStr, curPct, isTh]);
+        return isTh ? `รับส่วนลด ${curPct}% แล้ว` : `${curPct}% off applied`;
+    }, [pricing, count, curPct, isTh]);
 
+    // 배송 안내: "N개 더" 대신 "9개부터 무료"로 고정 표기 (구간마다 헷갈리지 않게)
     const shipNote = useMemo(() => {
         if (pricing.freeShipQty == null) return null;
-        if (pricing.isFreeShipping) return isTh ? "ส่งฟรีแล้ว" : "Free shipping unlocked";
-        return isTh ? `อีก ${pricing.qtyToFreeShipping} ชิ้น ส่งฟรี` : `${pricing.qtyToFreeShipping} more for free shipping`;
-    }, [pricing.freeShipQty, pricing.isFreeShipping, pricing.qtyToFreeShipping, isTh]);
+        if (pricing.isFreeShipping) return isTh ? "ส่งฟรีแล้ว" : "Free shipping";
+        return isTh ? `ส่งฟรีเมื่อซื้อ ${pricing.freeShipQty} ชิ้น` : `Free shipping on ${pricing.freeShipQty}+`;
+    }, [pricing.freeShipQty, pricing.isFreeShipping, isTh]);
 
     // ── compact ───────────────────────────────────────────────
     if (variant === "compact") {
+        const compactText = saved > 0
+            ? (isTh
+                ? `ลดแล้ว ${savedStr} (${curPct}%)${pricing.nextTier ? ` · เพิ่ม ${pricing.qtyToNextTier} เป็น ${pricing.nextTier.discountPercent}%` : ""}`
+                : `Saved ${savedStr} (${curPct}%)${pricing.nextTier ? ` · ${pricing.qtyToNextTier} more → ${pricing.nextTier.discountPercent}%` : ""}`)
+            : nudge;
         return (
             <View style={[styles.capsule, { backgroundColor: isActive ? C.activeBg : C.idleBg, borderColor: isActive ? C.activeBorder : C.idleBorder }, style]}>
-                <Text style={[styles.capsuleText, { color: isActive ? C.activeText : C.idleText }]} numberOfLines={1}>
-                    {nudge}{shipNote ? `  ·  ${shipNote}` : ""}
+                {/* 1줄: 할인/다음 구간 */}
+                <Text style={[styles.capsuleText, { color: isActive ? C.activeText : C.idleText, textAlign: "center", lineHeight: 17 }]} numberOfLines={2}>
+                    {compactText}
                 </Text>
+                {/* 2줄: 무료배송 안내 */}
+                {shipNote ? (
+                    <Text style={[styles.capsuleShip, { color: isActive ? C.greenDeep : C.idleText }]} numberOfLines={1}>
+                        {shipNote}
+                    </Text>
+                ) : null}
             </View>
         );
     }
 
-    // ── full (지금 구간 → 다음 구간, 얇은 바 1개) ─────────────────
-    // 게이지는 "남은 수량" 기준 동기부여 곡선 (구매욕 ↑): 적게 남을수록 거의 다 찬 느낌.
-    //  남음 1개 → 75%, 2개 → 66%, 3개 → 55% ... 최소 32%
+    // ── full ─────────────────────────────────────────────────
+    // 게이지: "남은 수량" 기준으로 넉넉하게 채움 (어중간한 50% 느낌 제거)
+    // 게이지: 항상 다음 단계로 유도 + 넉넉하게(최소 70%) — 어중간/손해 느낌 제거
     const remaining = pricing.qtyToNextTier;
     let frac = 1;
     if (pricing.nextTier) {
-        if (remaining <= 1) frac = 0.75;
-        else if (remaining === 2) frac = 0.66;
-        else if (remaining === 3) frac = 0.55;
-        else if (remaining === 4) frac = 0.46;
-        else if (remaining === 5) frac = 0.40;
-        else frac = 0.32;
+        if (remaining <= 1) frac = 0.9;
+        else if (remaining === 2) frac = 0.82;
+        else if (remaining === 3) frac = 0.74;
+        else frac = 0.7;
     }
 
     const leftLabel = curPct > 0 ? `${curPct}%` : (isTh ? "ปกติ" : "0%");
@@ -134,6 +144,18 @@ export default function VolumeTierBar({
                 ) : null}
             </View>
 
+            {/* 원가 → 할인가 → 절약액 */}
+            {saved > 0 && count > 0 && (
+                <View style={styles.priceRow}>
+                    <Text style={styles.strikePrice}>{formatPrice(origTotal, locale)}</Text>
+                    <Text style={styles.arrow}>→</Text>
+                    <Text style={styles.discPrice}>{formatPrice(discTotal, locale)}</Text>
+                    <View style={styles.savedPill}>
+                        <Text style={styles.savedPillText}>{isTh ? "ประหยัด" : "save"} {savedStr}</Text>
+                    </View>
+                </View>
+            )}
+
             <View style={styles.barRow}>
                 <Text style={[styles.endLabel, curPct > 0 && { color: C.greenDeep, fontWeight: "800" }]}>{leftLabel}</Text>
                 <View style={styles.track}>
@@ -147,15 +169,23 @@ export default function VolumeTierBar({
 
 const styles = StyleSheet.create({
     capsule: { borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, alignItems: "center" },
-    capsuleText: { fontSize: 13, fontWeight: "700" },
+    capsuleText: { fontSize: 12.5, fontWeight: "700" },
+    capsuleShip: { fontSize: 11, fontWeight: "600", marginTop: 3, textAlign: "center" },
 
-    card: { borderWidth: 1, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16 },
+    card: { borderWidth: 1, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16 },
     topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
     nudge: { fontSize: 14, fontWeight: "800", flexShrink: 1 },
     ship: { fontSize: 11.5, fontWeight: "600", marginLeft: 10 },
 
+    priceRow: { flexDirection: "row", alignItems: "center", marginBottom: 12, flexWrap: "wrap" },
+    strikePrice: { fontSize: 14, fontWeight: "600", color: C.strike, textDecorationLine: "line-through" },
+    arrow: { fontSize: 14, color: C.strike, marginHorizontal: 6 },
+    discPrice: { fontSize: 20, fontWeight: "900", color: C.activeText },
+    savedPill: { marginLeft: 8, backgroundColor: C.green, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+    savedPillText: { fontSize: 11.5, fontWeight: "800", color: "#fff" },
+
     barRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-    track: { flex: 1, height: 6, borderRadius: 3, backgroundColor: C.track, overflow: "hidden" },
-    fill: { height: "100%", borderRadius: 3, backgroundColor: C.green },
-    endLabel: { fontSize: 11.5, fontWeight: "700", color: "#94A3B8", minWidth: 34, textAlign: "center" },
+    track: { flex: 1, height: 7, borderRadius: 4, backgroundColor: C.track, overflow: "hidden" },
+    fill: { height: "100%", borderRadius: 4, backgroundColor: C.green },
+    endLabel: { fontSize: 11.5, fontWeight: "700", color: "#94A3B8", minWidth: 38, textAlign: "center" },
 });

@@ -1,38 +1,22 @@
 // src/screens/CheckoutStepTwoScreen.tsx
 //
-// ✅ 변경 요약 (이전 working 버전 기준, 추가만)
-//  1) 표시금액 + USD 환산금액 모두 computePricing(단일 소스)
-//  2) 쿠폰 적용 시 수량할인 무효(중복 방지)는 computePricing 내부 처리
-//  3) "300 기본가" 깜빡임 제거: priceLoaded 전엔 금액 요약 스켈레톤
-//  4) shippingTiers(수량별 배송비 38/41/0) — freeShipThreshold/shippingFee 폴백 유지, USD 환산도 변환
-//  5) 🆕 작은 "사진 더 담기"(+) 버튼 (다시 기회) — addPhotos 로 기존 편집 유지하며 새 사진만 에디터로
+// ✅ 변경
+//  - computePricing 단일 소스(표시+USD), shippingTiers 반영, 가격 스켈레톤
+//  - 🆕 넛지(더 사면 싸다) + "사진 더 담기" 버튼을 한 카드로 묶음 (Checkout1 과 동일 디자인)
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-    View,
-    Text,
-    TextInput,
-    ScrollView,
-    TouchableOpacity,
-    StyleSheet,
-    Image,
-    Alert,
-    ActivityIndicator,
-    Platform,
-    Keyboard,
-    Modal,
-    LayoutAnimation,
-    UIManager,
+    View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Image, Alert,
+    ActivityIndicator, Platform, Keyboard, Modal, LayoutAnimation, UIManager,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker"; // 🆕
+import * as ImagePicker from "expo-image-picker";
 
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from 'expo-linking';
 
-// ⚠️ 앱 전용 라이브러리 (웹에서는 렌더링 차단)
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 
 import { usePhoto } from "../context/PhotoContext";
@@ -46,12 +30,10 @@ import { doc, getDoc, getFirestore, updateDoc, setDoc } from "firebase/firestore
 import { createOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 
-// ✨ Firebase Functions 연동 및 ExportQueue 가져오기
 import { getApp } from "firebase/app";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { exportQueue } from "../utils/exportQueue";
 
-// ✨ 가격 단일 소스 + 넛지
 import { computePricing, getCurrencySymbol, type VolumeTier, type ShippingTier } from "../utils/pricing";
 import VolumeTierBar from "../components/VolumeTierBar";
 
@@ -65,10 +47,8 @@ export default function CheckoutStepTwoScreen() {
     const router = useRouter();
     const scrollViewRef = useRef<ScrollView>(null);
 
-    // 🚨 [애플 심사 모드 스위치]
     const IS_APPLE_REVIEW_MODE = false;
 
-    // 🆕 addPhotos / setCurrentIndex 추가 (이미 PhotoContext 에 존재)
     const {
         photos = [],
         clearDraft = async () => { },
@@ -80,35 +60,16 @@ export default function CheckoutStepTwoScreen() {
 
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
-            return [{
-                uri: "https://via.placeholder.com/300?text=Paymentwall+Test",
-                quantity: 1
-            }];
+            return [{ uri: "https://via.placeholder.com/300?text=Paymentwall+Test", quantity: 1 }];
         }
         return photos || [];
     }, [photos]);
 
     const [formData, setFormData] = useState({
-        fullName: "",
-        addressLine1: "",
-        addressLine2: "",
-        city: "",
-        state: "",
-        postalCode: "",
-        phone: "",
-        email: "",
-        instagram: "",
+        fullName: "", addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", phone: "", email: "", instagram: "",
     });
-
     const [errors, setErrors] = useState({
-        fullName: false,
-        addressLine1: false,
-        city: false,
-        state: false,
-        postalCode: false,
-        phone: false,
-        email: false,
-        emailFormat: false,
+        fullName: false, addressLine1: false, city: false, state: false, postalCode: false, phone: false, email: false, emailFormat: false,
     });
 
     const [formErrorMsg, setFormErrorMsg] = useState<string | null>(null);
@@ -119,22 +80,20 @@ export default function CheckoutStepTwoScreen() {
 
     const [isCreatingOrder, setIsCreatingOrder] = useState(false);
     const [progressCount, setProgressCount] = useState(0);
-
     const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
-    const [isAddingPhotos, setIsAddingPhotos] = useState(false); // 🆕
+    const [isAddingPhotos, setIsAddingPhotos] = useState(false);
 
     const [promoCode, setPromoCode] = useState("");
     const [promoResult, setPromoResult] = useState<PromoResult | null>(null);
     const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
-    // ✨ Firebase 가격 상태
     const safeLocale = locale || "EN";
-    const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 300 : 8.85);
-    const [basePriceUSD, setBasePriceUSD] = useState<number>(8.85);
+    const [pricePerTile, setPricePerTile] = useState<number>(safeLocale === "TH" ? 200 : 5.71);
+    const [basePriceUSD, setBasePriceUSD] = useState<number>(5.71);
     const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeTier[]>([]);
     const [freeShipThreshold, setFreeShipThreshold] = useState<number | undefined>(undefined);
     const [shippingFeeLocal, setShippingFeeLocal] = useState<number>(0);
-    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]); // 수량별 배송비
+    const [shippingTiers, setShippingTiers] = useState<ShippingTier[]>([]);
     const [priceLoaded, setPriceLoaded] = useState(false);
 
     useEffect(() => {
@@ -142,22 +101,16 @@ export default function CheckoutStepTwoScreen() {
         const fetchPriceAndDiscounts = async () => {
             try {
                 const firestoreDb = getFirestore();
-                const docRef = doc(firestoreDb, "config", "prices");
-                const docSnap = await getDoc(docRef);
-
+                const docSnap = await getDoc(doc(firestoreDb, "config", "prices"));
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     if (alive) {
                         setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
-                        setBasePriceUSD(data.price_usd || 8.85);
-                        if (data.volumeDiscounts && Array.isArray(data.volumeDiscounts)) {
-                            setVolumeDiscounts([...data.volumeDiscounts].sort((a, b) => a.minQty - b.minQty));
-                        }
+                        setBasePriceUSD(data.price_usd || 5.71);
+                        if (Array.isArray(data.volumeDiscounts)) setVolumeDiscounts([...data.volumeDiscounts].sort((a, b) => a.minQty - b.minQty));
                         if (data.freeShipThreshold != null) setFreeShipThreshold(data.freeShipThreshold);
                         if (data.shippingFee != null) setShippingFeeLocal(data.shippingFee);
-                        if (Array.isArray(data.shippingTiers)) {
-                            setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty));
-                        }
+                        if (Array.isArray(data.shippingTiers)) setShippingTiers([...data.shippingTiers].sort((a, b) => a.minQty - b.minQty));
                     }
                 }
             } catch (error) {
@@ -166,7 +119,6 @@ export default function CheckoutStepTwoScreen() {
                 if (alive) setPriceLoaded(true);
             }
         };
-
         fetchPriceAndDiscounts();
         return () => { alive = false; };
     }, [safeLocale]);
@@ -175,9 +127,7 @@ export default function CheckoutStepTwoScreen() {
         if (!auth) return;
         const unsub = auth.onAuthStateChanged((user) => {
             setCurrentUser(user);
-            if (user && !formData.fullName) {
-                loadSavedAddress(user.uid);
-            }
+            if (user && !formData.fullName) loadSavedAddress(user.uid);
         });
         return unsub;
     }, []);
@@ -189,21 +139,13 @@ export default function CheckoutStepTwoScreen() {
             if (userDoc.exists()) {
                 const data = userDoc.data();
                 if (data.defaultAddress) {
-                    setFormData(prev => ({
-                        ...prev,
-                        ...data.defaultAddress,
-                        instagram: data.instagram || prev.instagram,
-                        email: data.defaultAddress.email || auth.currentUser?.email || ""
-                    }));
+                    setFormData(prev => ({ ...prev, ...data.defaultAddress, instagram: data.instagram || prev.instagram, email: data.defaultAddress.email || auth.currentUser?.email || "" }));
                 } else if (auth.currentUser?.email) {
                     setFormData(prev => ({ ...prev, email: auth.currentUser?.email || "" }));
                 }
             }
-        } catch (e) {
-            console.error("[Checkout] Failed to load saved address:", e);
-        } finally {
-            setIsLoadingAddress(false);
-        }
+        } catch (e) { console.error("[Checkout] Failed to load saved address:", e); }
+        finally { setIsLoadingAddress(false); }
     };
 
     const handleInputChange = (field: keyof typeof formData, value: string) => {
@@ -216,9 +158,7 @@ export default function CheckoutStepTwoScreen() {
 
     const fillAddressFromGoogle = (details: any) => {
         if (!details || !details.address_components) return;
-
         let streetNumber = "", route = "", subLocality = "", locality = "", adminArea = "", postalCode = "";
-
         details.address_components.forEach((component: any) => {
             const types = component?.types || [];
             if (types.includes("street_number")) streetNumber = component.long_name;
@@ -228,39 +168,19 @@ export default function CheckoutStepTwoScreen() {
             if (types.includes("administrative_area_level_1")) adminArea = component.long_name;
             if (types.includes("postal_code")) postalCode = component.long_name;
         });
-
-        setFormData(prev => ({
-            ...prev,
-            addressLine1: `${streetNumber} ${route}`.trim() || details.formatted_address || "",
-            addressLine2: subLocality,
-            city: locality,
-            state: adminArea,
-            postalCode: postalCode,
-        }));
+        setFormData(prev => ({ ...prev, addressLine1: `${streetNumber} ${route}`.trim() || details.formatted_address || "", addressLine2: subLocality, city: locality, state: adminArea, postalCode: postalCode }));
         setErrors((prev) => ({ ...prev, addressLine1: false, city: false, state: false, postalCode: false }));
         setFormErrorMsg(null);
         Keyboard.dismiss();
     };
 
-    // ✨ [결제 금액 계산 - 단일 소스]
     const CURRENCY_SYMBOL = getCurrencySymbol(safeLocale);
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    const promoInput = promoResult?.success
-        ? { success: true, discountAmount: promoResult.discountAmount }
-        : undefined;
+    const promoInput = promoResult?.success ? { success: true, discountAmount: promoResult.discountAmount } : undefined;
 
-    // 표시용 (locale 통화)
     const pricing = useMemo(
-        () => computePricing({
-            count: safePhotosCount,
-            pricePerTile,
-            volumeDiscounts,
-            shippingTiers,        // 수량별 배송비(있으면 우선 적용)
-            freeShipThreshold,    // 폴백
-            shippingFee: shippingFeeLocal, // 폴백
-            promo: promoInput,
-        }),
+        () => computePricing({ count: safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFee: shippingFeeLocal, promo: promoInput }),
         [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput]
     );
 
@@ -269,63 +189,40 @@ export default function CheckoutStepTwoScreen() {
     const shippingFee = pricing.shippingFee;
     const total = pricing.total;
 
-    // 결제용 (USD 환산) — 동일 로직, 통화만 USD. 배송 구간 fee 도 환율 변환.
     const totalInUSD = useMemo(() => {
         const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
-        const usdShippingTiers = (shippingTiers || []).map((s) => ({
-            minQty: s.minQty,
-            fee: s.fee === 0 ? 0 : Number((s.fee * rate).toFixed(2)),
-        }));
-
+        const usdShippingTiers = (shippingTiers || []).map((s) => ({ minQty: s.minQty, fee: s.fee === 0 ? 0 : Number((s.fee * rate).toFixed(2)) }));
         const promoRatio = rawSubtotal > 0 ? pricing.promoDiscountAmount / rawSubtotal : 0;
         const usdSubtotal = safePhotosCount * basePriceUSD;
-        const usdShippingFallback = pricing.shippingFee > 0 && pricePerTile > 0
-            ? Number((pricing.shippingFee * rate).toFixed(2))
-            : 0;
-
+        const usdShippingFallback = pricing.shippingFee > 0 && pricePerTile > 0 ? Number((pricing.shippingFee * rate).toFixed(2)) : 0;
         const usdPricing = computePricing({
-            count: safePhotosCount,
-            pricePerTile: basePriceUSD,
-            volumeDiscounts,
+            count: safePhotosCount, pricePerTile: basePriceUSD, volumeDiscounts,
             shippingTiers: usdShippingTiers.length ? usdShippingTiers : undefined,
-            freeShipThreshold,
-            shippingFee: usdShippingFallback,
+            freeShipThreshold, shippingFee: usdShippingFallback,
             promo: promoInput ? { success: true, discountAmount: Number((usdSubtotal * promoRatio).toFixed(2)) } : undefined,
         });
         return usdPricing.total;
     }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput]);
 
-    // 🆕 사진 더 담기 (작게, 다시 기회) — 기존 편집 유지, 새 사진만 에디터로
+    // 🆕 사진 더 담기
     const handleAddMorePhotos = async () => {
         if (isAddingPhotos) return;
-        if (Platform.OS === 'web') {
-            Alert.alert("Notice", "Adding photos is available in the mobile app.");
-            return;
-        }
+        if (Platform.OS === 'web') { Alert.alert("Notice", "Adding photos is available in the mobile app."); return; }
         try {
             setIsAddingPhotos(true);
             const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!perm.granted) {
-                Alert.alert(
-                    (t as any)?.["permNeededTitle"] || "Permission needed",
-                    (t as any)?.["permNeededMsg"] || "Please allow photo access to add more tiles."
-                );
+                Alert.alert((t as any)?.["permNeededTitle"] || "Permission needed", (t as any)?.["permNeededMsg"] || "Please allow photo access to add more tiles.");
                 return;
             }
             const startIndex = (photos || []).length;
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                allowsMultipleSelection: true,
-                quality: 1,
-                exif: false,
-            });
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true, quality: 1, exif: false });
             if (result.canceled || !result.assets?.length) return;
-
             await addPhotos(result.assets, { persist: true, step: "editor" });
             setTimeout(() => {
                 setCurrentIndex(startIndex, { persist: true, step: "editor" });
                 router.push("/create/editor");
-            }, 80);
+            }, 150);
         } catch (e: any) {
             console.error("[AddMore] failed", e);
             Alert.alert("Error", e?.message || "Failed to add photos.");
@@ -339,35 +236,19 @@ export default function CheckoutStepTwoScreen() {
         setIsApplyingPromo(true);
         try {
             const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, pricePerTile);
-
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
-
-            if (!res.success) {
-                Alert.alert("Promo", res.error === 'promoInvalid' ? ((t as any)?.[res.error] || "Invalid promo.") : res.error);
-            }
-        } catch (e) {
-            Alert.alert("Promo", "Failed to validate promo.");
-        } finally {
-            setIsApplyingPromo(false);
-        }
+            if (!res.success) Alert.alert("Promo", res.error === 'promoInvalid' ? ((t as any)?.[res.error] || "Invalid promo.") : res.error);
+        } catch (e) { Alert.alert("Promo", "Failed to validate promo."); }
+        finally { setIsApplyingPromo(false); }
     };
 
     const ensureTokenReady = async (u: User) => {
-        try {
-            await u.getIdToken(true);
-            await new Promise((r) => setTimeout(r, 50));
-            return true;
-        } catch (e) {
-            console.error("[Checkout] getIdToken failed", e);
-            return false;
-        }
+        try { await u.getIdToken(true); await new Promise((r) => setTimeout(r, 50)); return true; }
+        catch (e) { console.error("[Checkout] getIdToken failed", e); return false; }
     };
 
-    const validateEmail = (email: string) => {
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        return re.test(email);
-    };
+    const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
     const validateShipping = () => {
         if (!currentUser) {
@@ -375,53 +256,33 @@ export default function CheckoutStepTwoScreen() {
             router.push("/auth/email");
             return false;
         }
-
         let isValid = true;
         let newErrors = { fullName: false, addressLine1: false, city: false, state: false, postalCode: false, phone: false, email: false, emailFormat: false };
-
         if (!formData.fullName.trim()) { newErrors.fullName = true; isValid = false; }
         if (!formData.addressLine1.trim()) { newErrors.addressLine1 = true; isValid = false; }
         if (!formData.city.trim()) { newErrors.city = true; isValid = false; }
         if (!formData.state.trim()) { newErrors.state = true; isValid = false; }
         if (!formData.postalCode.trim()) { newErrors.postalCode = true; isValid = false; }
         if (!formData.phone.trim()) { newErrors.phone = true; isValid = false; }
-
-        if (!formData.email.trim()) {
-            newErrors.email = true;
-            isValid = false;
-        } else if (!validateEmail(formData.email)) {
-            newErrors.email = true;
-            newErrors.emailFormat = true;
-            isValid = false;
-        }
-
+        if (!formData.email.trim()) { newErrors.email = true; isValid = false; }
+        else if (!validateEmail(formData.email)) { newErrors.email = true; newErrors.emailFormat = true; isValid = false; }
         setErrors(newErrors);
-
         if (!isValid) {
             let msg = (t as any)?.["alertFillShipping"] || "Please fill in all required shipping fields marked with *.";
             if (newErrors.emailFormat) msg = (t as any)?.["auth.invalidEmail"] || "Please enter a valid email address format.";
             else if (newErrors.phone && formData.phone.length > 0 && formData.phone.length < 9) msg = "Please enter a valid phone number (min 9 digits).";
-
             setFormErrorMsg(msg);
             scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-
-            if (Platform.OS !== 'web') {
-                Alert.alert("Required Fields", msg);
-            }
+            if (Platform.OS !== 'web') Alert.alert("Required Fields", msg);
             return false;
         }
-
         if (!isAgreed) {
             let msg = (t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.";
             setFormErrorMsg(msg);
             scrollViewRef.current?.scrollToEnd({ animated: true });
-
-            if (Platform.OS !== 'web') {
-                Alert.alert((t as any)?.["required"] || "Agreement Required", msg);
-            }
+            if (Platform.OS !== 'web') Alert.alert((t as any)?.["required"] || "Agreement Required", msg);
             return false;
         }
-
         setFormErrorMsg(null);
         return true;
     };
@@ -429,34 +290,16 @@ export default function CheckoutStepTwoScreen() {
     const requestPayletterPayment = async (orderId: string, method: string) => {
         try {
             let pgcode = "PLCreditCardMpi";
-            if (method === "RABBIT_LINE_PAY") {
-                pgcode = "AlipayPlusRabbitLinePay";
-            } else if (method === "TRUEMONEY") {
-                pgcode = "AlipayPlusTrueMoney";
-            }
+            if (method === "RABBIT_LINE_PAY") pgcode = "AlipayPlusRabbitLinePay";
+            else if (method === "TRUEMONEY") pgcode = "AlipayPlusTrueMoney";
 
             const functions = getFunctions(getApp(), "us-central1");
             const requestPayment = httpsCallable(functions, "payletterRequestPayment");
-
-            const returnScheme = Platform.OS === 'web'
-                ? `${window.location.origin}/myorder/success?id=${orderId}`
-                : Linking.createURL('/payment-callback', { scheme: 'memotile' });
-
+            const returnScheme = Platform.OS === 'web' ? `${window.location.origin}/myorder/success?id=${orderId}` : Linking.createURL('/payment-callback', { scheme: 'memotile' });
             const webUrl = Platform.OS === 'web' ? returnScheme : '';
 
-            const response: any = await requestPayment({
-                orderId,
-                amount: totalInUSD,
-                email: formData.email,
-                fullName: formData.fullName,
-                pgcode: pgcode,
-                platform: Platform.OS,
-                webUrl: webUrl,
-                appScheme: returnScheme
-            });
-
+            const response: any = await requestPayment({ orderId, amount: totalInUSD, email: formData.email, fullName: formData.fullName, pgcode, platform: Platform.OS, webUrl, appScheme: returnScheme });
             const paymentUrl = response.data.paymentUrl;
-
             setProgressCount(safePhotosCount);
 
             setTimeout(() => {
@@ -468,89 +311,56 @@ export default function CheckoutStepTwoScreen() {
                     const alertMessage = (t as any)?.["paymentRedirectMsg"] || "You will be redirected to a secure payment page. Please do not close the window until the process is complete.";
                     const cancelText = (t as any)?.["cancel"] || "Cancel";
                     const confirmText = (t as any)?.["confirm"] || "OK";
-
-                    Alert.alert(
-                        alertTitle,
-                        alertMessage,
-                        [
-                            { text: cancelText, style: "cancel" },
-                            {
-                                text: confirmText,
-                                onPress: async () => {
-                                    await WebBrowser.openAuthSessionAsync(paymentUrl, returnScheme);
-
-                                    setIsVerifyingPayment(true);
-                                    setIsCreatingOrder(true);
-
-                                    await new Promise(resolve => setTimeout(resolve, 800));
-
-                                    try {
-                                        const orderSnap = await getDoc(doc(db, "orders", orderId));
-                                        const orderData = orderSnap.data();
-
-                                        if (orderData?.status === 'paid') {
-
-                                            if (promoResult?.success && promoResult.promoCode) {
-                                                try {
-                                                    const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
-                                                    await setDoc(redemptionRef, {
-                                                        uid: currentUser?.uid,
-                                                        code: promoResult.promoCode.toUpperCase(),
-                                                        usedAt: new Date().toISOString(),
-                                                        usageCount: 1
-                                                    }, { merge: true });
-                                                } catch (promoErr) {
-                                                    console.error("쿠폰 도장 찍기 에러", promoErr);
-                                                }
-                                            }
-
-                                            await clearDraft();
-                                            clearPhotos();
-                                            router.replace({ pathname: "/myorder/success", params: { id: orderId } });
-                                            setTimeout(() => {
-                                                setIsCreatingOrder(false);
-                                                setIsVerifyingPayment(false);
-                                            }, 500);
-                                        } else {
-                                            setIsCreatingOrder(false);
-                                            setIsVerifyingPayment(false);
-                                            Alert.alert(
-                                                (t as any)?.["paymentCanceledTitle"] || "Payment Canceled",
-                                                (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again."
-                                            );
+                    Alert.alert(alertTitle, alertMessage, [
+                        { text: cancelText, style: "cancel" },
+                        {
+                            text: confirmText,
+                            onPress: async () => {
+                                await WebBrowser.openAuthSessionAsync(paymentUrl, returnScheme);
+                                setIsVerifyingPayment(true);
+                                setIsCreatingOrder(true);
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                                try {
+                                    const orderSnap = await getDoc(doc(db, "orders", orderId));
+                                    const orderData = orderSnap.data();
+                                    if (orderData?.status === 'paid') {
+                                        if (promoResult?.success && promoResult.promoCode) {
+                                            try {
+                                                const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${currentUser?.uid}`);
+                                                await setDoc(redemptionRef, { uid: currentUser?.uid, code: promoResult.promoCode.toUpperCase(), usedAt: new Date().toISOString(), usageCount: 1 }, { merge: true });
+                                            } catch (promoErr) { console.error("쿠폰 도장 찍기 에러", promoErr); }
                                         }
-                                    } catch (e) {
+                                        await clearDraft();
+                                        clearPhotos();
+                                        router.replace({ pathname: "/myorder/success", params: { id: orderId } });
+                                        setTimeout(() => { setIsCreatingOrder(false); setIsVerifyingPayment(false); }, 500);
+                                    } else {
                                         setIsCreatingOrder(false);
                                         setIsVerifyingPayment(false);
-                                        console.error("Order check failed:", e);
+                                        Alert.alert((t as any)?.["paymentCanceledTitle"] || "Payment Canceled", (t as any)?.["paymentCanceledMsg"] || "Your payment was canceled. Please try again.");
                                     }
+                                } catch (e) {
+                                    setIsCreatingOrder(false); setIsVerifyingPayment(false);
+                                    console.error("Order check failed:", e);
                                 }
                             }
-                        ]
-                    );
+                        }
+                    ]);
                 }
             }, 500);
-
         } catch (error: any) {
             console.error("Payletter request error:", error);
             setIsCreatingOrder(false);
-            const errorTitle = (t as any)?.["paymentError"] || "Payment Error";
-            Alert.alert(errorTitle, error.message || "An error occurred while preparing the payment.");
+            Alert.alert((t as any)?.["paymentError"] || "Payment Error", error.message || "An error occurred while preparing the payment.");
         }
     };
 
     const handlePlaceOrder = async (provider: "RABBIT_LINE_PAY" | "TRUEMONEY" | "CREDIT_CARD" | "PROMO_FREE") => {
         Keyboard.dismiss();
-
         const user = currentUser;
         if (!validateShipping()) return;
-
         const ok = await ensureTokenReady(user!);
-        if (!ok) {
-            Alert.alert("Auth", "Auth token not ready. Please try again.");
-            return;
-        }
-
+        if (!ok) { Alert.alert("Auth", "Auth token not ready. Please try again."); return; }
         if (isCreatingOrder) return;
 
         setIsCreatingOrder(true);
@@ -560,64 +370,31 @@ export default function CheckoutStepTwoScreen() {
         try {
             await exportQueue.waitForIdle(60000);
             await ensureTokenReady(user!);
-
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
             const orderId = await createOrder({
                 uid: user!.uid,
                 shipping: {
-                    fullName: formData.fullName,
-                    address1: formData.addressLine1,
-                    address2: formData.addressLine2,
-                    city: formData.city,
-                    state: formData.state,
-                    postalCode: formData.postalCode,
-                    country: "Thailand",
-                    phone: formData.phone,
-                    email: formData.email,
+                    fullName: formData.fullName, address1: formData.addressLine1, address2: formData.addressLine2,
+                    city: formData.city, state: formData.state, postalCode: formData.postalCode,
+                    country: "Thailand", phone: formData.phone, email: formData.email,
                 },
                 totals: { subtotal: rawSubtotal, discount: totalDiscount, shippingFee, total },
                 photos: Array.isArray(safePhotos) ? safePhotos : [],
-                promoCode: promoResult?.success
-                    ? {
-                        code: promoResult.promoCode!,
-                        discountType: promoResult.discountType!,
-                        discountValue: promoResult.discountValue!,
-                    }
-                    : undefined,
-                locale,
-                currency: CURRENCY_CODE,
-                instagram: formData.instagram,
-                onProgress: (current) => {
-                    setProgressCount(current);
-                }
+                promoCode: promoResult?.success ? { code: promoResult.promoCode!, discountType: promoResult.discountType!, discountValue: promoResult.discountValue! } : undefined,
+                locale, currency: CURRENCY_CODE, instagram: formData.instagram,
+                onProgress: (current) => { setProgressCount(current); },
             });
 
-            // 0원 결제 확인 (무료 쿠폰 이벤트)
             const isFreeOrder = provider === "PROMO_FREE" || total <= 0;
-
             if (isFreeOrder) {
                 try {
-                    await updateDoc(doc(db, "orders", orderId), {
-                        status: "paid",
-                        paymentMethod: "PROMO_FREE",
-                        paidAt: new Date().toISOString()
-                    });
-
+                    await updateDoc(doc(db, "orders", orderId), { status: "paid", paymentMethod: "PROMO_FREE", paidAt: new Date().toISOString() });
                     if (promoResult?.success && promoResult.promoCode) {
                         const redemptionRef = doc(db, 'promoRedemptions', `${promoResult.promoCode.toUpperCase()}_${user!.uid}`);
-                        await setDoc(redemptionRef, {
-                            uid: user!.uid,
-                            code: promoResult.promoCode.toUpperCase(),
-                            usedAt: new Date().toISOString(),
-                            usageCount: 1
-                        }, { merge: true });
+                        await setDoc(redemptionRef, { uid: user!.uid, code: promoResult.promoCode.toUpperCase(), usedAt: new Date().toISOString(), usageCount: 1 }, { merge: true });
                     }
-
-                } catch (updateErr) {
-                    console.error("Failed to update free order status:", updateErr);
-                }
-
+                } catch (updateErr) { console.error("Failed to update free order status:", updateErr); }
                 setProgressCount(safePhotosCount);
                 setTimeout(async () => {
                     setIsCreatingOrder(false);
@@ -628,7 +405,6 @@ export default function CheckoutStepTwoScreen() {
             } else {
                 await requestPayletterPayment(orderId, provider);
             }
-
         } catch (e: any) {
             console.error("Failed to place order:", e);
             setIsCreatingOrder(false);
@@ -637,72 +413,40 @@ export default function CheckoutStepTwoScreen() {
     };
 
     const instaPlaceholder = (t as any)?.["instaPlaceholder"] || "Instagram ID (Get free coupons!)";
+    const getCleanCardName = () => ((t as any)?.["payCard"] || "Credit/Debit Card").replace(" (Visa, Master)", "");
 
-    const getCleanCardName = () => {
-        const originalName = (t as any)?.["payCard"] || "Credit/Debit Card";
-        return originalName.replace(" (Visa, Master)", "");
-    };
+    const getProgressTitle = () => isVerifyingPayment
+        ? ((t as any)?.["verifyingPayment"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment..."))
+        : ((t as any)?.["preparingMemories"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories..."));
 
-    const getProgressTitle = () => {
-        if (isVerifyingPayment) {
-            return (t as any)?.["verifyingPayment"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment...");
-        }
-        return (t as any)?.["preparingMemories"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories...");
-    };
-
-    const getProgressSubtitle = () => {
-        if (isVerifyingPayment) {
-            return (t as any)?.["pleaseWait"] || (safeLocale?.toUpperCase() === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment...");
-        }
-        return (t as any)?.["optimizingImages"] || (safeLocale?.toUpperCase() === "TH"
+    const getProgressSubtitle = () => isVerifyingPayment
+        ? ((t as any)?.["pleaseWait"] || (safeLocale?.toUpperCase() === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment..."))
+        : ((t as any)?.["optimizingImages"] || (safeLocale?.toUpperCase() === "TH"
             ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nใช้เวลาสักครู่ กรุณาอย่าปิดแอปพลิเคชัน"
-            : "Optimizing high-resolution tiles for the best print quality.\nThis may take a few minutes. Please keep the app open.");
-    };
+            : "Optimizing high-resolution tiles for the best print quality.\nThis may take a few minutes. Please keep the app open."));
+
+    const addMoreLabel = safeLocale === "TH" ? "เพิ่มรูป (ยิ่งเยอะยิ่งถูก)" : "Add more photos — save more";
 
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="chevron-back" size={24} color="black" />
-                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Ionicons name="chevron-back" size={24} color="black" /></TouchableOpacity>
                 <Text style={styles.headerTitle}>{(t as any)?.["checkoutTitle"] || "Checkout"}</Text>
-                <View style={{ width: 40 }}>
-                    {isLoadingAddress && <ActivityIndicator size="small" color={colors?.ink || "#000"} />}
-                </View>
+                <View style={{ width: 40 }}>{isLoadingAddress && <ActivityIndicator size="small" color={colors?.ink || "#000"} />}</View>
             </View>
 
-            <ScrollView
-                ref={scrollViewRef}
-                contentContainerStyle={styles.content}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled={true}
-                onScrollBeginDrag={() => Keyboard.dismiss()}
-            >
+            <ScrollView ref={scrollViewRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true} onScrollBeginDrag={() => Keyboard.dismiss()}>
                 <View style={styles.stepContainer}>
                     <View style={styles.formSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["shippingAddressTitle"] || "SHIPPING ADDRESS"}</Text>
-
                         {formErrorMsg && (
-                            <View style={styles.errorBox}>
-                                <Ionicons name="warning" size={16} color="#B91C1C" />
-                                <Text style={styles.errorBoxText}>{formErrorMsg}</Text>
-                            </View>
+                            <View style={styles.errorBox}><Ionicons name="warning" size={16} color="#B91C1C" /><Text style={styles.errorBoxText}>{formErrorMsg}</Text></View>
                         )}
 
-                        <TextInput
-                            placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`}
-                            style={[styles.input, errors.fullName && styles.inputError]}
-                            value={formData.fullName}
-                            onChangeText={(v) => handleInputChange("fullName", v)}
-                        />
+                        <TextInput placeholder={`${(t as any)?.["fullName"] || "Full Name"} *`} style={[styles.input, errors.fullName && styles.inputError]} value={formData.fullName} onChangeText={(v) => handleInputChange("fullName", v)} />
 
                         {Platform.OS === 'web' ? (
-                            <TextInput
-                                placeholder={(t as any)?.["streetAddress"] || "Street Address *"}
-                                style={[styles.input, errors.addressLine1 && styles.inputError]}
-                                value={formData.addressLine1}
-                                onChangeText={(v) => handleInputChange("addressLine1", v)}
-                            />
+                            <TextInput placeholder={(t as any)?.["streetAddress"] || "Street Address *"} style={[styles.input, errors.addressLine1 && styles.inputError]} value={formData.addressLine1} onChangeText={(v) => handleInputChange("addressLine1", v)} />
                         ) : (
                             <View style={{ marginBottom: 12, zIndex: 5000 }}>
                                 <GooglePlacesAutocomplete
@@ -711,11 +455,7 @@ export default function CheckoutStepTwoScreen() {
                                     onPress={(data, details = null) => fillAddressFromGoogle(details)}
                                     query={{ key: GOOGLE_PLACES_API_KEY, language: safeLocale === 'TH' ? 'th' : 'en' }}
                                     disableScroll={true} listProps={{ scrollEnabled: false }}
-                                    textInputProps={{
-                                        value: formData.addressLine1 || "",
-                                        onChangeText: (text) => handleInputChange("addressLine1", text),
-                                        placeholderTextColor: "#C7C7CD"
-                                    }}
+                                    textInputProps={{ value: formData.addressLine1 || "", onChangeText: (text) => handleInputChange("addressLine1", text), placeholderTextColor: "#C7C7CD" }}
                                     styles={{
                                         textInputContainer: { width: '100%', backgroundColor: 'transparent' },
                                         textInput: [styles.input, { marginBottom: 0 }, errors.addressLine1 && styles.inputError],
@@ -727,57 +467,20 @@ export default function CheckoutStepTwoScreen() {
                             </View>
                         )}
 
-                        <TextInput
-                            placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`}
-                            style={styles.input}
-                            value={formData.addressLine2}
-                            onChangeText={(v) => handleInputChange("addressLine2", v)}
-                        />
+                        <TextInput placeholder={`${(t as any)?.["address2"] || "Apartment, suite, etc."} ${(t as any)?.["optionalSuffix"] || "(optional)"}`} style={styles.input} value={formData.addressLine2} onChangeText={(v) => handleInputChange("addressLine2", v)} />
 
                         <View style={styles.row}>
-                            <TextInput
-                                placeholder={`${(t as any)?.["city"] || "City"} *`}
-                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.city && styles.inputError]}
-                                value={formData.city}
-                                onChangeText={(v) => handleInputChange("city", v)}
-                            />
-                            <TextInput
-                                placeholder={`${(t as any)?.["stateProv"] || "State"} *`}
-                                style={[styles.input, { flex: 1 }, errors.state && styles.inputError]}
-                                value={formData.state}
-                                onChangeText={(v) => handleInputChange("state", v)}
-                            />
+                            <TextInput placeholder={`${(t as any)?.["city"] || "City"} *`} style={[styles.input, { flex: 1, marginRight: 8 }, errors.city && styles.inputError]} value={formData.city} onChangeText={(v) => handleInputChange("city", v)} />
+                            <TextInput placeholder={`${(t as any)?.["stateProv"] || "State"} *`} style={[styles.input, { flex: 1 }, errors.state && styles.inputError]} value={formData.state} onChangeText={(v) => handleInputChange("state", v)} />
                         </View>
 
                         <View style={styles.row}>
-                            <TextInput
-                                placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`}
-                                style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]}
-                                value={formData.postalCode}
-                                keyboardType="numeric"
-                                onChangeText={(v) => handleInputChange("postalCode", v)}
-                            />
-                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}>
-                                <Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text>
-                            </View>
+                            <TextInput placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`} style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]} value={formData.postalCode} keyboardType="numeric" onChangeText={(v) => handleInputChange("postalCode", v)} />
+                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}><Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text></View>
                         </View>
 
-                        <TextInput
-                            placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`}
-                            style={[styles.input, errors.phone && styles.inputError]}
-                            value={formData.phone}
-                            keyboardType="phone-pad"
-                            onChangeText={(v) => handleInputChange("phone", v)}
-                        />
-
-                        <TextInput
-                            placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`}
-                            style={[styles.input, errors.email && styles.inputError]}
-                            value={formData.email}
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                            onChangeText={(v) => handleInputChange("email", v)}
-                        />
+                        <TextInput placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`} style={[styles.input, errors.phone && styles.inputError]} value={formData.phone} keyboardType="phone-pad" onChangeText={(v) => handleInputChange("phone", v)} />
+                        <TextInput placeholder={`${(t as any)?.["emailAddress"] || "Email"} *`} style={[styles.input, errors.email && styles.inputError]} value={formData.email} keyboardType="email-address" autoCapitalize="none" onChangeText={(v) => handleInputChange("email", v)} />
 
                         <View style={styles.instagramInputContainer}>
                             <View style={styles.instagramIconBox}><Ionicons name="logo-instagram" size={22} color="#E4405F" /></View>
@@ -796,40 +499,7 @@ export default function CheckoutStepTwoScreen() {
                         {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
                     </View>
 
-                    {/* ✨ 묶음 판매 넛지 (쿠폰 없을 때만 의미 있음) */}
-                    {priceLoaded && !promoResult?.success && (
-                        <VolumeTierBar
-                            variant="compact"
-                            count={safePhotosCount}
-                            pricePerTile={pricePerTile}
-                            volumeDiscounts={volumeDiscounts}
-                            shippingTiers={shippingTiers}
-                            freeShipThreshold={freeShipThreshold}
-                            shippingFee={shippingFeeLocal}
-                            locale={safeLocale}
-                            style={{ marginBottom: 12 }}
-                        />
-                    )}
-
-                    {/* 🆕 작은 "사진 더 담기"(+) — 다시 기회 */}
-                    <TouchableOpacity
-                        onPress={handleAddMorePhotos}
-                        style={styles.addMoreSmall}
-                        disabled={isAddingPhotos}
-                        activeOpacity={0.7}
-                    >
-                        {isAddingPhotos ? (
-                            <ActivityIndicator size="small" color="#059669" />
-                        ) : (
-                            <>
-                                <Ionicons name="add" size={16} color="#059669" />
-                                <Text style={styles.addMoreSmallText}>
-                                    {safeLocale === 'TH' ? "เพิ่มรูป" : "Add more"}
-                                </Text>
-                            </>
-                        )}
-                    </TouchableOpacity>
-
+                    {/* 가격(요약) — 안내문구는 이 아래로 이동 */}
                     {!priceLoaded ? (
                         <View style={[styles.summarySection, { alignItems: "center", minHeight: 90, justifyContent: "center" }]}>
                             <ActivityIndicator color={colors?.ink || "#000"} />
@@ -843,9 +513,7 @@ export default function CheckoutStepTwoScreen() {
 
                             {pricing.volumeDiscountAmount > 0 && (
                                 <View style={styles.summaryRow}>
-                                    <Text style={[styles.summaryLabel, { color: "#10B981" }]}>
-                                        {(t as any)?.["volumeDiscount"] || "Volume Discount"} ({pricing.volumeDiscountPercent}%)
-                                    </Text>
+                                    <Text style={[styles.summaryLabel, { color: "#10B981" }]}>{(t as any)?.["volumeDiscount"] || "Volume Discount"} ({pricing.volumeDiscountPercent}%)</Text>
                                     <Text style={[styles.summaryValue, { color: "#10B981" }]}>-{CURRENCY_SYMBOL}{pricing.volumeDiscountAmount.toFixed(2)}</Text>
                                 </View>
                             )}
@@ -869,11 +537,37 @@ export default function CheckoutStepTwoScreen() {
                                 <Text style={styles.totalValue}>{CURRENCY_SYMBOL}{total.toFixed(2)}</Text>
                             </View>
 
-                            {safeLocale === 'TH' && (
-                                <Text style={styles.exchangeRateNotice}>{(t as any)?.["exchangeRateNotice"]}</Text>
-                            )}
+                            {safeLocale === 'TH' && (<Text style={styles.exchangeRateNotice}>{(t as any)?.["exchangeRateNotice"]}</Text>)}
                         </View>
                     )}
+
+                    {/* ✨ 안내문구(세일) + 사진 더 담기 — 가격 바로 밑 */}
+                    {priceLoaded && !promoResult?.success ? (
+                        <View style={styles.promoCard}>
+                            <VolumeTierBar
+                                variant="compact"
+                                count={safePhotosCount}
+                                pricePerTile={pricePerTile}
+                                volumeDiscounts={volumeDiscounts}
+                                shippingTiers={shippingTiers}
+                                freeShipThreshold={freeShipThreshold}
+                                shippingFee={shippingFeeLocal}
+                                locale={safeLocale}
+                                style={styles.promoNudge}
+                            />
+                            <TouchableOpacity onPress={handleAddMorePhotos} style={styles.addMoreBtn} disabled={isAddingPhotos} activeOpacity={0.85}>
+                                {isAddingPhotos ? <ActivityIndicator size="small" color="#047857" /> : (
+                                    <><Ionicons name="add" size={16} color="#047857" /><Text style={styles.addMoreBtnText}>{addMoreLabel}</Text></>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    ) : priceLoaded ? (
+                        <TouchableOpacity onPress={handleAddMorePhotos} style={[styles.addMoreBtn, { marginBottom: 24 }]} disabled={isAddingPhotos} activeOpacity={0.85}>
+                            {isAddingPhotos ? <ActivityIndicator size="small" color="#047857" /> : (
+                                <><Ionicons name="add" size={16} color="#047857" /><Text style={styles.addMoreBtnText}>{addMoreLabel}</Text></>
+                            )}
+                        </TouchableOpacity>
+                    ) : null}
 
                     <View style={styles.authBlockContainer}>
                         {currentUser ? (
@@ -893,97 +587,49 @@ export default function CheckoutStepTwoScreen() {
 
                         <View style={styles.agreementContainer}>
                             <TouchableOpacity style={styles.agreementRow} onPress={() => { Keyboard.dismiss(); setIsAgreed(!isAgreed); }} activeOpacity={0.7}>
-                                <View style={[
-                                    styles.checkbox,
-                                    isAgreed && styles.checkboxChecked,
-                                    !isAgreed && formErrorMsg === ((t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.") && styles.checkboxError
-                                ]}>
+                                <View style={[styles.checkbox, isAgreed && styles.checkboxChecked, !isAgreed && formErrorMsg === ((t as any)?.["agreeTermsAlert"] || "Please agree to the Terms of Service to proceed.") && styles.checkboxError]}>
                                     {isAgreed && <Ionicons name="checkmark" size={14} color="#fff" />}
                                 </View>
-                                <Text style={styles.agreementText}>
-                                    {(t as any)?.["agreeTermsCombined"] || "I agree to the Terms of Service and the Cancellation/Refund Policy."}
-                                </Text>
+                                <Text style={styles.agreementText}>{(t as any)?.["agreeTermsCombined"] || "I agree to the Terms of Service and the Cancellation/Refund Policy."}</Text>
                             </TouchableOpacity>
                         </View>
 
                         {total <= 0 ? (
-                            <TouchableOpacity
-                                style={[styles.paymentItem, { borderColor: "#10B981", backgroundColor: "#F0FDF4" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
-                                onPress={() => handlePlaceOrder("PROMO_FREE")}
-                                disabled={!currentUser || isCreatingOrder}
-                            >
+                            <TouchableOpacity style={[styles.paymentItem, { borderColor: "#10B981", backgroundColor: "#F0FDF4" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("PROMO_FREE")} disabled={!currentUser || isCreatingOrder}>
                                 <View style={styles.paymentItemLeft}>
-                                    <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}>
-                                        <Ionicons name="gift" size={24} color="#10B981" />
-                                    </View>
-                                    <Text style={[styles.paymentItemText, { color: "#059669", fontSize: 18, fontWeight: "800" }]}>
-                                        {safeLocale === 'TH' ? "สั่งซื้อฟรี (Free Order)" : "Claim Free Order"}
-                                    </Text>
+                                    <View style={[styles.paymentIconBase, { backgroundColor: "#D1FAE5" }]}><Ionicons name="gift" size={24} color="#10B981" /></View>
+                                    <Text style={[styles.paymentItemText, { color: "#059669", fontSize: 18, fontWeight: "800" }]}>{safeLocale === 'TH' ? "สั่งซื้อฟรี (Free Order)" : "Claim Free Order"}</Text>
                                 </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    {isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}
-                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>{isCreatingOrder ? <ActivityIndicator size="small" color="#10B981" /> : <Ionicons name="chevron-forward" size={20} color="#10B981" />}</View>
                             </TouchableOpacity>
                         ) : (
                             <>
                                 {!IS_APPLE_REVIEW_MODE && (
                                     <>
-                                        <TouchableOpacity
-                                            style={[styles.paymentItem, { borderColor: "#FF8C00", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
-                                            onPress={() => handlePlaceOrder("TRUEMONEY")}
-                                            disabled={!currentUser || isCreatingOrder}
-                                        >
+                                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#FF8C00", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("TRUEMONEY")} disabled={!currentUser || isCreatingOrder}>
                                             <View style={styles.paymentItemLeft}>
-                                                {Platform.OS !== 'web' ? (
-                                                    <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                                ) : (
-                                                    <View style={[styles.paymentIconBase, { backgroundColor: "#FFF4E6" }]}>
-                                                        <Text style={{ fontSize: 10, color: "#FF8C00", fontWeight: "bold" }}>True</Text>
-                                                    </View>
-                                                )}
+                                                {Platform.OS !== 'web' ? <Image source={require("../assets/truemoney_logo.png")} style={styles.paymentLogo} resizeMode="contain" /> : <View style={[styles.paymentIconBase, { backgroundColor: "#FFF4E6" }]}><Text style={{ fontSize: 10, color: "#FF8C00", fontWeight: "bold" }}>True</Text></View>}
                                                 <Text style={styles.paymentItemText}>TrueMoney Wallet</Text>
                                             </View>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                {isCreatingOrder ? <ActivityIndicator size="small" color="#FF8C00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                            </View>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>{isCreatingOrder ? <ActivityIndicator size="small" color="#FF8C00" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}</View>
                                         </TouchableOpacity>
 
-                                        <TouchableOpacity
-                                            style={[styles.paymentItem, { borderColor: "#00C300", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
-                                            onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")}
-                                            disabled={!currentUser || isCreatingOrder}
-                                        >
+                                        <TouchableOpacity style={[styles.paymentItem, { borderColor: "#00C300", marginBottom: 12 }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("RABBIT_LINE_PAY")} disabled={!currentUser || isCreatingOrder}>
                                             <View style={styles.paymentItemLeft}>
-                                                {Platform.OS !== 'web' ? (
-                                                    <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                                ) : (
-                                                    <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>
-                                                )}
+                                                {Platform.OS !== 'web' ? <Image source={require("../assets/rabbitlinepay_logo.png")} style={styles.paymentLogo} resizeMode="contain" /> : <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>RabbitLine</Text></View>}
                                                 <Text style={styles.paymentItemText}>{(t as any)?.["payRabbitLinePay"] || "Rabbit LINE Pay"}</Text>
                                             </View>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                {isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                            </View>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>{isCreatingOrder ? <ActivityIndicator size="small" color="#00C300" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}</View>
                                         </TouchableOpacity>
                                     </>
                                 )}
 
-                                <TouchableOpacity
-                                    style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]}
-                                    onPress={() => handlePlaceOrder("CREDIT_CARD")}
-                                    disabled={!currentUser || isCreatingOrder}
-                                >
+                                <TouchableOpacity style={[styles.paymentItem, { borderColor: "#6366F1" }, (!currentUser || isCreatingOrder) && { opacity: 0.5 }]} onPress={() => handlePlaceOrder("CREDIT_CARD")} disabled={!currentUser || isCreatingOrder}>
                                     <View style={styles.paymentItemLeft}>
-                                        {Platform.OS !== 'web' ? (
-                                            <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" />
-                                        ) : (
-                                            <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>Card</Text></View>
-                                        )}
+                                        {Platform.OS !== 'web' ? <Image source={require("../assets/credit_card_logo.png")} style={styles.paymentLogo} resizeMode="contain" /> : <View style={styles.paymentIconBase}><Text style={{ fontSize: 10 }}>Card</Text></View>}
                                         <Text style={styles.paymentItemText}>{getCleanCardName()}</Text>
                                     </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        {isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}
-                                    </View>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>{isCreatingOrder ? <ActivityIndicator size="small" color="#6366F1" /> : <Ionicons name="chevron-forward" size={20} color="#ccc" />}</View>
                                 </TouchableOpacity>
                             </>
                         )}
@@ -997,22 +643,10 @@ export default function CheckoutStepTwoScreen() {
                         <ActivityIndicator size="large" color={colors?.ink || "#111"} />
                         <Text style={styles.progressTitle}>{getProgressTitle()}</Text>
                         <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
-
                         {!isVerifyingPayment && (
                             <>
-                                <View style={styles.progressPill}>
-                                    <Text style={styles.progressPillText}>
-                                        {Math.min(progressCount, safePhotosCount)} / {safePhotosCount}
-                                    </Text>
-                                </View>
-                                <View style={styles.progressBarBg}>
-                                    <View
-                                        style={[
-                                            styles.progressBarFill,
-                                            { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }
-                                        ]}
-                                    />
-                                </View>
+                                <View style={styles.progressPill}><Text style={styles.progressPillText}>{Math.min(progressCount, safePhotosCount)} / {safePhotosCount}</Text></View>
+                                <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }]} /></View>
                             </>
                         )}
                     </View>
@@ -1045,11 +679,13 @@ const styles = StyleSheet.create({
     promoApplyText: { color: "#fff", fontWeight: "700" },
     promoSuccessText: { color: colors?.primary || "#E4405F", fontSize: 13, marginTop: 8, fontWeight: "600" },
 
-    // 🆕 작은 사진 더 담기 버튼
-    addMoreSmall: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, alignSelf: "center", paddingVertical: 7, paddingHorizontal: 14, borderRadius: 100, borderWidth: 1, borderColor: "#BBEBD7", backgroundColor: "#F0FBF6", marginBottom: 18 },
-    addMoreSmallText: { fontSize: 12.5, fontWeight: "700", color: "#059669" },
+    // 🆕 안내 카드 — 작고 덜 튀게 (가격 밑)
+    promoCard: { borderWidth: 1, borderColor: "#D7F0E4", backgroundColor: "#F6FCF9", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 24 },
+    promoNudge: { backgroundColor: "transparent", borderWidth: 0, paddingVertical: 0, paddingHorizontal: 0 },
+    addMoreBtn: { marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 10, backgroundColor: "#fff", borderWidth: 1, borderColor: "#BBEBD7" },
+    addMoreBtnText: { fontSize: 12.5, fontWeight: "700", color: "#047857" },
 
-    summarySection: { marginBottom: 32, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
+    summarySection: { marginBottom: 16, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
     summaryLabel: { color: "#666", fontSize: 14 },
     summaryValue: { fontWeight: "600", fontSize: 14 },
