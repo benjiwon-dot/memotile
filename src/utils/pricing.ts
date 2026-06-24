@@ -16,6 +16,9 @@ export type ShippingTier = { minQty: number; fee: number };
 export type PromoInput = {
     success?: boolean;
     discountAmount?: number;
+    // 상품 전액 할인 시 배송비 처리. 기본(미지정/true): 배송비도 무료(FREE100 동작 유지).
+    // false 로 주면 상품은 100% 할인되어도 배송비는 고객 부담.
+    waiveShipping?: boolean;
 };
 
 export type PricingInput = {
@@ -127,9 +130,12 @@ export function computePricing(input: PricingInput): PricingResult {
         qtyToFreeShipping = freeShipThreshold == null ? 0 : Math.max(0, freeShipThreshold - count);
     }
 
-    // 🆕 할인 후 상품가가 0 (예: FREE100 같은 전액 무료 쿠폰)이면 배송도 무료 처리
+    // 🆕 할인 후 상품가가 0 (예: FREE100 같은 전액 무료 쿠폰)이면 배송도 무료 처리.
+    //    단, 쿠폰이 waiveShipping: false 면 상품만 무료이고 배송비는 그대로 부과.
+    //    (FREE100 처럼 플래그 미지정이면 기존대로 배송비도 무료)
     const productAfterDiscount = Math.max(0, round2(subtotal - totalDiscount));
-    if (productAfterDiscount <= 0 && totalDiscount > 0) {
+    const promoWaivesShipping = promo?.waiveShipping !== false;
+    if (productAfterDiscount <= 0 && totalDiscount > 0 && promoWaivesShipping) {
         appliedShipping = 0;
         isFreeShipping = true;
     }

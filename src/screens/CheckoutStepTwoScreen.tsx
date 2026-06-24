@@ -177,11 +177,13 @@ export default function CheckoutStepTwoScreen() {
     const CURRENCY_SYMBOL = getCurrencySymbol(safeLocale);
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
 
-    const promoInput = promoResult?.success ? { success: true, discountAmount: promoResult.discountAmount } : undefined;
+    const promoInput = promoResult?.success ? { success: true, discountAmount: promoResult.discountAmount, waiveShipping: (promoResult as any).waiveShipping } : undefined;
+    // 🆕 쿠폰별 "수량할인과 합치기" 플래그 (Firebase 쿠폰 문서의 stackWithVolume). 미지정이면 false(기존: 쿠폰이 수량할인 대체)
+    const promoStackVolume = (promoResult as any)?.stackWithVolume ?? false;
 
     const pricing = useMemo(
-        () => computePricing({ count: safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFee: shippingFeeLocal, promo: promoInput }),
-        [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput]
+        () => computePricing({ count: safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFee: shippingFeeLocal, promo: promoInput, stackPromoWithVolume: promoStackVolume }),
+        [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput, promoStackVolume]
     );
 
     const rawSubtotal = pricing.subtotal;
@@ -199,10 +201,11 @@ export default function CheckoutStepTwoScreen() {
             count: safePhotosCount, pricePerTile: basePriceUSD, volumeDiscounts,
             shippingTiers: usdShippingTiers.length ? usdShippingTiers : undefined,
             freeShipThreshold, shippingFee: usdShippingFallback,
-            promo: promoInput ? { success: true, discountAmount: Number((usdSubtotal * promoRatio).toFixed(2)) } : undefined,
+            promo: promoInput ? { success: true, discountAmount: Number((usdSubtotal * promoRatio).toFixed(2)), waiveShipping: (promoResult as any)?.waiveShipping } : undefined,
+            stackPromoWithVolume: promoStackVolume,
         });
         return usdPricing.total;
-    }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput]);
+    }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput, promoStackVolume]);
 
     // 🆕 사진 더 담기
     const handleAddMorePhotos = async () => {

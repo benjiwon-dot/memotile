@@ -2,7 +2,7 @@
     "expo": {
         "name": "MemoTile",
         "slug": "memotile-app-anti",
-        "version": "1.1.10",
+        "version": "1.1.12",
         "orientation": "portrait",
         "icon": "./assets/icon.png",
         "userInterfaceStyle": "light",
@@ -23,6 +23,10 @@
                     "android": {
                         "targetSdkVersion": 35,
                         "compileSdkVersion": 35,
+                        "ndkVersion": "27.1.12297006",
+                        "packagingOptions": {
+                            "useLegacyPackaging": false
+                        },
                         "gradleProperties": {
                             "android.use16KPageAlignment": "true"
                         }
@@ -39,7 +43,9 @@
                 }
             ],
             "expo-apple-authentication",
-            "@react-native-firebase/crashlytics"
+            "@react-native-firebase/crashlytics",
+            "expo-font",
+            "expo-web-browser"
         ],
         "ios": {
             "buildNumber": "34",
