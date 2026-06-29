@@ -1,0 +1,7 @@
+{
+  "name": "vision-face",
+  "version": "1.0.0",
+  "description": "On-device face detection via Apple Vision (local Expo module)",
+  "main": "index.ts",
+  "private": true
+}

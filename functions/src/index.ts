@@ -7,6 +7,7 @@ import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { defineSecret } from "firebase-functions/params";
 
 // ✅ Firebase Admin SDK imports
 import { getStorage } from "firebase-admin/storage";
@@ -27,10 +28,9 @@ getFirestore().settings({ ignoreUndefinedProperties: true });
 // ✅ Gen2 기본 전역 설정 (Region 설정)
 setGlobalOptions({ region: "us-central1" });
 
-// ✨ 슬랙 Webhook 설정
-const part1 = "https://hooks.slack.com/services/T0AEXFY3GFM";
-const part2 = "/B0AFY664EJC/shdnJxZOJxJtzABgUyjjYUll";
-const SLACK_WEBHOOK_URL = part1 + part2;
+// ✨ 시크릿 정의 (Firebase Secret Manager — 값은 `firebase functions:secrets:set`으로 등록)
+const SLACK_WEBHOOK_URL = defineSecret("SLACK_WEBHOOK_URL");
+const PAYLETTER_API_KEY = defineSecret("PAYLETTER_API_KEY");
 
 /* =========================================================================
    HELPER FUNCTIONS 
@@ -49,15 +49,32 @@ async function sendExpoPushNotification(userId: string, title: string, body: str
             return;
         }
 
-        await axios.post("https://exp.host/--/api/v2/push/send", {
+        const resp = await axios.post("https://exp.host/--/api/v2/push/send", {
             to: pushToken,
             sound: "default",
             title: title,
             body: body,
-        });
-        console.log(`[Push Notification] 성공적으로 발송됨: User ${userId}`);
-    } catch (error) {
-        console.error(`[Push Notification] 발송 실패: User ${userId}`, error);
+        }, { headers: { "Content-Type": "application/json", "Accept": "application/json" } });
+
+        // ⚠️ Expo는 토큰이 죽어도 HTTP 200을 주고, 실제 실패는 본문에 담는다.
+        // 본문을 검사하지 않으면 "성공"이 거짓으로 찍힌다.
+        const ticket = resp?.data?.data;
+        if (ticket?.status === "error") {
+            const errType = ticket?.details?.error;
+            console.error(`[Push Notification] Expo 티켓 에러: User ${userId} / ${errType} / ${ticket?.message}`);
+            // 죽은 토큰은 정리해 다음부터 헛발송 방지 (주문/결제와 무관)
+            if (errType === "DeviceNotRegistered") {
+                try {
+                    await getFirestore().collection("users").doc(String(userId))
+                        .update({ pushToken: FieldValue.delete(), expoPushToken: FieldValue.delete() });
+                    console.log(`[Push Notification] 죽은 토큰 제거 완료: User ${userId}`);
+                } catch (_) { }
+            }
+            return;
+        }
+        console.log(`[Push Notification] 성공적으로 발송됨(ticket=${ticket?.id}): User ${userId}`);
+    } catch (error: any) {
+        console.error(`[Push Notification] 발송 실패: User ${userId}`, error?.response?.data || error?.message || error);
     }
 }
 
@@ -179,7 +196,7 @@ async function clampCropToImage(
 
 // ✨ 신규: 새 주문 발생 시 대표님 슬랙으로 알림 보내기!
 export const onNewOrderCreated = onDocumentCreated(
-    { document: "orders/{orderId}", region: "us-central1" },
+    { document: "orders/{orderId}", region: "us-central1", secrets: [SLACK_WEBHOOK_URL] },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -220,9 +237,15 @@ export const onNewOrderCreated = onDocumentCreated(
         };
 
         try {
-            await axios.post(SLACK_WEBHOOK_URL, slackMessage);
+            // 1. 슬랙 발송 (.trim() 및 JSON 헤더 적용)
+            await axios.post(SLACK_WEBHOOK_URL.value().trim(), slackMessage, {
+                headers: { "Content-Type": "application/json" }
+            });
+
+            // 📱 2. 대표님 관리자 핸드폰 푸시 발송 (4개 계정 전부 순차 발송)
+            await sendExpoPushNotification("MjM1VUND8wPg9CqE17jLhv4kZdQ2", "💸 새 주문 도착!", `${customerName}님의 주문이 접수되었습니다.`);
         } catch (error) {
-            console.error("[Slack Notification] 새 주문 알림 발송 실패:", error);
+            console.error("[Slack/Push Notification] 알림 발송 실패:", error);
         }
     }
 );
@@ -907,7 +930,8 @@ export const autoCompleteDeliveredOrders = onSchedule(
     {
         schedule: "0 4 * * *",
         timeZone: "Asia/Bangkok",
-        region: "us-central1"
+        region: "us-central1",
+        secrets: [SLACK_WEBHOOK_URL]
     },
     async (event) => {
         const db = getFirestore();
@@ -964,8 +988,11 @@ export const autoCompleteDeliveredOrders = onSchedule(
             }
 
             try {
-                await axios.post(SLACK_WEBHOOK_URL, {
+                // ✨ 슬랙 발송 (.trim() 및 JSON 헤더 적용)
+                await axios.post(SLACK_WEBHOOK_URL.value().trim(), {
                     text: `🚚 *[배송완료 자동처리 성공]* 발송 후 3일이 경과된 주문 *${processedCount}건*이 자동으로 'Delivered' 상태로 변경되고 고객에게 앱 알림이 발송되었습니다.`
+                }, {
+                    headers: { "Content-Type": "application/json" }
                 });
             } catch (e) { }
 
@@ -975,7 +1002,7 @@ export const autoCompleteDeliveredOrders = onSchedule(
     }
 );
 
-export const cleanupAbandonedPendingOrders = onSchedule({ schedule: "every 1 hours", timeZone: "Asia/Bangkok", region: "us-central1" }, async (event) => {
+export const cleanupAbandonedPendingOrders = onSchedule({ schedule: "every 1 hours", timeZone: "Asia/Bangkok", region: "us-central1", secrets: [SLACK_WEBHOOK_URL] }, async (event) => {
     const db = getFirestore(); const bucket = getStorage().bucket(); const now = new Date();
     try {
         const snapshot = await db.collection("orders").where("status", "==", "pending").get();
@@ -1000,11 +1027,18 @@ export const cleanupAbandonedPendingOrders = onSchedule({ schedule: "every 1 hou
 
         if (processedCount === 0) return;
         await batch.commit();
-        try { await axios.post(SLACK_WEBHOOK_URL, { text: `🧹 *[팬딩 주문 자동 삭제 완료]* 24시간이 지난 결제 미완료 주문 *${processedCount}건*이 '자동 삭제' 처리되었습니다.` }); } catch (e) { }
+        try {
+            // ✨ 슬랙 발송 (.trim() 및 JSON 헤더 적용)
+            await axios.post(SLACK_WEBHOOK_URL.value().trim(), {
+                text: `🧹 *[팬딩 주문 자동 삭제 완료]* 24시간이 지난 결제 미완료 주문 *${processedCount}건*이 '자동 삭제' 처리되었습니다.`
+            }, {
+                headers: { "Content-Type": "application/json" }
+            });
+        } catch (e) { }
     } catch (e) { console.error("cleanupAbandonedPendingOrders 에러:", e); }
 });
 
-export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
+export const alertAbandonedOrders = onSchedule({ schedule: "every 1 hours", secrets: [SLACK_WEBHOOK_URL] }, async (event) => {
     const db = getFirestore(); const now = new Date();
     const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
     try {
@@ -1012,14 +1046,18 @@ export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) =>
         if (snapshot.empty) return;
         const count = snapshot.size;
         const orderDetails = snapshot.docs.map(doc => `• 주문번호: ${doc.data().orderCode || doc.id} (고객: ${doc.data().customer?.fullName || 'Guest'})`).join("\n");
-        await axios.post(SLACK_WEBHOOK_URL, {
+
+        // ✨ 슬랙 발송 (.trim() 및 JSON 헤더 적용)
+        await axios.post(SLACK_WEBHOOK_URL.value().trim(), {
             text: `🚨 *[방치 주문 알림]* 24시간 동안 '결제완료' 상태에서 변동이 없는 주문이 *${count}건* 있습니다.`,
             attachments: [{ color: "#FF0000", title: "조치 필요 주문 목록", text: orderDetails, footer: "Memotile Admin Bot", ts: Math.floor(now.getTime() / 1000) }]
+        }, {
+            headers: { "Content-Type": "application/json" }
         });
     } catch (e: any) { }
 });
 
-export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
+export const autoArchiveOldOrders = onSchedule({ schedule: "0 3 * * *", secrets: [SLACK_WEBHOOK_URL] }, async (event) => {
     const db = getFirestore(); const now = new Date();
     const sevenDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)));
     const statusesToArchive = ["delivered", "canceled", "refunded"];
@@ -1033,7 +1071,14 @@ export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
         await batch.commit();
     }
     if (totalArchived > 0) {
-        try { await axios.post(SLACK_WEBHOOK_URL, { text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.` }); } catch (e) { }
+        try {
+            // ✨ 슬랙 발송 (.trim() 및 JSON 헤더 적용)
+            await axios.post(SLACK_WEBHOOK_URL.value().trim(), {
+                text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.`
+            }, {
+                headers: { "Content-Type": "application/json" }
+            });
+        } catch (e) { }
     }
 });
 
@@ -1055,14 +1100,13 @@ export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, as
    ✨ PAYLETTER 통합 결제 연동 (LIVE 운영 서버)
    ========================================================================= */
 
-const PAYLETTER_API_KEY = "5955a60454daa331f178229f2337804f";
 const PAYLETTER_CLIENT_ID = "memotile";
 const PROJECT_REGION = "us-central1";
 const PROJECT_ID = "memotile-app-anti-demo";
 const BASE_URL = `https://${PROJECT_REGION}-${PROJECT_ID}.cloudfunctions.net`;
 const PAYLETTER_URL = "https://api.payletter.com/api/payment/request";
 
-export const payletterRequestPayment = onCall({ region: "us-central1", cors: true }, async (req) => {
+export const payletterRequestPayment = onCall({ region: "us-central1", cors: true, secrets: [PAYLETTER_API_KEY] }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
     const { orderId, amount, email, fullName, pgcode, platform, webUrl, appScheme } = req.data || {};
     if (!orderId || !amount) throw new HttpsError("invalid-argument", "Missing required payment fields.");
@@ -1075,16 +1119,18 @@ export const payletterRequestPayment = onCall({ region: "us-central1", cors: tru
     };
 
     try {
-        const response = await axios.post(PAYLETTER_URL, paymentData, { headers: { "Content-Type": "application/json", "Authorization": `GPLKEY ${PAYLETTER_API_KEY}` } });
+        // ✨ 페이레터 API 키 폭탄 방지 .trim() 추가
+        const response = await axios.post(PAYLETTER_URL, paymentData, { headers: { "Content-Type": "application/json", "Authorization": `GPLKEY ${PAYLETTER_API_KEY.value().trim()}` } });
         if (response.data.mobile_url || response.data.online_url) return { ok: true, paymentUrl: response.data.mobile_url || response.data.online_url };
         else throw new Error(response.data.error?.message || "Failed to receive payment URL.");
     } catch (e: any) { throw new HttpsError("internal", "Payment server communication failed."); }
 });
 
-export const payletterWebhook = onRequest({ region: "us-central1" }, async (req, res) => {
+export const payletterWebhook = onRequest({ region: "us-central1", secrets: [PAYLETTER_API_KEY] }, async (req, res) => {
     const data = req.body;
     const { storeid, currency, storeorderno, payamt, payerid, timestamp, hash, notifytype, paytoken, retcode } = data;
-    const rawString = `${storeid}${currency}${storeorderno}${payamt}${payerid}${timestamp}${PAYLETTER_API_KEY}`;
+    // ✨ 페이레터 웹훅 검증 폭탄 방지 .trim() 추가
+    const rawString = `${storeid}${currency}${storeorderno}${payamt}${payerid}${timestamp}${PAYLETTER_API_KEY.value().trim()}`;
     const generatedHash = crypto.createHash('sha256').update(rawString).digest('hex');
 
     if (hash !== generatedHash) { res.status(400).send("Hash mismatch"); return; }

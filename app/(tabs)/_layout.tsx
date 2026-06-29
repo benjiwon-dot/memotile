@@ -21,7 +21,11 @@ import { useLanguage } from "../../src/context/LanguageContext";
 
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
-        shouldShowAlert: true,
+        // SDK 53(expo-notifications 0.31+): shouldShowAlert는 deprecated.
+        // 포그라운드 배너/목록 표시를 위해 banner/list를 명시한다.
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldShowAlert: true, // 구버전 호환용
         shouldPlaySound: true,
         shouldSetBadge: false,
     }),
@@ -49,10 +53,15 @@ async function registerForPushNotificationsAsync() {
             finalStatus = status;
         }
         if (finalStatus !== 'granted') {
-            console.log('Failed to get push token for push notification!');
+            console.log('🔕 푸시 권한 거부됨 (status=' + finalStatus + ') — 토큰 미발급');
             return;
         }
-        token = (await Notifications.getExpoPushTokenAsync()).data;
+        // EAS projectId를 명시적으로 전달해야 빌드/환경 무관하게 안정적으로 발급된다.
+        const projectId =
+            Constants?.expoConfig?.extra?.eas?.projectId ??
+            (Constants as any)?.easConfig?.projectId;
+        if (!projectId) console.warn('⚠️ EAS projectId를 찾지 못함 — 토큰 발급이 실패할 수 있음');
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
         console.log("🔥 발급된 Expo Push Token:", token);
     } else {
         console.log('푸시 알림은 실제 기기(스마트폰)에서만 작동합니다.');
@@ -103,7 +112,15 @@ export default function TabLayout() {
                     const token = await registerForPushNotificationsAsync();
                     if (token) {
                         const userRef = doc(db, "users", user.uid);
-                        await setDoc(userRef, { pushToken: token }, { merge: true });
+                        // 서버는 expoPushToken || pushToken 순으로 읽으므로 양쪽에 동일 저장.
+                        await setDoc(userRef, {
+                            expoPushToken: token,
+                            pushToken: token,
+                            pushTokenUpdatedAt: new Date().toISOString(),
+                        }, { merge: true });
+                        console.log("✅ 푸시 토큰 저장 완료:", user.uid);
+                    } else {
+                        console.log("ℹ️ 푸시 토큰 없음 — 저장 건너뜀 (권한 거부/시뮬레이터/projectId 누락)");
                     }
                 } catch (error) {
                     console.error("토큰 저장 실패:", error);

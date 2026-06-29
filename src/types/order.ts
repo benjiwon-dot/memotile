@@ -1,4 +1,5 @@
 import { Timestamp } from 'firebase/firestore';
+import type { ProductType } from './product';
 
 export interface OrderItem {
     // Local / Legacy compat
@@ -43,6 +44,7 @@ export interface OrderItem {
 export interface OrderDoc {
     id?: string;
     uid: string;
+    productType?: ProductType; // "tile"(기본) | "photobook". 미설정 주문은 tile로 간주.
     orderCode: string; // 7-char code (e.g. ABC1234)
     itemsCount: number;
     storageBasePath?: string;

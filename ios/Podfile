@@ -43,6 +43,25 @@ target 'MemoTile' do
   )
 
   post_install do |installer|
+
+    # react-native-skia header dedupe (use_frameworks static 충돌 해결)
+    installer.pods_project.targets.each do |t|
+      if t.name == "react-native-skia"
+        ph = t.headers_build_phase
+        seen = {}
+        ph.files.dup.each do |bf|
+          ref = bf.file_ref
+          next if ref.nil?
+          key = File.basename(ref.real_path.to_s)
+          if seen[key]
+            ph.remove_build_file(bf)
+          else
+            seen[key] = true
+          end
+        end
+      end
+    end
+
     react_native_post_install(
       installer,
       config[:reactNativePath],

@@ -111,6 +111,7 @@ export async function createOrder(params: {
     // 1. 주문서 먼저 생성 (에러가 나면 이 주문서는 Pending 상태로 버려집니다)
     const rawOrderData: any = {
         uid: authedUid,
+        productType: "tile", // Phase 1: 모든 주문은 타일. AI/포토북 흐름이 붙으면 분기.
         orderCode,
         itemsCount: safePhotosCount,
         storageBasePath,

@@ -1,3 +1,4 @@
+// app/marketing.tsx
 import React, { useState } from "react";
 import { Send, Loader2, Users, Star, Zap, MessageSquare } from "lucide-react";
 import { getFirestore, collection, addDoc } from "firebase/firestore";

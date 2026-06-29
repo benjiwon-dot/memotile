@@ -29,6 +29,7 @@ import { shadows } from "../../src/theme/shadows";
 import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
+import { usePhotobookEnabled } from "../../src/config/featureFlags";
 
 // ✨ 묶음 할인 가격표 (홈)
 import BundlePricingTable from "../../src/components/BundlePricingTable";
@@ -59,6 +60,7 @@ export default function Index() {
     const { t, locale, setLocale } = useLanguage();
 
     const { setPhotos, saveDraft, hasDraft, loadDraft, clearDraft } = usePhoto();
+    const photobookEnabled = usePhotobookEnabled();
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
@@ -288,6 +290,43 @@ export default function Index() {
                                     </View>
                                 </Pressable>
                                 <Text style={styles.ctaHint}>{t.ctaHint}</Text>
+
+                                {/* STEP 2: AI 포토북 — 기존 CTA와 동급의 정식 진입점 (피처 플래그 ON일 때만) */}
+                                {photobookEnabled && (
+                                    <>
+                                        <View style={styles.entryDivider}>
+                                            <View style={styles.entryDividerLine} />
+                                            <Text style={styles.entryDividerText}>
+                                                {locale === "TH" ? "หรือ" : "or"}
+                                            </Text>
+                                            <View style={styles.entryDividerLine} />
+                                        </View>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.photobookCard,
+                                                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
+                                            ]}
+                                            onPress={() => router.push("/photobook")}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t.photobookCardTitle}
+                                        >
+                                            <View style={styles.photobookIcon}>
+                                                <Feather name={"cpu" as any} size={22} color={colors.ink} />
+                                            </View>
+                                            <View style={{ flex: 1 }}>
+                                                <View style={styles.photobookTitleRow}>
+                                                    <Text style={styles.photobookTitle}>{t.photobookCardTitle}</Text>
+                                                    <View style={styles.photobookBadge}>
+                                                        <Text style={styles.photobookBadgeText}>{t.photobookCardBadge}</Text>
+                                                    </View>
+                                                </View>
+                                                <Text style={styles.photobookDesc}>{t.photobookCardDesc}</Text>
+                                            </View>
+                                            <Feather name={"chevron-right" as any} size={20} color="#9CA3AF" />
+                                        </Pressable>
+                                    </>
+                                )}
                             </View>
                         </View>
                     </View>
@@ -520,6 +559,29 @@ const styles = StyleSheet.create({
     ctaInner: { flexDirection: "row", alignItems: "center" },
     ctaText: { ...typography.button, fontSize: 20, fontWeight: "700" },
     ctaHint: { ...typography.caption, marginTop: 10, textAlign: "center" },
+    // STEP 2: AI 포토북 정식 진입점 (플래그 ON일 때만 렌더)
+    entryDivider: {
+        width: 320, flexDirection: "row", alignItems: "center", marginTop: 18, marginBottom: 2,
+    },
+    entryDividerLine: { flex: 1, height: 1, backgroundColor: "#E5E7EB" },
+    entryDividerText: { ...typography.caption, marginHorizontal: 12, color: "#9CA3AF", fontSize: 13 },
+    photobookCard: {
+        width: 320, marginTop: 14, paddingVertical: 16, paddingHorizontal: 16,
+        backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: "#E5E7EB",
+        flexDirection: "row", alignItems: "center", ...shadows.md,
+    },
+    photobookIcon: {
+        width: 44, height: 44, borderRadius: 13, backgroundColor: colors.canvas,
+        alignItems: "center", justifyContent: "center", marginRight: 14,
+    },
+    photobookTitleRow: { flexDirection: "row", alignItems: "center" },
+    photobookTitle: { fontSize: 17, fontWeight: "800", color: colors.ink },
+    photobookBadge: {
+        marginLeft: 8, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
+        backgroundColor: colors.ink,
+    },
+    photobookBadgeText: { fontSize: 10, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
+    photobookDesc: { fontSize: 13, color: "#6B7280", marginTop: 3 },
 
     sectionTitle: { ...typography.h3, marginBottom: 24, textAlign: "center", color: colors.ink },
     sectionSmallTitle: { ...typography.sectionHeader, marginBottom: 24, textAlign: "center" },
