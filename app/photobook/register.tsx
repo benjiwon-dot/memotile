@@ -1,76 +1,80 @@
 // app/photobook/register.tsx
 //
-// STEP 3: 아이 프로필 등록 — 이름/생년월일/성별 + 대표사진 + 연령구간별 기준사진.
-// PhotoKit 권한(expo-image-picker) → Storage 업로드 → Firestore aiSubjects 저장.
-// 기존 타일 흐름/결제/주문 로직과 완전히 분리. 피처 플래그 뒤에서만 동작.
-import React, { useState } from "react";
+// AI 프로필 등록 (bebememo 스타일 + 웜톤). 순서: 프로필사진 → 이름 → 생년월일(휠) → 성별 → 기준사진(자유 그리드).
+// 중립어(이름/프로필). baby 특화 문구는 kind==baby일 때만. 허브 거치지 않고 홈에서 바로 진입.
+import React, { useEffect, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    ScrollView,
-    TextInput,
-    Pressable,
-    Alert,
-    Linking,
-    Platform,
-    ActivityIndicator,
-    Dimensions,
+    View, Text, StyleSheet, ScrollView, TextInput, Pressable,
+    Alert, Linking, Platform, ActivityIndicator, Dimensions,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image as ExpoImage } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
-import { colors } from "../../src/theme/colors";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
-import {
-    AGE_BUCKETS,
-    AgeBucketId,
-    SubjectGender,
-} from "../../src/types/aiSubject";
-import {
-    createSubject,
-    SubjectPhotoInput,
-    SubjectDraft,
-    CreateProgress,
-} from "../../src/services/aiSubjects";
+import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
+import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
+import { WheelDatePicker } from "../../src/components/photobook/WheelDatePicker";
+import { createSubject, updateSubject, getSubject, SubjectPhotoInput, SubjectDraft, CreateProgress } from "../../src/services/aiSubjects";
+import { SubjectGender, SubjectKind } from "../../src/types/aiSubject";
 
 const SCREEN_W = Dimensions.get("window").width;
 const H_PAD = 20;
 const GAP = 10;
-const SLOT = Math.floor((SCREEN_W - H_PAD * 2 - GAP * 2) / 3);
+const CELL = Math.floor((SCREEN_W - H_PAD * 2 - GAP * 2) / 3);
 
-const pad2 = (s: string) => (s.length === 1 ? `0${s}` : s);
-const onlyDigits = (s: string) => s.replace(/[^0-9]/g, "");
+const KIND: SubjectKind = "baby"; // Phase 1
+
+function formatDate(iso: string | null): string {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${y}. ${m}. ${d}`;
+}
 
 export default function PhotobookRegister() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { t } = useLanguage();
+    const c = usePhotobookTheme();
     const enabled = usePhotobookEnabled();
+    const params = useLocalSearchParams<{ subjectId?: string }>();
+    const subjectId = typeof params.subjectId === "string" && params.subjectId ? params.subjectId : null;
+    const editing = !!subjectId;
 
     const [name, setName] = useState("");
-    const [year, setYear] = useState("");
-    const [month, setMonth] = useState("");
-    const [day, setDay] = useState("");
+    const [birthDate, setBirthDate] = useState<string | null>(null);
     const [gender, setGender] = useState<SubjectGender>("unspecified");
     const [cover, setCover] = useState<SubjectPhotoInput | null>(null);
-    const [anchors, setAnchors] = useState<Record<AgeBucketId, SubjectPhotoInput[]>>({
-        "0-3m": [], "3-12m": [], "1-2y": [], "2-3y": [],
-    });
+    const [anchors, setAnchors] = useState<SubjectPhotoInput[]>([]);
+    const [pickerOpen, setPickerOpen] = useState(false);
     const [saving, setSaving] = useState(false);
     const [progress, setProgress] = useState<CreateProgress | null>(null);
 
-    // 플래그 OFF면 진입(딥링크 포함) 차단
+    // 편집 모드: 기존 프로필 불러와 prefill
+    useEffect(() => {
+        if (!subjectId) return;
+        (async () => {
+            const s = await getSubject(subjectId);
+            if (!s) return;
+            setName(s.name);
+            setBirthDate(s.birthDate ?? null);
+            setGender(s.gender);
+            setCover(s.cover ? { uri: s.cover.url, keepRef: s.cover } : null);
+            // 구버전 문서(앵커가 객체였던 경우)는 배열만 안전하게 사용
+            const anchorArr = Array.isArray(s.anchors) ? s.anchors : [];
+            setAnchors(anchorArr.map((a) => ({ uri: a.url, keepRef: a })));
+        })();
+    }, [subjectId]);
+
     if (!enabled) return null;
 
+    // baby 중심: Boy/Girl 2개. (pet/couple은 추후 kind별 분기 — 메모 참조)
     const genderOptions: { id: SubjectGender; label: string }[] = [
         { id: "boy", label: t.pbGenderBoy },
         { id: "girl", label: t.pbGenderGirl },
-        { id: "unspecified", label: t.pbGenderUnspecified },
     ];
 
     async function requestPermission(): Promise<boolean> {
@@ -92,309 +96,211 @@ export default function PhotobookRegister() {
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsMultipleSelection: limit > 1,
             selectionLimit: limit,
-            quality: 1,
-            exif: false,
-            base64: false,
+            quality: 1, exif: false, base64: false,
         });
         if (result.canceled || !result.assets?.length) return [];
         return result.assets.map((a) => ({
-            uri: a.uri,
-            width: a.width,
-            height: a.height,
-            localId: (a as any).assetId ?? null,
+            uri: a.uri, width: a.width, height: a.height, localId: (a as any).assetId ?? null,
         }));
     }
 
     async function onPickCover() {
-        const picked = await pickPhotos(1);
-        if (picked[0]) setCover(picked[0]);
+        const p = await pickPhotos(1);
+        if (p[0]) setCover(p[0]);
     }
-
-    async function onPickAnchor(bucket: AgeBucketId, maxSlots: number) {
-        const remaining = maxSlots - anchors[bucket].length;
-        if (remaining <= 0) return;
-        const picked = await pickPhotos(remaining);
-        if (picked.length) {
-            setAnchors((prev) => ({ ...prev, [bucket]: [...prev[bucket], ...picked].slice(0, maxSlots) }));
-        }
-    }
-
-    function removeAnchor(bucket: AgeBucketId, idx: number) {
-        setAnchors((prev) => ({ ...prev, [bucket]: prev[bucket].filter((_, i) => i !== idx) }));
-    }
-
-    function buildBirthDate(): string | null {
-        if (year.length === 4 && month && day) {
-            const m = Math.min(12, Math.max(1, parseInt(month, 10) || 0));
-            const d = Math.min(31, Math.max(1, parseInt(day, 10) || 0));
-            return `${year}-${pad2(String(m))}-${pad2(String(d))}`;
-        }
-        return null;
+    async function onAddAnchors() {
+        const p = await pickPhotos(10);
+        if (p.length) setAnchors((prev) => [...prev, ...p]);
     }
 
     async function onSave() {
-        if (!name.trim()) {
-            Alert.alert(t.pbErrName);
-            return;
-        }
-        const totalPhotos =
-            (cover ? 1 : 0) + AGE_BUCKETS.reduce((n, b) => n + anchors[b.id].length, 0);
-        if (totalPhotos === 0) {
-            Alert.alert(t.pbErrNoPhoto);
-            return;
-        }
+        if (!name.trim()) { Alert.alert(t.pbErrName); return; }
+        if (!cover && anchors.length === 0) { Alert.alert(t.pbErrNoPhoto); return; }
 
-        const draft: SubjectDraft = {
-            name,
-            birthDate: buildBirthDate(),
-            gender,
-            cover,
-            anchors,
-        };
-
+        const draft: SubjectDraft = { name, birthDate, gender, kind: KIND, cover, anchors };
+        const total = (cover ? 1 : 0) + anchors.length;
         setSaving(true);
-        setProgress({ done: 0, total: totalPhotos });
+        setProgress({ done: 0, total });
         try {
-            await createSubject(draft, setProgress);
-            Alert.alert(t.pbSaved, undefined, [{ text: "OK", onPress: () => router.back() }]);
+            if (editing && subjectId) await updateSubject(subjectId, draft, setProgress);
+            else await createSubject(draft, setProgress);
+            router.replace("/photobook");
         } catch (e: any) {
             Alert.alert("Error", String(e?.message || e));
-        } finally {
             setSaving(false);
             setProgress(null);
         }
     }
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.container, { backgroundColor: c.bg, paddingTop: insets.top + 8 }]}>
             <View style={styles.header}>
-                <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
-                    <Feather name="arrow-left" size={24} color={colors.ink} />
+                <Pressable onPress={() => router.back()} hitSlop={12} style={styles.iconBtn}>
+                    <Feather name="arrow-left" size={24} color={c.ink} />
                 </Pressable>
-                <Text style={styles.headerTitle}>{t.pbRegisterTitle}</Text>
-                <View style={styles.backBtn} />
+                <Text style={[styles.headerTitle, { color: c.ink }]}>{editing ? t.pbEditProfile : t.pbNewProfile}</Text>
+                <View style={styles.iconBtn} />
             </View>
 
             <ScrollView
                 contentContainerStyle={{ paddingHorizontal: H_PAD, paddingBottom: insets.bottom + 120 }}
                 keyboardShouldPersistTaps="handled"
             >
-                <Text style={styles.subtitle}>{t.pbRegisterSubtitle}</Text>
+                <Text style={[styles.subtitle, { color: c.textMuted }]}>{t.pbNewProfileSub}</Text>
+
+                {/* 프로필 사진 (원형, 상단 중앙) */}
+                <View style={styles.coverWrap}>
+                    <Pressable onPress={onPickCover}>
+                        <PhotobookGradient colors={c.gradient} radius={pbRadius.pill} style={styles.coverRing}>
+                            <View style={[styles.coverInner, { backgroundColor: c.surface }]}>
+                                {cover ? (
+                                    <ExpoImage source={{ uri: cover.uri }} style={styles.coverImg} contentFit="cover" />
+                                ) : (
+                                    <Feather name="camera" size={30} color={c.coral} />
+                                )}
+                            </View>
+                        </PhotobookGradient>
+                        <View style={[styles.coverEdit, { backgroundColor: c.coral, borderColor: c.bg }]}>
+                            <Feather name="plus" size={16} color="#fff" />
+                        </View>
+                    </Pressable>
+                    <Text style={[styles.coverLabel, { color: c.textSecondary }]}>{t.pbProfilePhoto}</Text>
+                </View>
 
                 {/* 이름 */}
-                <Text style={styles.label}>{t.pbChildNameLabel}</Text>
+                <Text style={[styles.label, { color: c.ink }]}>{t.pbChildNameLabel}</Text>
                 <TextInput
-                    style={styles.input}
+                    style={[styles.input, { backgroundColor: c.surface, borderColor: c.border, color: c.ink }]}
                     value={name}
                     onChangeText={setName}
                     placeholder={t.pbChildNamePlaceholder}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={c.textMuted}
                     maxLength={40}
                 />
 
-                {/* 생년월일 (선택) */}
+                {/* 생년월일 (휠 피커) */}
                 <View style={styles.labelRow}>
-                    <Text style={styles.label}>{t.pbBirthDateLabel}</Text>
-                    <Text style={styles.optional}>{t.pbOptional}</Text>
+                    <Text style={[styles.label, { color: c.ink }]}>{t.pbBirthDateLabel}</Text>
+                    <Text style={[styles.optional, { color: c.textMuted }]}>{t.pbOptional}</Text>
                 </View>
-                <View style={styles.dateRow}>
-                    <TextInput
-                        style={[styles.input, styles.dateInput, { flex: 1.4 }]}
-                        value={year}
-                        onChangeText={(v) => setYear(onlyDigits(v).slice(0, 4))}
-                        placeholder={t.pbDateYear}
-                        placeholderTextColor={colors.textSecondary}
-                        keyboardType="number-pad"
-                    />
-                    <TextInput
-                        style={[styles.input, styles.dateInput, { flex: 1 }]}
-                        value={month}
-                        onChangeText={(v) => setMonth(onlyDigits(v).slice(0, 2))}
-                        placeholder={t.pbDateMonth}
-                        placeholderTextColor={colors.textSecondary}
-                        keyboardType="number-pad"
-                    />
-                    <TextInput
-                        style={[styles.input, styles.dateInput, { flex: 1 }]}
-                        value={day}
-                        onChangeText={(v) => setDay(onlyDigits(v).slice(0, 2))}
-                        placeholder={t.pbDateDay}
-                        placeholderTextColor={colors.textSecondary}
-                        keyboardType="number-pad"
-                    />
-                </View>
+                <Pressable
+                    style={[styles.input, styles.dateField, { backgroundColor: c.surface, borderColor: c.border }]}
+                    onPress={() => setPickerOpen(true)}
+                >
+                    <Text style={{ fontSize: 16, color: birthDate ? c.ink : c.textMuted }}>
+                        {birthDate ? formatDate(birthDate) : t.pbPickDate}
+                    </Text>
+                    <Feather name="chevron-down" size={18} color={c.textSecondary} />
+                </Pressable>
 
                 {/* 성별 */}
-                <Text style={styles.label}>{t.pbGenderLabel}</Text>
+                <Text style={[styles.label, { color: c.ink }]}>{t.pbGenderLabel}</Text>
                 <View style={styles.genderRow}>
                     {genderOptions.map((g) => {
                         const active = gender === g.id;
                         return (
                             <Pressable
                                 key={g.id}
-                                style={[styles.genderBtn, active && styles.genderBtnActive]}
                                 onPress={() => setGender(g.id)}
+                                style={[
+                                    styles.genderBtn,
+                                    { backgroundColor: active ? c.coral : c.surface, borderColor: active ? c.coral : c.border },
+                                ]}
                             >
-                                <Text style={[styles.genderText, active && styles.genderTextActive]}>{g.label}</Text>
+                                <Text style={{ fontSize: 14, fontWeight: "600", color: active ? "#fff" : c.textSecondary }}>{g.label}</Text>
                             </Pressable>
                         );
                     })}
                 </View>
 
-                {/* 대표 사진 */}
-                <Text style={styles.label}>{t.pbCoverLabel}</Text>
-                <Text style={styles.hint}>{t.pbCoverHint}</Text>
-                <Pressable style={styles.coverSlot} onPress={onPickCover}>
-                    {cover ? (
-                        <>
-                            <ExpoImage source={{ uri: cover.uri }} style={styles.slotImg} contentFit="cover" />
-                            <Pressable style={styles.removeBadge} onPress={() => setCover(null)} hitSlop={8}>
-                                <Feather name="x" size={14} color="#fff" />
+                {/* 기준 사진 (자유 그리드) */}
+                <Text style={[styles.label, { color: c.ink, marginTop: 26 }]}>{t.pbPhotosTitle}</Text>
+                <Text style={[styles.hint, { color: c.textMuted }]}>
+                    {t.pbPhotosHint}{KIND === "baby" ? ` ${t.pbPhotosHintBaby}` : ""}
+                </Text>
+                <View style={styles.grid}>
+                    {anchors.map((p, i) => (
+                        <View key={i} style={[styles.cell, { backgroundColor: c.surface, borderColor: c.border }]}>
+                            <ExpoImage source={{ uri: p.uri }} style={styles.cellImg} contentFit="cover" />
+                            <Pressable
+                                style={styles.removeBadge}
+                                hitSlop={8}
+                                onPress={() => setAnchors((prev) => prev.filter((_, idx) => idx !== i))}
+                            >
+                                <Feather name="x" size={13} color="#fff" />
                             </Pressable>
-                        </>
-                    ) : (
-                        <View style={styles.slotEmpty}>
-                            <Feather name="plus" size={26} color={colors.textSecondary} />
-                            <Text style={styles.slotAdd}>{t.pbAddPhoto}</Text>
                         </View>
-                    )}
-                </Pressable>
-
-                {/* 연령 구간별 기준 사진 */}
-                <Text style={[styles.label, { marginTop: 24 }]}>{t.pbAnchorsTitle}</Text>
-                <Text style={styles.hint}>{t.pbAnchorsHint}</Text>
-
-                {AGE_BUCKETS.map((bucket) => {
-                    const list = anchors[bucket.id];
-                    return (
-                        <View key={bucket.id} style={styles.bucketBlock}>
-                            <Text style={styles.bucketLabel}>
-                                {(t as any)[bucket.labelKey]}  <Text style={styles.bucketCount}>{list.length}/{bucket.maxSlots}</Text>
-                            </Text>
-                            <View style={styles.slotsRow}>
-                                {Array.from({ length: bucket.maxSlots }).map((_, i) => {
-                                    const photo = list[i];
-                                    if (photo) {
-                                        return (
-                                            <View key={i} style={styles.anchorSlot}>
-                                                <ExpoImage source={{ uri: photo.uri }} style={styles.slotImg} contentFit="cover" />
-                                                <Pressable
-                                                    style={styles.removeBadge}
-                                                    onPress={() => removeAnchor(bucket.id, i)}
-                                                    hitSlop={8}
-                                                >
-                                                    <Feather name="x" size={13} color="#fff" />
-                                                </Pressable>
-                                            </View>
-                                        );
-                                    }
-                                    // 첫 번째 빈 슬롯만 누름 가능(나머지는 자리표시)
-                                    const isFirstEmpty = i === list.length;
-                                    return (
-                                        <Pressable
-                                            key={i}
-                                            style={[styles.anchorSlot, styles.slotEmpty]}
-                                            onPress={isFirstEmpty ? () => onPickAnchor(bucket.id, bucket.maxSlots) : undefined}
-                                        >
-                                            {isFirstEmpty && <Feather name="plus" size={22} color={colors.textSecondary} />}
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
-                        </View>
-                    );
-                })}
-
-                <View style={styles.noteBox}>
-                    <Feather name="info" size={15} color={colors.textMuted} style={{ marginTop: 1 }} />
-                    <Text style={styles.noteText}>{t.pbNewbornNote}</Text>
+                    ))}
+                    <Pressable style={[styles.cell, styles.addCell, { borderColor: c.peach, backgroundColor: c.surfaceAlt }]} onPress={onAddAnchors}>
+                        <Feather name="plus" size={26} color={c.coral} />
+                    </Pressable>
                 </View>
             </ScrollView>
 
-            {/* 저장 버튼 */}
-            <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
-                <Pressable
-                    style={[styles.saveBtn, saving && { opacity: 0.7 }]}
-                    onPress={onSave}
-                    disabled={saving}
-                >
-                    {saving ? (
-                        <View style={styles.savingRow}>
-                            <ActivityIndicator color="#fff" />
-                            <Text style={styles.saveText}>
-                                {progress ? `${t.pbUploading} ${progress.done}/${progress.total}` : t.pbSaving}
-                            </Text>
-                        </View>
-                    ) : (
-                        <Text style={styles.saveText}>{t.pbSave}</Text>
-                    )}
+            {/* 저장 */}
+            <View style={[styles.footer, { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 12 }]}>
+                <Pressable onPress={onSave} disabled={saving}>
+                    <PhotobookGradient colors={c.gradient} radius={pbRadius.lg} style={[styles.saveBtn, saving && { opacity: 0.7 }]}>
+                        {saving ? (
+                            <View style={styles.savingRow}>
+                                <ActivityIndicator color="#fff" />
+                                <Text style={styles.saveText}>
+                                    {progress ? `${t.pbUploading} ${progress.done}/${progress.total}` : t.pbSaving}
+                                </Text>
+                            </View>
+                        ) : (
+                            <Text style={styles.saveText}>{t.pbSave}</Text>
+                        )}
+                    </PhotobookGradient>
                 </Pressable>
             </View>
+
+            <WheelDatePicker
+                visible={pickerOpen}
+                value={birthDate}
+                theme={c}
+                confirmLabel={t.continue}
+                cancelLabel={t.cancel}
+                onCancel={() => setPickerOpen(false)}
+                onConfirm={(iso) => { setBirthDate(iso); setPickerOpen(false); }}
+            />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.background },
+    container: { flex: 1 },
     header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: H_PAD, paddingBottom: 8 },
-    backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-    headerTitle: { fontSize: 18, fontWeight: "800", color: colors.ink },
+    iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+    headerTitle: { fontSize: 18, fontWeight: "800" },
+    subtitle: { fontSize: 14, lineHeight: 20, marginTop: 4, marginBottom: 20, textAlign: "center" },
 
-    subtitle: { fontSize: 14, color: colors.textMuted, lineHeight: 20, marginTop: 4, marginBottom: 18 },
+    coverWrap: { alignItems: "center", marginBottom: 8 },
+    coverRing: { width: 112, height: 112, padding: 4 },
+    coverInner: { flex: 1, borderRadius: 999, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+    coverImg: { width: "100%", height: "100%", borderRadius: 999 },
+    coverEdit: { position: "absolute", right: 4, bottom: 26, width: 30, height: 30, borderRadius: 999, borderWidth: 3, alignItems: "center", justifyContent: "center" },
+    coverLabel: { fontSize: 13, fontWeight: "600", marginTop: 10 },
 
-    label: { fontSize: 15, fontWeight: "700", color: colors.ink, marginTop: 18, marginBottom: 8 },
-    labelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, marginBottom: 8 },
-    optional: { fontSize: 12, color: colors.textSecondary },
-    hint: { fontSize: 13, color: colors.textMuted, marginTop: -2, marginBottom: 10 },
+    label: { fontSize: 15, fontWeight: "700", marginTop: 20, marginBottom: 8 },
+    labelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 20, marginBottom: 8 },
+    optional: { fontSize: 12 },
+    hint: { fontSize: 13, lineHeight: 19, marginTop: -2, marginBottom: 12 },
 
-    input: {
-        backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-        borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: colors.text,
-    },
-    dateRow: { flexDirection: "row", gap: GAP },
-    dateInput: { textAlign: "center" },
+    input: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, fontSize: 16 },
+    dateField: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
 
     genderRow: { flexDirection: "row", gap: GAP },
-    genderBtn: {
-        flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border,
-        backgroundColor: colors.surface, alignItems: "center",
-    },
-    genderBtnActive: { backgroundColor: colors.ink, borderColor: colors.ink },
-    genderText: { fontSize: 14, fontWeight: "600", color: colors.textMuted },
-    genderTextActive: { color: "#fff" },
+    genderBtn: { flex: 1, paddingVertical: 13, borderRadius: 14, borderWidth: 1, alignItems: "center" },
 
-    coverSlot: {
-        width: SLOT * 1.3, height: SLOT * 1.3, borderRadius: 16, overflow: "hidden",
-        backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    },
-    slotEmpty: { alignItems: "center", justifyContent: "center" },
-    slotAdd: { fontSize: 12, color: colors.textSecondary, marginTop: 4 },
-    slotImg: { width: "100%", height: "100%" },
+    grid: { flexDirection: "row", flexWrap: "wrap", gap: GAP },
+    cell: { width: CELL, height: CELL, borderRadius: 14, borderWidth: 1, overflow: "hidden" },
+    addCell: { alignItems: "center", justifyContent: "center", borderStyle: "dashed", borderWidth: 1.5 },
+    cellImg: { width: "100%", height: "100%" },
+    removeBadge: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
 
-    bucketBlock: { marginTop: 16 },
-    bucketLabel: { fontSize: 14, fontWeight: "700", color: colors.ink, marginBottom: 8 },
-    bucketCount: { fontSize: 13, fontWeight: "600", color: colors.textSecondary },
-    slotsRow: { flexDirection: "row", gap: GAP },
-    anchorSlot: {
-        width: SLOT, height: SLOT, borderRadius: 12, overflow: "hidden",
-        backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    },
-    removeBadge: {
-        position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 11,
-        backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center",
-    },
-
-    noteBox: {
-        flexDirection: "row", gap: 8, marginTop: 24, padding: 12,
-        backgroundColor: colors.fill, borderRadius: 12,
-    },
-    noteText: { flex: 1, fontSize: 12.5, color: colors.textMuted, lineHeight: 18 },
-
-    footer: {
-        position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: H_PAD, paddingTop: 12,
-        backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border,
-    },
-    saveBtn: { height: 56, borderRadius: 16, backgroundColor: colors.ink, alignItems: "center", justifyContent: "center" },
+    footer: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: H_PAD, paddingTop: 12, borderTopWidth: 1 },
+    saveBtn: { height: 56, alignItems: "center", justifyContent: "center" },
     savingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
     saveText: { fontSize: 17, fontWeight: "800", color: "#fff" },
 });

@@ -1,34 +1,26 @@
 // app/photobook/scan.tsx
 //
-// STEP 4: 카메라롤 온디바이스 얼굴 스캔.
-// 권한 → 스캔(증분) → 진행바 → "N장 중 얼굴 M장" → 검출 썸네일 그리드.
-// 원본 업로드 없음(썸네일+bbox만 로컬 캐시). 기존 타일/결제/orders/admin 무관.
-import React, { useEffect, useState } from "react";
+// STEP 5: "Find {name}'s photos" 파이프라인.
+//  검출(전체 라이브러리) → 매칭(이 subject 얼굴만) → 미리보기 그리드(체크 선택).
+//  진행: "검출 N → 매칭 M". 강제 업로드 절대 X — 후보를 보여주고 부모가 체크 선택.
+import React, { useEffect, useRef, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    Pressable,
-    FlatList,
-    Alert,
-    Linking,
-    ActivityIndicator,
-    Dimensions,
+    View, Text, StyleSheet, Pressable, FlatList, Alert, Linking, Animated, Dimensions,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image as ExpoImage } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 
-import { colors } from "../../src/theme/colors";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
-import {
-    scanLibrary,
-    getCachedItems,
-    requestLibraryPermission,
-} from "../../src/services/faceScan";
-import { ScanItem, ScanProgress } from "../../src/types/scan";
+import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
+import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
+import { scanLibrary, requestLibraryPermission } from "../../src/services/faceScan";
+import { getSubject } from "../../src/services/aiSubjects";
+import { buildAnchorSet, matchSubject, MatchedItem } from "../../src/services/faceMatch";
+import { AiSubject } from "../../src/types/aiSubject";
+import { ScanProgress } from "../../src/types/scan";
 
 const SCREEN_W = Dimensions.get("window").width;
 const H_PAD = 20;
@@ -36,168 +28,210 @@ const GAP = 6;
 const COLS = 3;
 const CELL = Math.floor((SCREEN_W - H_PAD * 2 - GAP * (COLS - 1)) / COLS);
 
+type Phase = "idle" | "scanning" | "matching" | "done";
+
 export default function PhotobookScan() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { t } = useLanguage();
+    const c = usePhotobookTheme();
     const enabled = usePhotobookEnabled();
+    const params = useLocalSearchParams<{ subjectId?: string; name?: string }>();
+    const subjectId = typeof params.subjectId === "string" ? params.subjectId : "";
+    const name = typeof params.name === "string" ? params.name : "";
 
-    const [scanning, setScanning] = useState(false);
-    const [progress, setProgress] = useState<ScanProgress | null>(null);
-    const [items, setItems] = useState<ScanItem[]>([]);
-    const [limited, setLimited] = useState(false);
+    const [phase, setPhase] = useState<Phase>("idle");
+    const [scanProg, setScanProg] = useState<ScanProgress | null>(null);
+    const [matchProg, setMatchProg] = useState<{ done: number; total: number; matched: number } | null>(null);
+    const [items, setItems] = useState<MatchedItem[]>([]);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [denied, setDenied] = useState(false);
+
+    const pulse = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        const loop = Animated.loop(Animated.sequence([
+            Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        ]));
+        loop.start();
+        return () => loop.stop();
+    }, [pulse]);
 
     useEffect(() => {
-        // 이전 스캔 결과(캐시) 미리 로드
-        getCachedItems().then((cached) => {
-            setItems(cached.filter((i) => i.faces.length > 0));
-        });
+        run();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    if (!enabled) return null;
-
-    const faceItems = items; // 이미 얼굴 있는 것만 보관
-
-    async function onScan() {
+    async function run() {
         const perm = await requestLibraryPermission();
         if (!perm.granted) {
+            setDenied(true);
             Alert.alert(t.permissionDeniedTitle, t.permissionDeniedBody, [
                 { text: t.cancel, style: "cancel" },
                 { text: t.openSettings, onPress: () => Linking.openSettings() },
             ]);
             return;
         }
-        setLimited(perm.accessPrivileges === "limited");
+        setDenied(false);
 
-        setScanning(true);
-        setProgress({ scanned: 0, total: 0, withFaces: 0 });
-        try {
-            const { items: all } = await scanLibrary((p) => setProgress(p));
-            setItems(all.filter((i) => i.faces.length > 0));
-        } catch (e: any) {
-            Alert.alert("Error", String(e?.message || e));
-        } finally {
-            setScanning(false);
+        const subject: AiSubject | null = subjectId ? await getSubject(subjectId) : null;
+
+        // 1) 검출
+        setPhase("scanning");
+        setScanProg({ scanned: 0, total: 0, withFaces: 0 });
+        const { items: all } = await scanLibrary((p) => setScanProg(p));
+        const faceItems = all.filter((i) => i.faces.length > 0);
+
+        // 2) 매칭 (subject 있으면 그 얼굴만)
+        if (subject) {
+            setPhase("matching");
+            setMatchProg({ done: 0, total: faceItems.length, matched: 0 });
+            const anchorSet = await buildAnchorSet(subject);
+            const matched = matchSubject(faceItems, anchorSet, (done, total, m) =>
+                setMatchProg({ done, total, matched: m })
+            );
+            setItems(matched);
+        } else {
+            setItems(faceItems.map((i) => ({ ...i, score: 0, ageMonths: null })));
         }
+        setPhase("done");
     }
 
-    const pct = progress && progress.total > 0 ? Math.min(1, progress.scanned / progress.total) : 0;
-    const hasResults = faceItems.length > 0;
+    function toggle(id: string) {
+        setSelected((prev) => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    }
+
+    if (!enabled) return null;
+
+    const scanning = phase === "scanning" || phase === "matching";
+    const scanPct = scanProg && scanProg.total > 0 ? Math.min(1, scanProg.scanned / scanProg.total) : 0;
+    const matchPct = matchProg && matchProg.total > 0 ? Math.min(1, matchProg.done / matchProg.total) : 0;
+    const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.container, { backgroundColor: c.bg, paddingTop: insets.top + 8 }]}>
             <View style={styles.header}>
-                <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
-                    <Feather name="arrow-left" size={24} color={colors.ink} />
+                <Pressable onPress={() => router.back()} hitSlop={12} style={styles.iconBtn}>
+                    <Feather name="arrow-left" size={24} color={c.ink} />
                 </Pressable>
-                <Text style={styles.headerTitle}>{t.pbScanTitle}</Text>
-                <View style={styles.backBtn} />
+                <Text style={[styles.headerTitle, { color: c.ink }]} numberOfLines={1}>{name || t.pbScanTitle}</Text>
+                <View style={styles.iconBtn} />
             </View>
 
-            <Text style={styles.intro}>{t.pbScanIntro}</Text>
+            {scanning ? (
+                <View style={styles.loading}>
+                    <Animated.View style={{ transform: [{ scale }] }}>
+                        <PhotobookGradient colors={c.gradient} radius={pbRadius.pill} style={styles.pulseCircle}>
+                            <Feather name="aperture" size={42} color="#fff" />
+                        </PhotobookGradient>
+                    </Animated.View>
 
-            {/* 진행/요약 카드 */}
-            <View style={styles.statusCard}>
-                {scanning ? (
-                    <>
-                        <View style={styles.statusRow}>
-                            <ActivityIndicator color={colors.ink} />
-                            <Text style={styles.statusText}>
-                                {t.pbScanning} {progress?.scanned ?? 0}
-                                {progress && progress.total > 0 ? ` / ${progress.total}` : ""}
+                    {phase === "scanning" ? (
+                        <>
+                            <Text style={[styles.loadingTitle, { color: c.ink }]}>{t.pbDetecting}</Text>
+                            <View style={[styles.barTrack, { backgroundColor: c.surfaceAlt }]}>
+                                <View style={{ width: `${Math.round(scanPct * 100)}%`, height: "100%" }}>
+                                    <PhotobookGradient colors={c.gradient} radius={pbRadius.pill} style={{ flex: 1 }} />
+                                </View>
+                            </View>
+                            <Text style={[styles.countMuted, { color: c.textMuted }]}>
+                                {scanProg?.scanned ?? 0}{scanProg && scanProg.total > 0 ? ` / ${scanProg.total}` : ""}
                             </Text>
-                        </View>
-                        <View style={styles.barTrack}>
-                            <View style={[styles.barFill, { width: `${Math.round(pct * 100)}%` }]} />
-                        </View>
-                        <Text style={styles.statusSub}>
-                            {t.pbScanWithFaces}: {progress?.withFaces ?? 0}
-                        </Text>
-                    </>
-                ) : (
-                    <>
-                        <Text style={styles.summaryBig}>
-                            {faceItems.length}{" "}
-                            <Text style={styles.summaryBigLabel}>{t.pbScanWithFaces}</Text>
-                        </Text>
-                        {limited && <Text style={styles.limitedNote}>{t.pbScanLimited}</Text>}
-                        <Pressable style={styles.scanBtn} onPress={onScan}>
-                            <Feather name="search" size={18} color="#fff" style={{ marginRight: 8 }} />
-                            <Text style={styles.scanBtnText}>
-                                {hasResults ? t.pbScanRescan : t.pbScanStart}
+                            <Text style={[styles.facesFound, { color: c.coral }]}>
+                                {scanProg?.withFaces ?? 0} {t.pbScanWithFaces}
                             </Text>
-                        </Pressable>
-                    </>
-                )}
-            </View>
-
-            {/* 검출 썸네일 그리드 */}
-            {hasResults ? (
+                        </>
+                    ) : (
+                        <>
+                            <Text style={[styles.loadingTitle, { color: c.ink }]}>{t.pbMatching}</Text>
+                            <View style={[styles.barTrack, { backgroundColor: c.surfaceAlt }]}>
+                                <View style={{ width: `${Math.round(matchPct * 100)}%`, height: "100%" }}>
+                                    <PhotobookGradient colors={c.gradient} radius={pbRadius.pill} style={{ flex: 1 }} />
+                                </View>
+                            </View>
+                            <Text style={[styles.facesFound, { color: c.coral }]}>
+                                {matchProg?.matched ?? 0} {t.pbMatched}
+                            </Text>
+                        </>
+                    )}
+                </View>
+            ) : (
                 <FlatList
-                    data={faceItems}
+                    data={items}
                     keyExtractor={(it) => it.assetId}
                     numColumns={COLS}
                     columnWrapperStyle={{ gap: GAP }}
-                    contentContainerStyle={{ paddingHorizontal: H_PAD, paddingBottom: insets.bottom + 24, gap: GAP }}
-                    renderItem={({ item }) => (
-                        <View style={styles.cell}>
-                            <ExpoImage source={{ uri: item.thumbUri }} style={styles.cellImg} contentFit="cover" />
-                            {item.faces.length > 1 && (
-                                <View style={styles.faceBadge}>
-                                    <Feather name="users" size={11} color="#fff" />
-                                    <Text style={styles.faceBadgeText}>{item.faces.length}</Text>
-                                </View>
-                            )}
+                    ListHeaderComponent={
+                        <View style={styles.previewHead}>
+                            <Text style={[styles.previewTitle, { color: c.ink }]}>{t.pbPreviewTitle}</Text>
+                            <Text style={[styles.previewSub, { color: c.textSecondary }]}>
+                                {items.length} {t.pbMatched}
+                                {selected.size > 0 ? ` · ${selected.size} ${t.pbSelected}` : ""}
+                            </Text>
                         </View>
-                    )}
+                    }
+                    contentContainerStyle={{ paddingHorizontal: H_PAD, paddingBottom: insets.bottom + 24, gap: GAP }}
+                    ListEmptyComponent={
+                        denied ? (
+                            <Pressable onPress={run} style={[styles.retry, { borderColor: c.peach, backgroundColor: c.surfaceAlt }]}>
+                                <Text style={{ color: c.coral, fontWeight: "700" }}>{t.pbScanStart}</Text>
+                            </Pressable>
+                        ) : (
+                            <View style={styles.empty}>
+                                <Feather name="image" size={40} color={c.textMuted} />
+                                <Text style={{ color: c.textSecondary, marginTop: 10 }}>{t.pbScanNoResults}</Text>
+                            </View>
+                        )
+                    }
+                    renderItem={({ item }) => {
+                        const on = selected.has(item.assetId);
+                        return (
+                            <Pressable style={styles.cell} onPress={() => toggle(item.assetId)}>
+                                <ExpoImage source={{ uri: item.thumbUri }} style={styles.cellImg} contentFit="cover" />
+                                <View style={[styles.check, on
+                                    ? { backgroundColor: c.coral, borderColor: c.coral }
+                                    : { backgroundColor: "rgba(0,0,0,0.25)", borderColor: "#fff" }]}>
+                                    {on && <Feather name="check" size={14} color="#fff" />}
+                                </View>
+                                {on && <View style={[styles.selOverlay, { borderColor: c.coral }]} />}
+                            </Pressable>
+                        );
+                    }}
                 />
-            ) : (
-                !scanning && (
-                    <View style={styles.empty}>
-                        <Feather name="image" size={40} color={colors.textSecondary} />
-                        <Text style={styles.emptyText}>{t.pbScanNoResults}</Text>
-                    </View>
-                )
             )}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.background },
+    container: { flex: 1 },
     header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: H_PAD, paddingBottom: 8 },
-    backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-    headerTitle: { fontSize: 18, fontWeight: "800", color: colors.ink },
-    intro: { fontSize: 13, color: colors.textMuted, lineHeight: 19, paddingHorizontal: H_PAD, marginBottom: 14 },
+    iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+    headerTitle: { fontSize: 18, fontWeight: "800", flex: 1, textAlign: "center" },
 
-    statusCard: {
-        marginHorizontal: H_PAD, marginBottom: 16, padding: 16,
-        backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border,
-    },
-    statusRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-    statusText: { fontSize: 15, fontWeight: "700", color: colors.ink },
-    statusSub: { fontSize: 13, color: colors.textMuted, marginTop: 8 },
-    barTrack: { height: 8, borderRadius: 4, backgroundColor: colors.fill, marginTop: 12, overflow: "hidden" },
-    barFill: { height: 8, borderRadius: 4, backgroundColor: colors.ink },
+    loading: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 40, marginTop: -40 },
+    pulseCircle: { width: 110, height: 110, alignItems: "center", justifyContent: "center", marginBottom: 28 },
+    loadingTitle: { fontSize: 20, fontWeight: "800", marginBottom: 24 },
+    barTrack: { width: "100%", height: 10, borderRadius: 999, overflow: "hidden" },
+    countMuted: { fontSize: 14, fontWeight: "600", marginTop: 12 },
+    facesFound: { fontSize: 16, fontWeight: "800", marginTop: 6 },
 
-    summaryBig: { fontSize: 28, fontWeight: "900", color: colors.ink },
-    summaryBigLabel: { fontSize: 15, fontWeight: "600", color: colors.textMuted },
-    limitedNote: { fontSize: 12.5, color: colors.textMuted, lineHeight: 18, marginTop: 8 },
+    previewHead: { paddingVertical: 16 },
+    previewTitle: { fontSize: 22, fontWeight: "800" },
+    previewSub: { fontSize: 14, fontWeight: "600", marginTop: 3 },
 
-    scanBtn: {
-        flexDirection: "row", alignItems: "center", justifyContent: "center",
-        height: 50, borderRadius: 14, backgroundColor: colors.ink, marginTop: 14,
-    },
-    scanBtnText: { fontSize: 16, fontWeight: "800", color: "#fff" },
-
-    cell: { width: CELL, height: CELL, borderRadius: 10, overflow: "hidden", backgroundColor: colors.fill },
+    cell: { width: CELL, height: CELL, borderRadius: 10, overflow: "hidden" },
     cellImg: { width: "100%", height: "100%" },
-    faceBadge: {
-        position: "absolute", top: 4, right: 4, flexDirection: "row", alignItems: "center", gap: 3,
-        paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.6)",
+    check: {
+        position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: 12, borderWidth: 2,
+        alignItems: "center", justifyContent: "center",
     },
-    faceBadgeText: { fontSize: 11, fontWeight: "700", color: "#fff" },
+    selOverlay: { ...StyleSheet.absoluteFillObject, borderWidth: 3, borderRadius: 10 },
 
-    empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, marginTop: -40 },
-    emptyText: { fontSize: 14, color: colors.textSecondary },
+    empty: { alignItems: "center", justifyContent: "center", paddingTop: 80 },
+    retry: { alignSelf: "center", marginTop: 80, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 14, borderWidth: 1.5 },
 });

@@ -30,6 +30,11 @@ import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
+import { AiPhotobookCard } from "../../src/components/home/AiPhotobookCard";
+import { TileEntryCard } from "../../src/components/home/TileEntryCard";
+import { usePhotobookTheme } from "../../src/config/photobookTheme";
+import { PhotobookWhyHow } from "../../src/components/home/PhotobookWhyHow";
+import { PhotobookPriceTable } from "../../src/components/home/PhotobookPriceTable";
 
 // ✨ 묶음 할인 가격표 (홈)
 import BundlePricingTable from "../../src/components/BundlePricingTable";
@@ -61,6 +66,7 @@ export default function Index() {
 
     const { setPhotos, saveDraft, hasDraft, loadDraft, clearDraft } = usePhoto();
     const photobookEnabled = usePhotobookEnabled();
+    const c = usePhotobookTheme();
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
@@ -182,16 +188,39 @@ export default function Index() {
 
     const currentBillboard = billboard[billboardIndex] || billboard[0];
 
+    // 슬라이드쇼 조각 (플래그 ON이면 맨 아래로, OFF면 기존 위치)
+    const slideshow = (
+        <View style={styles.heroPreview}>
+            <View style={styles.slideshowContainer}>
+                {slideshowImages.map((img, idx) => (
+                    <View
+                        key={idx}
+                        style={[StyleSheet.absoluteFillObject, { opacity: slideshowIndex === idx ? 1 : 0 }]}
+                    >
+                        <ExpoImage
+                            source={img}
+                            style={styles.heroTile}
+                            contentFit="cover"
+                            transition={200}
+                            priority="high"
+                            cachePolicy="memory-disk"
+                        />
+                    </View>
+                ))}
+            </View>
+        </View>
+    );
+
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, photobookEnabled && { backgroundColor: c.bg }]}>
             {hasDraft && user && !isGhost && (
-                <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
+                <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }, photobookEnabled && { backgroundColor: c.surface, borderColor: c.border }]}>
                     <View style={styles.resumeContent}>
                         <View>
-                            <Text style={styles.resumeTitle}>{t.resumeTitle}</Text>
-                            <Text style={styles.resumeSubtitle}>{t.resumeSubtitle}</Text>
+                            <Text style={[styles.resumeTitle, photobookEnabled && { color: c.ink }]}>{t.resumeTitle}</Text>
+                            <Text style={[styles.resumeSubtitle, photobookEnabled && { color: c.textSecondary }]}>{t.resumeSubtitle}</Text>
                         </View>
-                        <Pressable style={styles.resumeBtn} onPress={handleResume}>
+                        <Pressable style={[styles.resumeBtn, photobookEnabled && { backgroundColor: c.coral }]} onPress={handleResume}>
                             <Text style={styles.resumeBtnText}>{t.resumeCta}</Text>
                             <Feather name="arrow-right" size={16} color="#fff" />
                         </Pressable>
@@ -234,7 +263,7 @@ export default function Index() {
                     </View>
                 </View>
 
-                <View style={styles.hero}>
+                <View style={[styles.hero, photobookEnabled && { paddingBottom: 14 }]}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
                             <Text style={[
@@ -258,80 +287,33 @@ export default function Index() {
                             {t.heroSupporting?.replace(/\.$/, '')}
                         </Text>
 
-                        <View style={styles.heroPreview}>
-                            <View style={styles.slideshowContainer}>
-                                {slideshowImages.map((img, idx) => (
-                                    <View
-                                        key={idx}
-                                        style={[
-                                            StyleSheet.absoluteFillObject,
-                                            { opacity: slideshowIndex === idx ? 1 : 0 },
-                                        ]}
-                                    >
-                                        <ExpoImage
-                                            source={img}
-                                            style={styles.heroTile}
-                                            contentFit="cover"
-                                            transition={200}
-                                            priority="high" // ✨ 렌더링 병목 방지를 위한 최우선 순위 로드
-                                            cachePolicy="memory-disk"
-                                        />
-                                    </View>
-                                ))}
+                        {!photobookEnabled && slideshow}
+
+                        {photobookEnabled ? (
+                            <View style={styles.entryStack}>
+                                <AiPhotobookCard />
+                                <TileEntryCard onPress={handleStart} />
+                                {slideshow}
                             </View>
-                        </View>
-
-                        <View style={styles.ctaWrapper}>
-                            <View style={styles.ctaGroup}>
-                                <Pressable style={primaryBtnStyle} onPress={handleStart}>
-                                    <View style={styles.ctaInner}>
-                                        <Feather name={"crop" as any} size={20} color="#fff" style={{ marginRight: 12 }} />
-                                        <Text style={styles.ctaText}>{t.ctaStart}</Text>
-                                    </View>
-                                </Pressable>
-                                <Text style={styles.ctaHint}>{t.ctaHint}</Text>
-
-                                {/* STEP 2: AI 포토북 — 기존 CTA와 동급의 정식 진입점 (피처 플래그 ON일 때만) */}
-                                {photobookEnabled && (
-                                    <>
-                                        <View style={styles.entryDivider}>
-                                            <View style={styles.entryDividerLine} />
-                                            <Text style={styles.entryDividerText}>
-                                                {locale === "TH" ? "หรือ" : "or"}
-                                            </Text>
-                                            <View style={styles.entryDividerLine} />
+                        ) : (
+                            <View style={styles.ctaWrapper}>
+                                <View style={styles.ctaGroup}>
+                                    <Pressable style={primaryBtnStyle} onPress={handleStart}>
+                                        <View style={styles.ctaInner}>
+                                            <Feather name={"crop" as any} size={20} color="#fff" style={{ marginRight: 12 }} />
+                                            <Text style={styles.ctaText}>{t.ctaStart}</Text>
                                         </View>
-
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.photobookCard,
-                                                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
-                                            ]}
-                                            onPress={() => router.push("/photobook")}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={t.photobookCardTitle}
-                                        >
-                                            <View style={styles.photobookIcon}>
-                                                <Feather name={"cpu" as any} size={22} color={colors.ink} />
-                                            </View>
-                                            <View style={{ flex: 1 }}>
-                                                <View style={styles.photobookTitleRow}>
-                                                    <Text style={styles.photobookTitle}>{t.photobookCardTitle}</Text>
-                                                    <View style={styles.photobookBadge}>
-                                                        <Text style={styles.photobookBadgeText}>{t.photobookCardBadge}</Text>
-                                                    </View>
-                                                </View>
-                                                <Text style={styles.photobookDesc}>{t.photobookCardDesc}</Text>
-                                            </View>
-                                            <Feather name={"chevron-right" as any} size={20} color="#9CA3AF" />
-                                        </Pressable>
-                                    </>
-                                )}
+                                    </Pressable>
+                                    <Text style={styles.ctaHint}>{t.ctaHint}</Text>
+                                </View>
                             </View>
-                        </View>
+                        )}
                     </View>
                 </View>
 
+                {photobookEnabled && <PhotobookWhyHow />}
+
+                {!photobookEnabled && (
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
                     <Text style={styles.sectionSmallTitle}>{t.benefitsTitle}</Text>
                     <View style={styles.grid}>
@@ -355,6 +337,7 @@ export default function Index() {
                         ))}
                     </View>
                 </View>
+                )}
 
                 <View style={styles.section}>
                     <View style={styles.billboardContainer}>
@@ -412,6 +395,7 @@ export default function Index() {
                     </View>
                 </View>
 
+                {!photobookEnabled && (
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>{t.howItWorks}</Text>
                     <View style={styles.stepsContainer}>
@@ -420,9 +404,17 @@ export default function Index() {
                         ))}
                     </View>
                 </View>
+                )}
 
                 {/* ✨ 묶음 할인 가격표 + 2차 CTA (사용법 이해 직후 → 가격 → 즉시 시작) */}
-                <View style={[styles.section, { backgroundColor: colors.canvas }]}>
+                <View style={[styles.section, photobookEnabled ? { backgroundColor: c.bg } : { backgroundColor: colors.canvas }]}>
+                    {photobookEnabled && (
+                        <>
+                            <Text style={[styles.priceLabel, { color: c.ink }]}>{t.priceAiLabel}</Text>
+                            <PhotobookPriceTable />
+                            <Text style={[styles.priceLabel, { color: c.ink, marginTop: 28 }]}>{t.priceTileLabel}</Text>
+                        </>
+                    )}
                     <BundlePricingTable />
                     <View style={{ alignItems: "center", marginTop: 24 }}>
                         <Pressable style={primaryBtnStyle} onPress={handleStart}>
@@ -532,7 +524,7 @@ const styles = StyleSheet.create({
     langText: { fontSize: 11, fontWeight: "700", color: colors.textSecondary },
     langTextActive: { color: colors.text },
 
-    section: { padding: layout.spacing.pagePadding, paddingVertical: 40 },
+    section: { padding: layout.spacing.pagePadding, paddingVertical: 28 },
     hero: { paddingTop: 0, paddingBottom: 48, alignItems: "center" },
     heroContent: { maxWidth: 480, width: "100%", alignItems: "center" },
     headlineGroup: { marginBottom: 8, paddingHorizontal: 20, alignItems: "center" },
@@ -549,7 +541,7 @@ const styles = StyleSheet.create({
     heroHeadline2_EN: { fontSize: 26, lineHeight: 40 },
     heroSupporting_EN: { fontSize: 16, lineHeight: 24 },
 
-    heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 34 },
+    heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 16 },
     slideshowContainer: { width: 260, height: 260 },
     heroTile: { width: 260, height: 260, borderRadius: 4, ...shadows.md },
 
@@ -559,6 +551,8 @@ const styles = StyleSheet.create({
     ctaInner: { flexDirection: "row", alignItems: "center" },
     ctaText: { ...typography.button, fontSize: 20, fontWeight: "700" },
     ctaHint: { ...typography.caption, marginTop: 10, textAlign: "center" },
+    entryStack: { width: "100%", paddingHorizontal: 24, gap: 14, marginTop: 4 },
+    priceLabel: { fontSize: 18, fontWeight: "800", marginBottom: 12 },
     // STEP 2: AI 포토북 정식 진입점 (플래그 ON일 때만 렌더)
     entryDivider: {
         width: 320, flexDirection: "row", alignItems: "center", marginTop: 18, marginBottom: 2,

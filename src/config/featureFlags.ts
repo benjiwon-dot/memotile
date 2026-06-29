@@ -7,7 +7,7 @@
 // 향후 "앱 재배포 없이 원격 토글"이 필요해지면 usePhotobookEnabled() 내부만
 // Firestore config 읽기로 교체하면 되고, 호출부(컴포넌트)는 손대지 않아도 된다.
 
-export const photobookEnabled = false;
+export const photobookEnabled = true;
 
 /**
  * AI 포토북 기능 노출 여부.

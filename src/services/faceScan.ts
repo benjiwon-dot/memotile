@@ -83,6 +83,7 @@ export async function scanLibrary(
                     width: manipulated.width,
                     height: manipulated.height,
                     faces,
+                    creationTime: asset.creationTime,
                     processedAt: Date.now(),
                 };
                 scanned++;
@@ -92,7 +93,7 @@ export async function scanLibrary(
                 }
             } catch (e) {
                 // 개별 실패는 빈 결과로 캐시해 재시도 폭주를 막는다.
-                cache[id] = { assetId: id, thumbUri: "", width: 0, height: 0, faces: [], processedAt: Date.now() };
+                cache[id] = { assetId: id, thumbUri: "", width: 0, height: 0, faces: [], creationTime: asset.creationTime, processedAt: Date.now() };
                 scanned++;
             }
 
