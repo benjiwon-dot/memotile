@@ -38,6 +38,11 @@ export default function PhotobookHome() {
                     <Feather name="user-plus" size={18} color="#fff" style={{ marginRight: 8 }} />
                     <Text style={styles.ctaText}>{t.pbRegisterTitle}</Text>
                 </Pressable>
+
+                <Pressable style={styles.ctaSecondary} onPress={() => router.push("/photobook/scan")}>
+                    <Feather name="search" size={18} color={colors.ink} style={{ marginRight: 8 }} />
+                    <Text style={styles.ctaSecondaryText}>{t.pbScanTitle}</Text>
+                </Pressable>
             </View>
         </View>
     );
@@ -59,4 +64,10 @@ const styles = StyleSheet.create({
         height: 54, paddingHorizontal: 28, borderRadius: 16, backgroundColor: colors.ink,
     },
     ctaText: { fontSize: 16, fontWeight: "800", color: "#fff" },
+    ctaSecondary: {
+        flexDirection: "row", alignItems: "center", justifyContent: "center",
+        height: 54, paddingHorizontal: 28, borderRadius: 16, marginTop: 12,
+        backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    },
+    ctaSecondaryText: { fontSize: 16, fontWeight: "800", color: colors.ink },
 });

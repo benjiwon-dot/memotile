@@ -45,6 +45,14 @@
           "cameraPermission": "We need camera access to let you take new photos for your custom photo tiles."
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "MemoTile scans your photo library on this device to automatically find the best photos of your child. Your photos are analyzed only on your device and are never uploaded.",
+          "savePhotosPermission": "MemoTile needs permission to save photos to your library.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-apple-authentication",
       "@react-native-firebase/crashlytics",
       "expo-font",
