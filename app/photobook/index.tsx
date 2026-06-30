@@ -3,7 +3,7 @@
 // AI 프로필 메인 (허브 제거). 프로필 0개면 등록으로 자동 이동, 1개+면 프로필 표시.
 // 상단 원형사진+이름+나이, 여러 명이면 가로 전환+추가(+), 큰 버튼 "{이름} 사진 찾아내기" → 스캔.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image as ExpoImage } from "expo-image";
@@ -13,7 +13,7 @@ import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
 import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
 import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
-import { listMySubjects } from "../../src/services/aiSubjects";
+import { listMySubjects, deleteSubject } from "../../src/services/aiSubjects";
 import { AiSubject } from "../../src/types/aiSubject";
 
 function ageLabel(birth: string | null | undefined, yr: string, mo: string): string {
@@ -72,6 +72,25 @@ export default function PhotobookProfile() {
     const current = subjects[Math.min(sel, subjects.length - 1)];
     const findLabel = t.pbFindPhotos.replace("{name}", current.name);
 
+    function confirmDelete(s: AiSubject) {
+        Alert.alert(t.pbDeleteTitle, t.pbDeleteBody, [
+            { text: t.cancel, style: "cancel" },
+            {
+                text: t.pbDeleteOk, style: "destructive", onPress: async () => {
+                    try {
+                        await deleteSubject(s.id!);
+                        const next = subjects!.filter((x) => x.id !== s.id);
+                        setSel(0);
+                        setSubjects(next);
+                        if (next.length === 0) router.replace("/photobook/register");
+                    } catch (e: any) {
+                        Alert.alert("Error", String(e?.message || e));
+                    }
+                },
+            },
+        ]);
+    }
+
     return (
         <View style={[styles.container, { backgroundColor: c.bg, paddingTop: insets.top + 8 }]}>
             <View style={styles.header}>
@@ -113,7 +132,7 @@ export default function PhotobookProfile() {
                     {subjects.map((s, i) => {
                         const active = i === sel;
                         return (
-                            <Pressable key={s.id} onPress={() => setSel(i)} style={styles.switchItem}>
+                            <Pressable key={s.id} onPress={() => setSel(i)} onLongPress={() => confirmDelete(s)} delayLongPress={1500} style={styles.switchItem}>
                                 <View style={[styles.switchAvatar, { borderColor: active ? c.coral : c.border, backgroundColor: c.surface }]}>
                                     {s.cover?.url ? (
                                         <ExpoImage source={{ uri: s.cover.url }} style={styles.switchImg} contentFit="cover" />

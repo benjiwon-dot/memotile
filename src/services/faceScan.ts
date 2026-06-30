@@ -85,8 +85,16 @@ export async function scanBatch(opts: ScanBatchOptions): Promise<BatchResult> {
     let withFacesDelta = 0;
     const collect = (it: ScanItem) => { if (it.faces.length > 0) { items.push(it); withFacesDelta++; } };
 
-    const uncached = page.assets.filter((a) => !cache[a.id]);
-    for (const a of page.assets) if (cache[a.id]) collect(cache[a.id]);
+    // 캐시 항목: 얼굴 있으면 썸네일이 실제 존재해야 매칭(embed) 가능 → 없으면 재생성
+    const uncached: MediaLibrary.Asset[] = [];
+    for (const a of page.assets) {
+        const cached = cache[a.id];
+        if (!cached) { uncached.push(a); continue; }
+        if (cached.faces.length === 0) continue; // 얼굴 없는 캐시는 재사용(썸네일 불필요)
+        const ok = cached.thumbUri ? (await FileSystem.getInfoAsync(cached.thumbUri)).exists : false;
+        if (ok) collect(cached);
+        else uncached.push(a); // 썸네일 유실 → 재생성
+    }
 
     for (const group of chunk(uncached, CONCURRENCY)) {
         const results = await Promise.all(group.map(processOne));

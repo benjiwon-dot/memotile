@@ -10,8 +10,18 @@ import { matchConfig } from "../config/matchConfig";
 
 export interface AnchorSet {
     embeddings: number[][];
+    centroid: number[];   // 앵커 평균 임베딩 (판정 기준)
     birthDate: string | null;
     kind: AiSubject["kind"];
+}
+
+function centroidOf(embs: number[][]): number[] {
+    if (embs.length === 0) return [];
+    const n = embs[0].length;
+    const out = new Array(n).fill(0);
+    for (const e of embs) for (let i = 0; i < n; i++) out[i] += e[i];
+    for (let i = 0; i < n; i++) out[i] /= embs.length;
+    return out;
 }
 
 export interface MatchedItem extends ScanItem {
@@ -75,7 +85,12 @@ export async function buildAnchorSet(subject: AiSubject): Promise<AnchorSet> {
             console.warn("[faceMatch] anchor embed failed:", e);
         }
     }
-    return { embeddings, birthDate: subject.birthDate, kind: subject.kind };
+    console.log(`[faceMatch] anchors: ${embeddings.length} embeddings for "${subject.name}" (${subject.kind}, id=${(subject.id || "").slice(-6)})`);
+    if (embeddings.length >= 2) {
+        console.log(`[faceMatch] anchor self-check cos(a0,a1)=${cosine(embeddings[0], embeddings[1]).toFixed(3)} (같은 사람끼리 값 = 매칭 임계 기준점)`);
+    }
+    if (embeddings.length === 0) console.warn("[faceMatch] ⚠️ 앵커 임베딩 0개 — 프로필 사진에서 얼굴 검출 실패. 매칭 불가.");
+    return { embeddings, centroid: centroidOf(embeddings), birthDate: subject.birthDate, kind: subject.kind };
 }
 
 /**
@@ -83,33 +98,44 @@ export async function buildAnchorSet(subject: AiSubject): Promise<AnchorSet> {
  * embed 시간 계측 로그 출력.
  */
 export async function matchItemsBatch(items: ScanItem[], anchorSet: AnchorSet): Promise<MatchedItem[]> {
-    if (anchorSet.embeddings.length === 0) return [];
+    if (anchorSet.embeddings.length === 0) {
+        console.warn("[faceMatch] 앵커 0개 → 매칭 0건 (전부 통과 안 함)");
+        return [];
+    }
     const thr = thresholdFor(anchorSet);
-    const few = anchorSet.embeddings.length <= matchConfig.fewAnchorsCount;
     const matched: MatchedItem[] = [];
     let tEmbed = 0, nEmbed = 0;
 
     for (const item of items) {
+        if (!item.thumbUri) continue; // 썸네일 없는(실패) 항목은 임베딩 불가 → 건너뜀
         let best = -1;
         for (const face of item.faces) {
             if (!isCandidate(face)) continue;
             const a = Date.now();
-            const emb = await embedFace(item.thumbUri, face.x, face.y, face.width, face.height);
+            let emb: number[] = [];
+            try {
+                emb = await embedFace(item.thumbUri, face.x, face.y, face.width, face.height);
+            } catch (e) {
+                // 개별 이미지 로드/임베딩 실패는 그 얼굴만 건너뛴다 (배치 전체를 죽이지 않음)
+                continue;
+            }
             tEmbed += Date.now() - a; nEmbed++;
             if (emb.length) {
-                for (const anchor of anchorSet.embeddings) {
-                    const s = cosine(emb, anchor);
-                    if (s > best) best = s;
-                }
+                // 앵커 평균(centroid)과의 유사도
+                const s = cosine(emb, anchorSet.centroid);
+                if (s > best) best = s;
             }
         }
         const age = ageMonthsAt(anchorSet.birthDate, item.creationTime);
-        let pass = best >= thr;
-        if (!pass && few && best >= thr - 0.06 && age !== null && age >= 0 && age <= 18 * 12) pass = true;
+        const pass = best >= thr; // 순수 임계값 컷 (시간보조는 STEP6에서 재도입 가능)
+        // 각 후보의 실제 유사도 로그 (임계값 보정용)
+        if (best > -1) {
+            console.log(`[faceMatch] candidate ${item.assetId.slice(-8)}: similarity=${best.toFixed(3)} (threshold=${thr.toFixed(2)}) → ${pass ? "matched" : "rejected"}`);
+        }
         if (pass) matched.push({ ...item, score: best, ageMonths: age });
     }
 
-    console.log(`[faceMatch] batch embed: ${nEmbed} faces | embed=${nEmbed ? (tEmbed / nEmbed).toFixed(0) : 0}ms /face`);
+    console.log(`[faceMatch] batch embed: ${nEmbed} faces | embed=${nEmbed ? (tEmbed / nEmbed).toFixed(0) : 0}ms /face | matched ${matched.length}/${items.length}`);
     matched.sort((a, b) => b.score - a.score);
     return matched;
 }

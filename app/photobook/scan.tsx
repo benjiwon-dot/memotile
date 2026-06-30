@@ -125,9 +125,13 @@ export default function PhotobookScan() {
         try {
             const res = await scanBatch({ after: afterRef.current, sinceMs: sinceRef.current, batchSize: BATCH });
             afterRef.current = res.nextAfter;
-            const m = anchorRef.current
-                ? await matchItemsBatch(res.items, anchorRef.current)
-                : res.items.map((i) => ({ ...i, score: 0, ageMonths: null }));
+            // 유효한 앵커가 있을 때만 매칭. 없으면 0건(절대 "전부 통과" 안 함).
+            let m: MatchedItem[] = [];
+            if (anchorRef.current && anchorRef.current.embeddings.length > 0) {
+                m = await matchItemsBatch(res.items, anchorRef.current);
+            } else {
+                console.warn("[scan] 유효한 앵커 없음 → 0건 (프로필 사진 확인 필요)");
+            }
             setMatched((prev) => [...prev, ...m]);
             setScanned((prev) => prev + res.scannedDelta);
             setHasMore(res.hasMore);

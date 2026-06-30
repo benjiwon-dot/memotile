@@ -20,7 +20,7 @@ import { usePhotobookEnabled } from "../../src/config/featureFlags";
 import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
 import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
 import { WheelDatePicker } from "../../src/components/photobook/WheelDatePicker";
-import { createSubject, updateSubject, getSubject, SubjectPhotoInput, SubjectDraft, CreateProgress } from "../../src/services/aiSubjects";
+import { createSubject, updateSubject, getSubject, deleteSubject, SubjectPhotoInput, SubjectDraft, CreateProgress } from "../../src/services/aiSubjects";
 import { SubjectGender, SubjectKind } from "../../src/types/aiSubject";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -92,6 +92,8 @@ export default function PhotobookRegister() {
         { id: "girl", label: t.pbGenderGirl },
     ];
 
+    const canSave = !!cover && anchors.length >= 2; // 프로필 1 + 앵커 2 필수
+
     async function requestPermission(): Promise<boolean> {
         if (Platform.OS === "web") return true;
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -124,8 +126,10 @@ export default function PhotobookRegister() {
         if (p[0]) setCover(p[0]);
     }
     async function onAddAnchors() {
-        const p = await pickPhotos(10);
-        if (p.length) setAnchors((prev) => [...prev, ...p]);
+        const remaining = 4 - anchors.length; // 앵커 최대 4장(프로필 포함 최대 5)
+        if (remaining <= 0) return;
+        const p = await pickPhotos(remaining);
+        if (p.length) setAnchors((prev) => [...prev, ...p].slice(0, 4));
     }
 
     async function doSave() {
@@ -145,10 +149,28 @@ export default function PhotobookRegister() {
     }
     doSaveRef.current = doSave;
 
+    function onDelete() {
+        if (!subjectId) return;
+        Alert.alert(t.pbDeleteTitle, t.pbDeleteBody, [
+            { text: t.cancel, style: "cancel" },
+            {
+                text: t.pbDeleteOk, style: "destructive", onPress: async () => {
+                    try {
+                        await deleteSubject(subjectId);
+                        router.replace("/photobook");
+                    } catch (e: any) {
+                        Alert.alert("Error", String(e?.message || e));
+                    }
+                },
+            },
+        ]);
+    }
+
     function onSave() {
         if (!name.trim()) { Alert.alert(t.pbErrName); return; }
         if (!birthDate) { Alert.alert(t.pbErrBirthDate); return; }
-        if (!cover && anchors.length === 0) { Alert.alert(t.pbErrNoPhoto); return; }
+        if (!cover) { Alert.alert(t.pbErrCover); return; }            // 프로필 사진 필수
+        if (anchors.length < 2) { Alert.alert(t.pbErrAnchors); return; } // 앵커 최소 2장 필수
         // 비로그인 → 기존 로그인 화면, 성공하면 저장 재개
         if (!auth.currentUser) {
             pendingSaveRef.current = true;
@@ -239,8 +261,14 @@ export default function PhotobookRegister() {
 
                 {/* 기준 사진 (자유 그리드) */}
                 <Text style={[styles.label, { color: c.ink, marginTop: 26 }]}>{t.pbPhotosTitle}</Text>
-                <Text style={[styles.hint, { color: c.textMuted }]}>
-                    {t.pbPhotosHint}{KIND === "baby" ? ` ${t.pbPhotosHintBaby}` : ""}
+                <View style={[styles.callout, { backgroundColor: c.surfaceAlt, borderColor: c.peach }]}>
+                    <Feather name="info" size={15} color={c.coral} style={{ marginTop: 1 }} />
+                    <Text style={[styles.calloutText, { color: c.textSecondary }]}>
+                        {t.pbPhotosHint}{KIND === "baby" ? ` ${t.pbPhotosHintBaby}` : ""}
+                    </Text>
+                </View>
+                <Text style={[styles.countLine, { color: anchors.length < 2 ? c.coral : c.textMuted }]}>
+                    {anchors.length} {t.priceUnit} · {t.pbAnchorsNeed}
                 </Text>
                 <View style={styles.grid}>
                     {anchors.map((p, i) => (
@@ -255,16 +283,25 @@ export default function PhotobookRegister() {
                             </Pressable>
                         </View>
                     ))}
-                    <Pressable style={[styles.cell, styles.addCell, { borderColor: c.peach, backgroundColor: c.surfaceAlt }]} onPress={onAddAnchors}>
-                        <Feather name="plus" size={26} color={c.coral} />
-                    </Pressable>
+                    {anchors.length < 4 && (
+                        <Pressable style={[styles.cell, styles.addCell, { borderColor: c.peach, backgroundColor: c.surfaceAlt }]} onPress={onAddAnchors}>
+                            <Feather name="plus" size={26} color={c.coral} />
+                        </Pressable>
+                    )}
                 </View>
+
+                {editing && (
+                    <Pressable style={styles.deleteBtn} onPress={onDelete}>
+                        <Feather name="trash-2" size={16} color="#E5484D" style={{ marginRight: 6 }} />
+                        <Text style={styles.deleteText}>{t.pbDelete}</Text>
+                    </Pressable>
+                )}
             </ScrollView>
 
             {/* 저장 */}
             <View style={[styles.footer, { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 12 }]}>
                 <Pressable onPress={onSave} disabled={saving}>
-                    <PhotobookGradient colors={c.gradient} radius={pbRadius.lg} style={[styles.saveBtn, saving && { opacity: 0.7 }]}>
+                    <PhotobookGradient colors={c.gradient} radius={pbRadius.lg} style={[styles.saveBtn, (saving || !canSave) && { opacity: 0.5 }]}>
                         {saving ? (
                             <View style={styles.savingRow}>
                                 <ActivityIndicator color="#fff" />
@@ -322,6 +359,11 @@ const styles = StyleSheet.create({
     addCell: { alignItems: "center", justifyContent: "center", borderStyle: "dashed", borderWidth: 1.5 },
     cellImg: { width: "100%", height: "100%" },
     removeBadge: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
+    callout: { flexDirection: "row", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, marginBottom: 8 },
+    calloutText: { flex: 1, fontSize: 13, lineHeight: 19, fontWeight: "500" },
+    countLine: { fontSize: 13, fontWeight: "700", marginBottom: 12 },
+    deleteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 32, paddingVertical: 12 },
+    deleteText: { fontSize: 15, fontWeight: "700", color: "#E5484D" },
 
     footer: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: H_PAD, paddingTop: 12, borderTopWidth: 1 },
     saveBtn: { height: 56, alignItems: "center", justifyContent: "center" },

@@ -60,19 +60,20 @@ public class VisionFaceModule: Module {
         let W = CGFloat(cg.width), H = CGFloat(cg.height)
         // 좌상단 정규화 → Vision 좌하단 정규화로 변환해 crop 재사용
         let bb = CGRect(x: x, y: 1.0 - y - h, width: w, height: h)
-        guard let faceCG = Self.crop(cg, bb: bb, W: W, H: H) else { promise.resolve([Double]()); return }
+        // 임베딩은 배경 오염 줄이려 타이트 크롭(패딩 8%)
+        guard let faceCG = Self.crop(cg, bb: bb, W: W, H: H, pad: 0.08) else { promise.resolve([Double]()); return }
         promise.resolve(Self.featurePrint(faceCG) ?? [Double]())
       }
     }
   }
 
-  // 정규화(좌하단) bbox → 픽셀 crop + 25% 패딩
-  private static func crop(_ cg: CGImage, bb: CGRect, W: CGFloat, H: CGFloat) -> CGImage? {
+  // 정규화(좌하단) bbox → 픽셀 crop + 패딩(기본 25%)
+  private static func crop(_ cg: CGImage, bb: CGRect, W: CGFloat, H: CGFloat, pad: Double = 0.25) -> CGImage? {
     var rx = bb.origin.x * W
     var ry = (1 - bb.origin.y - bb.size.height) * H
     var rw = bb.size.width * W
     var rh = bb.size.height * H
-    let padX = rw * 0.25, padY = rh * 0.25
+    let padX = rw * CGFloat(pad), padY = rh * CGFloat(pad)
     rx = max(0, rx - padX); ry = max(0, ry - padY)
     rw = min(W - rx, rw + 2 * padX); rh = min(H - ry, rh + 2 * padY)
     if rw < 1 || rh < 1 { return nil }

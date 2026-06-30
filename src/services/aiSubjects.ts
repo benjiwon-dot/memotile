@@ -2,8 +2,9 @@
 //
 // AI 포토북 프로필 CRUD. 별도 컬렉션 aiSubjects + Storage aiSubjects/{uid}/...
 // 기존 orders / 결제 / 인쇄 파이프라인과 완전히 분리.
-import { collection, doc, setDoc, updateDoc, getDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore";
-import { db, auth } from "../lib/firebase";
+import { collection, doc, setDoc, updateDoc, getDoc, deleteDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore";
+import { ref as storageRef, listAll, deleteObject } from "firebase/storage";
+import { db, auth, storage } from "../lib/firebase";
 import { uploadFileUriToStorage } from "./storageUpload";
 import {
     AiSubject,
@@ -165,4 +166,24 @@ export async function listMySubjects(): Promise<AiSubject[]> {
     const snap = await getDocs(q);
     const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as AiSubject) }));
     return list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+}
+
+/** Storage 폴더 재귀 삭제 (cover + anchors) */
+async function deleteFolder(path: string): Promise<void> {
+    const r = storageRef(storage, path);
+    const res = await listAll(r);
+    await Promise.all(res.items.map((it) => deleteObject(it).catch(() => { })));
+    await Promise.all(res.prefixes.map((p) => deleteFolder(p.fullPath)));
+}
+
+/** 프로필 삭제: Storage 사진(재귀) + Firestore 문서. */
+export async function deleteSubject(id: string): Promise<void> {
+    const uid = auth.currentUser?.uid;
+    if (!uid) throw new Error("AUTH_REQUIRED");
+    try {
+        await deleteFolder(`aiSubjects/${uid}/${id}`);
+    } catch (e) {
+        console.warn("[aiSubjects] storage delete failed (continuing):", e);
+    }
+    await deleteDoc(doc(db, "aiSubjects", id));
 }
