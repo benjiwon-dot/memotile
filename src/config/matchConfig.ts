@@ -15,4 +15,7 @@ export const matchConfig = {
     ageAssistWindowMonths: 12,
     // 후보 상한(미리보기 폭주 방지). 점수순 상위만.
     maxCandidates: 300,
+    // 임베딩 스킵 필터: 너무 작거나 저품질인 얼굴은 임베딩 안 함(속도↑)
+    minFaceArea: 0.015,   // 정규화 w*h (얼굴이 사진의 1.5% 미만이면 스킵)
+    minQuality: 0.2,      // Vision faceCaptureQuality 하한 (null이면 통과)
 };

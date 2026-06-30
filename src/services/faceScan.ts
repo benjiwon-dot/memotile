@@ -1,114 +1,112 @@
 // src/services/faceScan.ts
 //
-// STEP 4 오케스트레이터: 카메라롤 페이지네이션 → 다운스케일 썸네일 → 온디바이스 얼굴 검출 → 캐시.
-// 원본 업로드 없음. 증분(이미 처리한 assetId는 skip).
+// 배치 스캔(검출 전용). 최근 사진부터 batchSize씩 → 썸네일 + 얼굴검출(임베딩 X, 빠름).
+// 임베딩은 매칭 후보에만(faceMatch.embedFace). 증분 캐시(처리한 assetId skip).
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { detectFaces } from "../../modules/vision-face";
-import { ScanItem, ScanProgress, ScanSummary, FaceBox } from "../types/scan";
+import { ScanItem, FaceBox } from "../types/scan";
 import { loadCache, saveCache, thumbPath, ScanCache } from "./scanCache";
 
-const THUMB_SIZE = 512;
-const PAGE = 100;
-const SAVE_EVERY = 15;
+const THUMB_SIZE = 320;
+const CONCURRENCY = 4;
 
 export async function requestLibraryPermission(): Promise<MediaLibrary.PermissionResponse> {
     return await MediaLibrary.requestPermissionsAsync();
 }
 
-export interface ScanOptions {
-    maxAssets?: number; // 데모/안전 상한
+/** 전체/좁힌(생일 이후) 사진 수. 로딩 연출용 실제 값. */
+export async function getLibraryCounts(sinceMs?: number): Promise<{ total: number; narrowed: number }> {
+    const all = await MediaLibrary.getAssetsAsync({ mediaType: "photo", first: 1 });
+    let narrowed = all.totalCount;
+    if (sinceMs) {
+        const n = await MediaLibrary.getAssetsAsync({ mediaType: "photo", first: 1, createdAfter: sinceMs });
+        narrowed = n.totalCount;
+    }
+    return { total: all.totalCount, narrowed };
 }
 
-export async function scanLibrary(
-    onProgress?: (p: ScanProgress) => void,
-    opts: ScanOptions = {}
-): Promise<{ summary: ScanSummary; items: ScanItem[] }> {
+function chunk<T>(arr: T[], n: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+}
+
+export interface BatchResult {
+    items: ScanItem[];      // 이 배치에서 얼굴이 검출된 사진 (매칭 대상)
+    scannedDelta: number;   // 이 배치에서 본 사진 수
+    withFacesDelta: number;
+    nextAfter?: string;
+    hasMore: boolean;
+}
+
+export interface ScanBatchOptions {
+    after?: string;
+    sinceMs?: number;
+    batchSize?: number;
+}
+
+/** 한 배치(최근순) 검출. 결과 즉시 반환 → 점진적 표시. */
+export async function scanBatch(opts: ScanBatchOptions): Promise<BatchResult> {
     const cache: ScanCache = await loadCache();
+    const since = opts.sinceMs ? { createdAfter: opts.sinceMs } : {};
+    const batchSize = opts.batchSize ?? 200;
 
-    let after: string | undefined = undefined;
-    let hasNext = true;
-    let scanned = 0;
-    let withFaces = 0;
-    let faceCount = 0;
-    let sinceSave = 0;
-    const limit = opts.maxAssets ?? Infinity;
+    const page = await MediaLibrary.getAssetsAsync({
+        mediaType: "photo",
+        first: batchSize,
+        after: opts.after,
+        sortBy: [[MediaLibrary.SortBy.creationTime, false]], // 최근 사진부터
+        ...since,
+    });
 
-    const firstPage = await MediaLibrary.getAssetsAsync({ mediaType: "photo", first: 1 });
-    const total = Math.min(firstPage.totalCount, limit);
+    let tThumb = 0, tDetect = 0, processedNew = 0;
 
-    while (hasNext && scanned < limit) {
-        const page = await MediaLibrary.getAssetsAsync({
-            mediaType: "photo",
-            first: PAGE,
-            after,
-            sortBy: [MediaLibrary.SortBy.creationTime],
-        });
-        after = page.endCursor;
-        hasNext = page.hasNextPage;
-
-        for (const asset of page.assets) {
-            if (scanned >= limit) break;
-            const id = asset.id;
-
-            // 증분: 이미 처리된 사진은 결과만 합산하고 skip
-            if (cache[id]) {
-                scanned++;
-                if (cache[id].faces.length > 0) {
-                    withFaces++;
-                    faceCount += cache[id].faces.length;
-                }
-                onProgress?.({ scanned, total, withFaces });
-                continue;
-            }
-
-            try {
-                const info = await MediaLibrary.getAssetInfoAsync(asset);
-                const srcUri = info.localUri || asset.uri;
-
-                const manipulated = await manipulateAsync(
-                    srcUri,
-                    [{ resize: { width: THUMB_SIZE } }],
-                    { compress: 0.8, format: SaveFormat.JPEG }
-                );
-                const dest = thumbPath(id);
-                await FileSystem.copyAsync({ from: manipulated.uri, to: dest });
-
-                const faces = (await detectFaces(dest)) as FaceBox[];
-
-                cache[id] = {
-                    assetId: id,
-                    thumbUri: dest,
-                    width: manipulated.width,
-                    height: manipulated.height,
-                    faces,
-                    creationTime: asset.creationTime,
-                    processedAt: Date.now(),
-                };
-                scanned++;
-                if (faces.length > 0) {
-                    withFaces++;
-                    faceCount += faces.length;
-                }
-            } catch (e) {
-                // 개별 실패는 빈 결과로 캐시해 재시도 폭주를 막는다.
-                cache[id] = { assetId: id, thumbUri: "", width: 0, height: 0, faces: [], creationTime: asset.creationTime, processedAt: Date.now() };
-                scanned++;
-            }
-
-            onProgress?.({ scanned, total, withFaces });
-            if (++sinceSave >= SAVE_EVERY) {
-                await saveCache(cache);
-                sinceSave = 0;
-            }
+    async function processOne(asset: MediaLibrary.Asset): Promise<ScanItem> {
+        try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset);
+            const srcUri = info.localUri || asset.uri;
+            const a = Date.now();
+            const manipulated = await manipulateAsync(srcUri, [{ resize: { width: THUMB_SIZE } }], { compress: 0.7, format: SaveFormat.JPEG });
+            const dest = thumbPath(asset.id);
+            await FileSystem.copyAsync({ from: manipulated.uri, to: dest });
+            const b = Date.now();
+            const faces = (await detectFaces(dest)) as FaceBox[];
+            const cc = Date.now();
+            tThumb += b - a; tDetect += cc - b; processedNew++;
+            return { assetId: asset.id, thumbUri: dest, width: manipulated.width, height: manipulated.height, faces, creationTime: asset.creationTime, processedAt: Date.now() };
+        } catch (e) {
+            return { assetId: asset.id, thumbUri: "", width: 0, height: 0, faces: [], creationTime: asset.creationTime, processedAt: Date.now() };
         }
+    }
+
+    const items: ScanItem[] = [];
+    let withFacesDelta = 0;
+    const collect = (it: ScanItem) => { if (it.faces.length > 0) { items.push(it); withFacesDelta++; } };
+
+    const uncached = page.assets.filter((a) => !cache[a.id]);
+    for (const a of page.assets) if (cache[a.id]) collect(cache[a.id]);
+
+    for (const group of chunk(uncached, CONCURRENCY)) {
+        const results = await Promise.all(group.map(processOne));
+        for (const it of results) { cache[it.assetId] = it; collect(it); }
     }
 
     await saveCache(cache);
 
-    const items = Object.values(cache);
-    return { summary: { total: scanned, withFaces, faceCount }, items };
+    console.log(
+        `[faceScan] batch detect: ${page.assets.length} photos (new=${processedNew}, faces=${withFacesDelta}) | ` +
+        `thumb=${processedNew ? (tThumb / processedNew).toFixed(0) : 0}ms detect=${processedNew ? (tDetect / processedNew).toFixed(0) : 0}ms /photo`
+    );
+
+    return {
+        items,
+        scannedDelta: page.assets.length,
+        withFacesDelta,
+        nextAfter: page.endCursor,
+        hasMore: page.hasNextPage,
+    };
 }
 
 export async function getCachedItems(): Promise<ScanItem[]> {

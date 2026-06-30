@@ -8,6 +8,8 @@ import {
     Alert, Linking, Platform, ActivityIndicator, Dimensions,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRef } from "react";
+import { auth } from "../../src/lib/firebase";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image as ExpoImage } from "expo-image";
 import { Feather } from "@expo/vector-icons";
@@ -52,6 +54,8 @@ export default function PhotobookRegister() {
     const [pickerOpen, setPickerOpen] = useState(false);
     const [saving, setSaving] = useState(false);
     const [progress, setProgress] = useState<CreateProgress | null>(null);
+    const pendingSaveRef = useRef(false);
+    const doSaveRef = useRef<() => void>(() => {});
 
     // 편집 모드: 기존 프로필 불러와 prefill
     useEffect(() => {
@@ -68,6 +72,17 @@ export default function PhotobookRegister() {
             setAnchors(anchorArr.map((a) => ({ uri: a.url, keepRef: a })));
         })();
     }, [subjectId]);
+
+    // 로그인 성공 시(비로그인→로그인) 보류된 저장 재개
+    useEffect(() => {
+        const unsub = auth.onAuthStateChanged((u) => {
+            if (u && pendingSaveRef.current) {
+                pendingSaveRef.current = false;
+                doSaveRef.current();
+            }
+        });
+        return unsub;
+    }, []);
 
     if (!enabled) return null;
 
@@ -113,10 +128,7 @@ export default function PhotobookRegister() {
         if (p.length) setAnchors((prev) => [...prev, ...p]);
     }
 
-    async function onSave() {
-        if (!name.trim()) { Alert.alert(t.pbErrName); return; }
-        if (!cover && anchors.length === 0) { Alert.alert(t.pbErrNoPhoto); return; }
-
+    async function doSave() {
         const draft: SubjectDraft = { name, birthDate, gender, kind: KIND, cover, anchors };
         const total = (cover ? 1 : 0) + anchors.length;
         setSaving(true);
@@ -130,6 +142,20 @@ export default function PhotobookRegister() {
             setSaving(false);
             setProgress(null);
         }
+    }
+    doSaveRef.current = doSave;
+
+    function onSave() {
+        if (!name.trim()) { Alert.alert(t.pbErrName); return; }
+        if (!birthDate) { Alert.alert(t.pbErrBirthDate); return; }
+        if (!cover && anchors.length === 0) { Alert.alert(t.pbErrNoPhoto); return; }
+        // 비로그인 → 기존 로그인 화면, 성공하면 저장 재개
+        if (!auth.currentUser) {
+            pendingSaveRef.current = true;
+            router.push("/auth/email");
+            return;
+        }
+        doSave();
     }
 
     return (
@@ -151,15 +177,16 @@ export default function PhotobookRegister() {
                 {/* 프로필 사진 (원형, 상단 중앙) */}
                 <View style={styles.coverWrap}>
                     <Pressable onPress={onPickCover}>
-                        <PhotobookGradient colors={c.gradient} radius={pbRadius.pill} style={styles.coverRing}>
-                            <View style={[styles.coverInner, { backgroundColor: c.surface }]}>
+                        <View style={styles.coverOuter}>
+                            <PhotobookGradient colors={c.gradient} radius={56} style={StyleSheet.absoluteFill} />
+                            <View style={[styles.coverImgWrap, { backgroundColor: c.surface }]}>
                                 {cover ? (
                                     <ExpoImage source={{ uri: cover.uri }} style={styles.coverImg} contentFit="cover" />
                                 ) : (
                                     <Feather name="camera" size={30} color={c.coral} />
                                 )}
                             </View>
-                        </PhotobookGradient>
+                        </View>
                         <View style={[styles.coverEdit, { backgroundColor: c.coral, borderColor: c.bg }]}>
                             <Feather name="plus" size={16} color="#fff" />
                         </View>
@@ -179,10 +206,7 @@ export default function PhotobookRegister() {
                 />
 
                 {/* 생년월일 (휠 피커) */}
-                <View style={styles.labelRow}>
-                    <Text style={[styles.label, { color: c.ink }]}>{t.pbBirthDateLabel}</Text>
-                    <Text style={[styles.optional, { color: c.textMuted }]}>{t.pbOptional}</Text>
-                </View>
+                <Text style={[styles.label, { color: c.ink }]}>{t.pbBirthDateLabel}</Text>
                 <Pressable
                     style={[styles.input, styles.dateField, { backgroundColor: c.surface, borderColor: c.border }]}
                     onPress={() => setPickerOpen(true)}
@@ -276,10 +300,10 @@ const styles = StyleSheet.create({
     subtitle: { fontSize: 14, lineHeight: 20, marginTop: 4, marginBottom: 20, textAlign: "center" },
 
     coverWrap: { alignItems: "center", marginBottom: 8 },
-    coverRing: { width: 112, height: 112, padding: 4 },
-    coverInner: { flex: 1, borderRadius: 999, overflow: "hidden", alignItems: "center", justifyContent: "center" },
-    coverImg: { width: "100%", height: "100%", borderRadius: 999 },
-    coverEdit: { position: "absolute", right: 4, bottom: 26, width: 30, height: 30, borderRadius: 999, borderWidth: 3, alignItems: "center", justifyContent: "center" },
+    coverOuter: { width: 112, height: 112, borderRadius: 56, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+    coverImgWrap: { width: 104, height: 104, borderRadius: 52, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+    coverImg: { width: "100%", height: "100%" },
+    coverEdit: { position: "absolute", right: 4, bottom: 4, width: 30, height: 30, borderRadius: 15, borderWidth: 3, alignItems: "center", justifyContent: "center" },
     coverLabel: { fontSize: 13, fontWeight: "600", marginTop: 10 },
 
     label: { fontSize: 15, fontWeight: "700", marginTop: 20, marginBottom: 8 },

@@ -85,15 +85,16 @@ export default function PhotobookProfile() {
             <ScrollView contentContainerStyle={{ alignItems: "center", paddingBottom: insets.bottom + 40 }}>
                 {/* 선택된 프로필 (탭 → 수정) */}
                 <Pressable onPress={() => router.push({ pathname: "/photobook/register", params: { subjectId: current.id || "" } })}>
-                    <PhotobookGradient colors={c.gradient} radius={74} style={styles.bigRing}>
-                        <View style={[styles.bigInner, { backgroundColor: c.surface }]}>
+                    <View style={styles.bigOuter}>
+                        <PhotobookGradient colors={c.gradient} radius={74} style={StyleSheet.absoluteFill} />
+                        <View style={[styles.bigImgWrap, { backgroundColor: c.surface }]}>
                             {current.cover?.url ? (
                                 <ExpoImage source={{ uri: current.cover.url }} style={styles.bigImg} contentFit="cover" />
                             ) : (
                                 <Feather name="smile" size={56} color={c.coral} />
                             )}
                         </View>
-                    </PhotobookGradient>
+                    </View>
                 </Pressable>
                 <Text style={[styles.name, { color: c.ink }]}>{current.name}</Text>
                 {!!current.birthDate && (
@@ -155,9 +156,9 @@ const styles = StyleSheet.create({
     iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
     headerTitle: { fontSize: 18, fontWeight: "800" },
 
-    bigRing: { width: 148, height: 148, padding: 5, marginTop: 24, borderRadius: 74, overflow: "hidden" },
-    bigInner: { flex: 1, borderRadius: 69, overflow: "hidden", alignItems: "center", justifyContent: "center" },
-    bigImg: { width: "100%", height: "100%", borderRadius: 69 },
+    bigOuter: { width: 148, height: 148, marginTop: 24, borderRadius: 74, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+    bigImgWrap: { width: 138, height: 138, borderRadius: 69, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+    bigImg: { width: "100%", height: "100%" },
     name: { fontSize: 26, fontWeight: "800", marginTop: 16 },
     age: { fontSize: 16, fontWeight: "600", marginTop: 4 },
     editBtn: { flexDirection: "row", alignItems: "center", marginTop: 12, paddingVertical: 7, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },

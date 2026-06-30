@@ -40,7 +40,11 @@ function Wheel({
             contentContainerStyle={{ paddingVertical: PAD }}
         >
             {data.map((d, i) => (
-                <View key={i} style={{ height: ITEM_H, alignItems: "center", justifyContent: "center" }}>
+                <Pressable
+                    key={i}
+                    onPress={() => { ref.current?.scrollTo({ y: i * ITEM_H, animated: true }); onChange(i); }}
+                    style={{ height: ITEM_H, alignItems: "center", justifyContent: "center" }}
+                >
                     <Text style={{
                         fontSize: 19,
                         fontWeight: i === index ? "700" : "400",
@@ -48,7 +52,7 @@ function Wheel({
                     }}>
                         {d}{suffix || ""}
                     </Text>
-                </View>
+                </Pressable>
             ))}
         </ScrollView>
     );

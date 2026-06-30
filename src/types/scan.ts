@@ -10,7 +10,6 @@ export interface FaceBox {
     width: number;
     height: number;
     quality: number | null;   // 0~1 캡처 품질 (없으면 null)
-    embedding?: number[];     // FeaturePrint 벡터 (STEP5 매칭용)
     sharpness?: number;       // 라플라시안 분산 (STEP6 베스트컷용)
 }
 
