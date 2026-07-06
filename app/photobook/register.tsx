@@ -29,6 +29,7 @@ const GAP = 10;
 const CELL = Math.floor((SCREEN_W - H_PAD * 2 - GAP * 2) / 3);
 
 const KIND: SubjectKind = "baby"; // Phase 1
+const MAX_ANCHORS = 6; // 앵커 최대(프로필 포함 최대 7). 다양 각도일수록 centroid가 측면·어두움까지 덮어 recall↑
 
 function formatDate(iso: string | null): string {
     if (!iso) return "";
@@ -126,10 +127,10 @@ export default function PhotobookRegister() {
         if (p[0]) setCover(p[0]);
     }
     async function onAddAnchors() {
-        const remaining = 4 - anchors.length; // 앵커 최대 4장(프로필 포함 최대 5)
+        const remaining = MAX_ANCHORS - anchors.length; // 앵커 최대 6장(프로필 포함 최대 7)
         if (remaining <= 0) return;
         const p = await pickPhotos(remaining);
-        if (p.length) setAnchors((prev) => [...prev, ...p].slice(0, 4));
+        if (p.length) setAnchors((prev) => [...prev, ...p].slice(0, MAX_ANCHORS));
     }
 
     async function doSave() {
@@ -283,7 +284,7 @@ export default function PhotobookRegister() {
                             </Pressable>
                         </View>
                     ))}
-                    {anchors.length < 4 && (
+                    {anchors.length < MAX_ANCHORS && (
                         <Pressable style={[styles.cell, styles.addCell, { borderColor: c.peach, backgroundColor: c.surfaceAlt }]} onPress={onAddAnchors}>
                             <Feather name="plus" size={26} color={c.coral} />
                         </Pressable>

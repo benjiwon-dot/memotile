@@ -11,7 +11,8 @@ import {
     Platform,
     ScrollView,
     Image,
-    Modal
+    Modal,
+    LayoutAnimation,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -69,6 +70,21 @@ export default function AuthEmailScreen() {
     const [loading, setLoading] = useState(false);
 
     const [isAppleLoggingIn, setIsAppleLoggingIn] = useState(false);
+    const [emailOpen, setEmailOpen] = useState(false);
+
+    const toggleEmail = () => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setEmailOpen((o) => !o);
+    };
+    const goSignUp = () => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setIsSignUp(true);
+        setEmailOpen(true);
+    };
+    const goLogin = () => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setIsSignUp(false);
+    };
 
     const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
@@ -302,39 +318,9 @@ export default function AuthEmailScreen() {
             <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
                 <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
                     <View style={styles.formContainer}>
-                        <View style={styles.tabContainer}>
-                            <TouchableOpacity style={[styles.tab, !isSignUp && styles.activeTab]} onPress={() => setIsSignUp(false)}>
-                                <Text style={[styles.tabText, !isSignUp && styles.activeTabText]}>{(t as any)['auth.loginTab'] || "Log In"}</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.tab, isSignUp && styles.activeTab]} onPress={() => setIsSignUp(true)}>
-                                <Text style={[styles.tabText, isSignUp && styles.activeTabText]}>{(t as any)['auth.signupTab'] || "Sign Up"}</Text>
-                            </TouchableOpacity>
-                        </View>
+                        <View style={{ height: 56 }} />{/* 상단 여백: 소셜 버튼을 눈높이(중앙쯤)로 */}
 
-                        <View style={styles.inputs}>
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.label}>{(t as any)['auth.emailLabel'] || "Email"}</Text>
-                                <TextInput style={styles.input} placeholder="name@example.com" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-                            </View>
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.label}>{(t as any)['auth.passwordLabel'] || "Password"}</Text>
-                                <TextInput style={styles.input} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
-                            </View>
-                            {isSignUp && (
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>{(t as any)['auth.confirmPasswordLabel'] || "Confirm Password"}</Text>
-                                    <TextInput style={styles.input} placeholder="••••••" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
-                                </View>
-                            )}
-                        </View>
-
-                        <TouchableOpacity style={[styles.mainBtn, loading && styles.disabledBtn]} onPress={handleAuth} disabled={loading}>
-                            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.mainBtnText}>{isSignUp ? ((t as any)['auth.signupAction'] || "Create Account") : ((t as any)['auth.loginAction'] || "Log In")}</Text>}
-                        </TouchableOpacity>
-
-                        <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
-
-                        {/* ⭐️ Apple 로그인을 Google 로그인 위로 배치 */}
+                        {/* ⭐️ 소셜 로그인 먼저(위): Apple → Google */}
                         {Platform.OS === "ios" && (
                             <TouchableOpacity
                                 style={[styles.socialBtn, isAppleLoggingIn && styles.disabledBtn]}
@@ -357,21 +343,68 @@ export default function AuthEmailScreen() {
                             {isSigningIn ? <ActivityIndicator color="#000" /> :
                                 <View style={styles.socialBtnContent}>
                                     <Image source={require('../assets/google_logo.png')} style={styles.socialIcon} resizeMode="contain" />
-                                    <Text style={styles.socialBtnText}>{(t as any)['signUpGoogle'] || "Continue with Google"}</Text>
+                                    <Text style={styles.socialBtnText}>{(t as any)['auth.continueGoogle'] || "Continue with Google"}</Text>
                                 </View>}
                         </TouchableOpacity>
 
-                        {!isSignUp && (
-                            <View style={styles.extraActions}>
-                                <TouchableOpacity onPress={handleForgotPassword}><Text style={styles.secondaryBtnText}>{(t as any)['auth.forgotPassword'] || "Forgot password?"}</Text></TouchableOpacity>
-                                {auth.currentUser && !auth.currentUser.emailVerified && (
-                                    <TouchableOpacity style={styles.refreshBtn} onPress={handleRefreshVerification}>
-                                        <Ionicons name="refresh" size={16} color="#007AFF" />
-                                        <Text style={styles.refreshBtnText}>{(t as any)['auth.refreshBtn'] || "I verified my email (Refresh)"}</Text>
-                                    </TouchableOpacity>
-                                )}
+                        <View style={styles.dividerRow}><View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} /></View>
+
+                        {/* 이메일 로그인: 버튼 → 탭하면 스르륵 펼침 */}
+                        {!emailOpen && (
+                            <TouchableOpacity style={styles.socialBtn} onPress={toggleEmail}>
+                                <View style={styles.socialBtnContent}>
+                                    <Ionicons name="mail-outline" size={20} color="#000" />
+                                    <Text style={styles.socialBtnText}>{(t as any)['auth.continueEmail'] || "Continue with email"}</Text>
+                                </View>
+                            </TouchableOpacity>
+                        )}
+
+                        {emailOpen && (
+                            <View>
+                                <View style={styles.inputs}>
+                                    <View style={styles.inputGroup}>
+                                        <Text style={styles.label}>{(t as any)['auth.emailLabel'] || "Email"}</Text>
+                                        <TextInput style={styles.input} placeholder="name@example.com" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+                                    </View>
+                                    <View style={styles.inputGroup}>
+                                        <Text style={styles.label}>{(t as any)['auth.passwordLabel'] || "Password"}</Text>
+                                        <TextInput style={styles.input} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
+                                    </View>
+                                    {isSignUp && (
+                                        <View style={styles.inputGroup}>
+                                            <Text style={styles.label}>{(t as any)['auth.confirmPasswordLabel'] || "Confirm Password"}</Text>
+                                            <TextInput style={styles.input} placeholder="••••••" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
+                                        </View>
+                                    )}
+                                </View>
+
+                                <TouchableOpacity style={[styles.mainBtn, loading && styles.disabledBtn]} onPress={handleAuth} disabled={loading}>
+                                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.mainBtnText}>{isSignUp ? ((t as any)['auth.signupAction'] || "Create Account") : ((t as any)['auth.loginAction'] || "Log In")}</Text>}
+                                </TouchableOpacity>
                             </View>
                         )}
+
+                        <View style={styles.extraActions}>
+                            {!isSignUp && (
+                                <TouchableOpacity onPress={handleForgotPassword}><Text style={styles.secondaryBtnText}>{(t as any)['auth.forgotPassword'] || "Forgot password?"}</Text></TouchableOpacity>
+                            )}
+                            {auth.currentUser && !auth.currentUser.emailVerified && (
+                                <TouchableOpacity style={styles.refreshBtn} onPress={handleRefreshVerification}>
+                                    <Ionicons name="refresh" size={16} color="#007AFF" />
+                                    <Text style={styles.refreshBtnText}>{(t as any)['auth.refreshBtn'] || "I verified my email (Refresh)"}</Text>
+                                </TouchableOpacity>
+                            )}
+                            <View style={styles.signupRow}>
+                                {isSignUp ? (
+                                    <TouchableOpacity onPress={goLogin}><Text style={styles.signupLinkText}>{(t as any)['auth.loginTab'] || "Log In"}</Text></TouchableOpacity>
+                                ) : (
+                                    <>
+                                        <Text style={styles.secondaryBtnText}>{(t as any)['auth.noAccount'] || "Don't have an account?"} </Text>
+                                        <TouchableOpacity onPress={goSignUp}><Text style={styles.signupLinkText}>{(t as any)['auth.signupLink'] || "Sign up"}</Text></TouchableOpacity>
+                                    </>
+                                )}
+                            </View>
+                        </View>
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -408,7 +441,9 @@ const styles = StyleSheet.create({
     disabledBtn: { opacity: 0.7 },
     mainBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     extraActions: { marginTop: 20, alignItems: 'center', gap: 16 },
-    secondaryBtnText: { color: '#666', fontSize: 14, textDecorationLine: 'underline' },
+    secondaryBtnText: { color: '#666', fontSize: 14 },
+    signupRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+    signupLinkText: { color: '#FF6F91', fontSize: 14, fontWeight: '700' },
     refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     refreshBtnText: { color: '#007AFF', fontWeight: '600', fontSize: 14 },
     dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 24 },

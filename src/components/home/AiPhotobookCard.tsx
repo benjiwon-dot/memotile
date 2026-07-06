@@ -6,16 +6,17 @@
 //      · 아바타 탭 → 프로필 상세(Your profiles)
 //      · 버튼 탭 → 사진 찾기(스캔) 실행
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Image as ExpoImage } from "expo-image";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 
 import { auth } from "../../lib/firebase";
 import { useLanguage } from "../../context/LanguageContext";
 import { usePhotobookTheme, pbRadius } from "../../config/photobookTheme";
 import { PhotobookGradient } from "../photobook/PhotobookGradient";
-import { listMySubjects } from "../../services/aiSubjects";
+import { listMySubjects, deleteSubject } from "../../services/aiSubjects";
 import { AiSubject } from "../../types/aiSubject";
 
 export function AiPhotobookCard() {
@@ -24,6 +25,7 @@ export function AiPhotobookCard() {
     const c = usePhotobookTheme();
 
     const [subjects, setSubjects] = useState<AiSubject[]>([]);
+    const [active, setActive] = useState(0); // 활성(선택된) 프로필 인덱스
 
     const fetchSubjects = useCallback(async () => {
         if (!auth.currentUser) { setSubjects([]); return; }
@@ -35,6 +37,19 @@ export function AiPhotobookCard() {
     }, []);
 
     useFocusEffect(useCallback(() => { fetchSubjects(); }, [fetchSubjects]));
+
+    function onAvatarLongPress(s: AiSubject) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Alert.alert(t.pbDeleteTitle, t.pbDeleteBody, [
+            { text: t.cancel, style: "cancel" },
+            {
+                text: t.pbDeleteOk, style: "destructive", onPress: async () => {
+                    try { await deleteSubject(s.id!); await fetchSubjects(); }
+                    catch (e: any) { Alert.alert("Error", String(e?.message || e)); }
+                },
+            },
+        ]);
+    }
 
     // ── 진입구 (프로필 없음) ──
     if (subjects.length === 0) {
@@ -71,7 +86,9 @@ export function AiPhotobookCard() {
     }
 
     // ── 프로필 있음 ──
-    const main = subjects[0]; // 메인(가장 최근). 전환/편집은 Your profiles 화면에서.
+    // 첫 탭 = 활성 선택 / 활성된 거 재탭 = 수정 / 꾹 = 삭제
+    const safeActive = Math.min(active, subjects.length - 1);
+    const main = subjects[safeActive];
     const findLabel = t.pbFindPhotos.replace("{name}", main.name);
 
     return (
@@ -86,12 +103,21 @@ export function AiPhotobookCard() {
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.avatarsRow}>
                 {subjects.map((s, i) => {
-                    const isMain = i === 0;
+                    const isActive = i === safeActive;
                     return (
-                        <Pressable key={s.id} style={styles.avatarCol} onPress={() => router.push("/photobook")}>
+                        <Pressable
+                            key={s.id}
+                            style={styles.avatarCol}
+                            onPress={() => {
+                                if (isActive) router.push({ pathname: "/photobook/register", params: { subjectId: s.id || "" } });
+                                else setActive(i);
+                            }}
+                            onLongPress={() => onAvatarLongPress(s)}
+                            delayLongPress={500}
+                        >
                             <View style={[
                                 styles.avatar,
-                                { backgroundColor: c.surface, borderColor: isMain ? c.coral : c.border, borderWidth: isMain ? 2.5 : 1 },
+                                { backgroundColor: c.surface, borderColor: isActive ? c.coral : c.border, borderWidth: isActive ? 2.5 : 1 },
                             ]}>
                                 {s.cover?.url ? (
                                     <ExpoImage source={{ uri: s.cover.url }} style={styles.avatarImg} contentFit="cover" />
@@ -99,7 +125,12 @@ export function AiPhotobookCard() {
                                     <Feather name={"smile" as any} size={24} color={c.coral} />
                                 )}
                             </View>
-                            <Text style={[styles.avatarName, { color: isMain ? c.ink : c.textMuted }]} numberOfLines={1}>{s.name}</Text>
+                            {isActive && (
+                                <View style={[styles.editBadge, { backgroundColor: c.coral, borderColor: c.surfaceAlt }]}>
+                                    <Feather name={"edit-2" as any} size={9} color="#fff" />
+                                </View>
+                            )}
+                            <Text style={[styles.avatarName, { color: isActive ? c.ink : c.textMuted }]} numberOfLines={1}>{s.name}</Text>
                         </Pressable>
                     );
                 })}
@@ -131,6 +162,8 @@ const styles = StyleSheet.create({
     },
     row: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 4 },
     iconCircle: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+    aiLogo: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+    aiLogoText: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
     eyebrow: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, marginBottom: 6 },
     eyebrowText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
     title: { fontSize: 18, fontWeight: "800" },
@@ -145,6 +178,7 @@ const styles = StyleSheet.create({
     avatarImg: { width: "100%", height: "100%", borderRadius: 999 },
     avatarName: { fontSize: 12, fontWeight: "700", marginTop: 5 },
     addAvatar: { width: 60, height: 60, borderRadius: 999, borderWidth: 1.5, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
+    editBadge: { position: "absolute", top: 42, right: 4, width: 20, height: 20, borderRadius: 10, borderWidth: 2, alignItems: "center", justifyContent: "center" },
 
     pill: { height: 48, marginTop: 16, flexDirection: "row", alignItems: "center", justifyContent: "center" },
     pillText: { fontSize: 15, fontWeight: "700" },

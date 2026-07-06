@@ -4,11 +4,10 @@
     "lib": [
       "ES2019"
     ],
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "rootDir": "src",
-    "outDir": "lib",
-    "sourceMap": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "types": [
       "node"
     ],

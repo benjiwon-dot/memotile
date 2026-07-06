@@ -23,6 +23,8 @@ export interface PhotobookTheme {
     onGradient: string;         // 그라데이션 위 텍스트
     pillText: string;           // 흰 pill 위 텍스트(코랄)
     shadow: string;
+    edgeSide: string;           // 입체 타일 오른쪽 두께 면 (빛 위 → 중간 어둡기)
+    edgeBottom: string;         // 입체 타일 아래 두께 면 (가장 어둡게)
 }
 
 const light: PhotobookTheme = {
@@ -41,7 +43,9 @@ const light: PhotobookTheme = {
     gradient: ["#FF8C7C", "#FF6F91"],
     onGradient: "#FFFFFF",
     pillText: "#E04A6E",
-    shadow: "rgba(61,43,38,0.10)",
+    shadow: "rgba(255,122,150,0.16)",   // 핑크 톤 그림자
+    edgeSide: "#FFB0A0",                 // 입체 두께 면 (핑크/피치)
+    edgeBottom: "#FF8FA6",
 };
 
 const dark: PhotobookTheme = {
@@ -61,6 +65,8 @@ const dark: PhotobookTheme = {
     onGradient: "#FFFFFF",
     pillText: "#E04A6E",
     shadow: "rgba(0,0,0,0.45)",
+    edgeSide: "#5A3A40",                 // 다크: 핑크 계열 어두운 두께 면
+    edgeBottom: "#52303C",
 };
 
 export function usePhotobookTheme(): PhotobookTheme {

@@ -3,7 +3,7 @@
     "name": "MemoTile",
     "slug": "memotile-app-anti",
     "version": "1.1.12",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {

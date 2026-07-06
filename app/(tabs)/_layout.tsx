@@ -18,6 +18,7 @@ import { doc, setDoc } from "firebase/firestore";
 
 import { colors } from "../../src/theme/colors";
 import { useLanguage } from "../../src/context/LanguageContext";
+import { usePhotobookTheme } from "../../src/config/photobookTheme";
 
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -74,6 +75,7 @@ export default function TabLayout() {
     const { t } = useLanguage();
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const c = usePhotobookTheme();
 
     const [appIsReady, setAppIsReady] = useState(false);
 
@@ -165,23 +167,27 @@ export default function TabLayout() {
                     headerShown: false,
                     tabBarStyle: {
                         position: "absolute",
-                        borderTopWidth: 1,
-                        borderTopColor: colors.border,
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: c.border,
                         elevation: 0,
-                        height: 60 + insets.bottom,
-                        backgroundColor: "transparent",
+                        height: 52 + insets.bottom,   // 60→52로 살짝 낮춤 (홈 인디케이터 safe-area는 유지)
+                        paddingTop: 6,
+                        backgroundColor: c.surface,   // 솔리드 (뒤 비침 X)
+                        // 은은한 상단 그림자
+                        shadowColor: c.shadow, shadowOffset: { width: 0, height: -2 }, shadowOpacity: 1, shadowRadius: 8,
                     },
-                    tabBarBackground: () => (
-                        <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
-                    ),
+                    // ⬇️ 블러로 되돌리려면: 위 backgroundColor를 "transparent"로 바꾸고 아래 주석 해제
+                    // tabBarBackground: () => (
+                    //     <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+                    // ),
                     tabBarLabelStyle: {
                         fontSize: 10,
                         fontWeight: "500",
                         marginBottom: 4,
                         marginTop: -4,
                     },
-                    tabBarActiveTintColor: colors.primary,
-                    tabBarInactiveTintColor: colors.textSecondary,
+                    tabBarActiveTintColor: c.coral,        // 파랑 → 브랜드 코랄
+                    tabBarInactiveTintColor: c.textMuted,  // 비활성 차분한 그레이
                 }}
             >
                 <Tabs.Screen

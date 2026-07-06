@@ -3,12 +3,14 @@ import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import {
-    User as UserIcon, MapPin, CreditCard, HelpCircle, MessageCircle, Shield, FileText, ChevronRight, LogIn, LogOut, Trash2
+    User as UserIcon, MapPin, CreditCard, HelpCircle, MessageCircle, Shield, FileText, ChevronRight, LogIn, LogOut, Trash2, Heart
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
+import { usePhotobookEnabled } from "../../src/config/featureFlags";
+import { usePhotobookTheme } from "../../src/config/photobookTheme";
 import { colors } from "../../src/theme/colors";
 import { shadows } from "../../src/theme/shadows";
 import { auth, db } from "../../src/lib/firebase";
@@ -19,6 +21,8 @@ export default function Profile() {
     const { t, locale } = useLanguage();
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const c = usePhotobookTheme();
+    const pbOn = usePhotobookEnabled();
 
     const { clearDraft, clearPhotos } = usePhoto() || {};
 
@@ -187,6 +191,12 @@ export default function Profile() {
                     subtitle: user ? getPaymentSummary() : null,
                     onClick: () => showDetail(t.paymentMethods, 'payment')
                 },
+                ...(pbOn && user ? [{
+                    title: (t as any).pbManageProfiles || "Manage profiles",
+                    icon: Heart,
+                    subtitle: null,
+                    onClick: () => router.push("/photobook/manage")
+                }] : []),
             ]
         },
         {
@@ -212,28 +222,28 @@ export default function Profile() {
     ];
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={[styles.container, { paddingTop: insets.top }, pbOn && { backgroundColor: c.bg }]}>
             <View style={styles.headerRow}>
-                <Text style={styles.header}>{t.profile}</Text>
+                <Text style={[styles.header, pbOn && { color: c.ink }]}>{t.profile}</Text>
                 {isLoading && <ActivityIndicator size="small" color={colors.ink} style={{ marginRight: 20 }} />}
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 {menuGroups.map((group, gIdx) => (
                     <View key={gIdx} style={styles.section}>
-                        <Text style={styles.sectionTitle}>{group.title}</Text>
-                        <View style={styles.card}>
+                        <Text style={[styles.sectionTitle, pbOn && { color: c.textSecondary }]}>{group.title}</Text>
+                        <View style={[styles.card, pbOn && { backgroundColor: c.surface }]}>
                             {group.items.map((item: any, iIdx: number) => {
                                 const isLast = iIdx === group.items.length - 1;
-                                const textColor = item.isDestructive ? colors.danger : "#111";
-                                const iconColor = item.isDestructive ? colors.danger : "#111";
+                                const textColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#111");
+                                const iconColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#111");
 
                                 return (
                                     <Pressable
                                         key={`${group.title}-${iIdx}`}
                                         style={({ pressed }) => [
                                             styles.row,
-                                            pressed && { backgroundColor: "#F2F2F7" }
+                                            pressed && { backgroundColor: pbOn ? c.surfaceAlt : "#F2F2F7" }
                                         ]}
                                         onPress={item.onClick}
                                     >
@@ -246,13 +256,13 @@ export default function Profile() {
 
                                         <View style={styles.rowRight}>
                                             {item.subtitle && (
-                                                <Text style={styles.rowSubtitle} numberOfLines={1}>
+                                                <Text style={[styles.rowSubtitle, pbOn && { color: c.textMuted }]} numberOfLines={1}>
                                                     {item.subtitle}
                                                 </Text>
                                             )}
-                                            <ChevronRight size={18} color="#8E8E93" />
+                                            <ChevronRight size={18} color={pbOn ? c.textMuted : "#8E8E93"} />
                                         </View>
-                                        {!isLast && <View style={styles.divider} />}
+                                        {!isLast && <View style={[styles.divider, pbOn && { backgroundColor: c.border }]} />}
                                     </Pressable>
                                 );
                             })}

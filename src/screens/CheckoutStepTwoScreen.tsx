@@ -10,9 +10,14 @@ import {
     ActivityIndicator, Platform, Keyboard, Modal, LayoutAnimation, UIManager,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
+
+// 🆕 포토북(additive): productType==="photobook"이면 albumDraft로 분기, 가격은 albumPrice
+import { getAlbumOptions, getAlbumDraft, getAllCrops } from "../services/albumDraft";
+import { albumPrice } from "../config/photobookPricing";
 
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from 'expo-linking';
@@ -28,6 +33,7 @@ import { auth, db } from "../lib/firebase";
 import { User } from "firebase/auth";
 import { doc, getDoc, getFirestore, updateDoc, setDoc } from "firebase/firestore";
 import { createOrder } from "../services/orders";
+import { clearAlbumDraft } from "../services/albumDraft";
 import { validatePromo, PromoResult } from "../services/promo";
 
 import { getApp } from "firebase/app";
@@ -57,6 +63,17 @@ export default function CheckoutStepTwoScreen() {
         setCurrentIndex = async () => { },
     } = usePhoto() || {};
     const { t, locale } = useLanguage() || {};
+
+    // 🆕 포토북 분기 (isPhotobook=false면 아래 전부 기존 타일 경로 그대로)
+    const params = useLocalSearchParams<{ productType?: string }>();
+    const isPhotobook = params.productType === "photobook";
+    const albumOpts = getAlbumOptions();
+    const bookItems = getAlbumDraft().items;
+    const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
+    const book = albumPrice(albumOpts.size, albumOpts.cover, bookItems.length); // { pages, price(THB) }
+    const bookSpec = (locale || "EN") === "TH"
+        ? `${book.pages} หน้า · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
+        : `${book.pages} pages · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
 
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
@@ -176,6 +193,7 @@ export default function CheckoutStepTwoScreen() {
 
     const CURRENCY_SYMBOL = getCurrencySymbol(safeLocale);
     const safePhotosCount = Array.isArray(safePhotos) ? safePhotos.length : 0;
+    const uploadCount = isPhotobook ? bookItems.length : safePhotosCount; // 진행바 분모(포토북은 앨범 사진 수)
 
     const promoInput = promoResult?.success ? { success: true, discountAmount: promoResult.discountAmount, waiveShipping: (promoResult as any).waiveShipping } : undefined;
     // 🆕 쿠폰별 "수량할인과 합치기" 플래그 (Firebase 쿠폰 문서의 stackWithVolume). 미지정이면 false(기존: 쿠폰이 수량할인 대체)
@@ -186,10 +204,11 @@ export default function CheckoutStepTwoScreen() {
         [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput, promoStackVolume]
     );
 
-    const rawSubtotal = pricing.subtotal;
-    const totalDiscount = pricing.totalDiscount;
-    const shippingFee = pricing.shippingFee;
-    const total = pricing.total;
+    // 포토북은 albumPrice 고정가(THB), 타일은 computePricing. (수량할인/배송비 개념 없음)
+    const rawSubtotal = isPhotobook ? book.price : pricing.subtotal;
+    const totalDiscount = isPhotobook ? 0 : pricing.totalDiscount;
+    const shippingFee = isPhotobook ? 0 : pricing.shippingFee;
+    const total = isPhotobook ? book.price : pricing.total;
 
     const totalInUSD = useMemo(() => {
         const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
@@ -206,6 +225,10 @@ export default function CheckoutStepTwoScreen() {
         });
         return usdPricing.total;
     }, [safePhotosCount, basePriceUSD, volumeDiscounts, shippingTiers, freeShipThreshold, pricing.promoDiscountAmount, pricing.shippingFee, rawSubtotal, pricePerTile, promoInput, promoStackVolume]);
+
+    // 🆕 실제 과금 USD: 포토북은 ฿가격 × 타일과 동일 환산율(basePriceUSD/pricePerTile). 타일은 기존 totalInUSD.
+    const usdRate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
+    const chargeUSD = isPhotobook ? Number((book.price * usdRate).toFixed(2)) : totalInUSD;
 
     // 🆕 사진 더 담기
     const handleAddMorePhotos = async () => {
@@ -301,9 +324,9 @@ export default function CheckoutStepTwoScreen() {
             const returnScheme = Platform.OS === 'web' ? `${window.location.origin}/myorder/success?id=${orderId}` : Linking.createURL('/payment-callback', { scheme: 'memotile' });
             const webUrl = Platform.OS === 'web' ? returnScheme : '';
 
-            const response: any = await requestPayment({ orderId, amount: totalInUSD, email: formData.email, fullName: formData.fullName, pgcode, platform: Platform.OS, webUrl, appScheme: returnScheme });
+            const response: any = await requestPayment({ orderId, amount: chargeUSD, email: formData.email, fullName: formData.fullName, pgcode, platform: Platform.OS, webUrl, appScheme: returnScheme });
             const paymentUrl = response.data.paymentUrl;
-            setProgressCount(safePhotosCount);
+            setProgressCount(uploadCount);
 
             setTimeout(() => {
                 setIsCreatingOrder(false);
@@ -335,6 +358,7 @@ export default function CheckoutStepTwoScreen() {
                                         }
                                         await clearDraft();
                                         clearPhotos();
+                                        if (isPhotobook) await clearAlbumDraft(); // 포토북 주문 완료 → draft 비움
                                         router.replace({ pathname: "/myorder/success", params: { id: orderId } });
                                         setTimeout(() => { setIsCreatingOrder(false); setIsVerifyingPayment(false); }, 500);
                                     } else {
@@ -375,6 +399,42 @@ export default function CheckoutStepTwoScreen() {
             await ensureTokenReady(user!);
             const CURRENCY_CODE = safeLocale === "TH" ? "THB" : "USD";
 
+            // 포토북: albumDraft items(assetId)뿐 → MediaLibrary로 원본 URI resolve해야 STEP1 업로드가 원본을 올림.
+            let orderPhotos: any[] = Array.isArray(safePhotos) ? safePhotos : [];
+            let photobookPayload: any = undefined;
+            if (isPhotobook) {
+                const resolved: any[] = [];
+                for (let i = 0; i < bookItems.length; i++) {
+                    const it = bookItems[i];
+                    let originalUri: string | undefined;
+                    try {
+                        const info = await MediaLibrary.getAssetInfoAsync(it.assetId);
+                        originalUri = (info as any)?.localUri || (info as any)?.uri;
+                    } catch (e) { console.warn("[Photobook] asset resolve failed", it.assetId, e); }
+                    resolved.push({ assetId: it.assetId, originalUri, thumbUri: it.thumbUri });
+                }
+                orderPhotos = resolved;
+                photobookPayload = {
+                    size: albumOpts.size,
+                    cover: albumOpts.cover,
+                    pageCount: book.pages,
+                    density: albumOpts.density ?? "balanced",
+                    title: albumOpts.title,
+                    coverPhotoId: albumOpts.coverPhotoId,
+                    coverThumbUri: bookCoverPhoto?.thumbUri,
+                    layout: {
+                        version: 1,
+                        size: albumOpts.size,
+                        cover: albumOpts.cover,
+                        density: albumOpts.density ?? "balanced",
+                        title: albumOpts.title,
+                        coverSpec: { photoId: albumOpts.coverPhotoId, style: albumOpts.coverStyle, fx: albumOpts.coverFocusX, fy: albumOpts.coverFocusY, zoom: albumOpts.coverZoom },
+                        order: bookItems.map((x) => x.assetId),
+                        crops: getAllCrops(),
+                    },
+                };
+            }
+
             const orderId = await createOrder({
                 uid: user!.uid,
                 shipping: {
@@ -383,10 +443,12 @@ export default function CheckoutStepTwoScreen() {
                     country: "Thailand", phone: formData.phone, email: formData.email,
                 },
                 totals: { subtotal: rawSubtotal, discount: totalDiscount, shippingFee, total },
-                photos: Array.isArray(safePhotos) ? safePhotos : [],
+                photos: orderPhotos,
                 promoCode: promoResult?.success ? { code: promoResult.promoCode!, discountType: promoResult.discountType!, discountValue: promoResult.discountValue! } : undefined,
                 locale, currency: CURRENCY_CODE, instagram: formData.instagram,
                 onProgress: (current) => { setProgressCount(current); },
+                productType: isPhotobook ? "photobook" : undefined,
+                photobook: photobookPayload,
             });
 
             const isFreeOrder = provider === "PROMO_FREE" || total <= 0;
@@ -398,11 +460,12 @@ export default function CheckoutStepTwoScreen() {
                         await setDoc(redemptionRef, { uid: user!.uid, code: promoResult.promoCode.toUpperCase(), usedAt: new Date().toISOString(), usageCount: 1 }, { merge: true });
                     }
                 } catch (updateErr) { console.error("Failed to update free order status:", updateErr); }
-                setProgressCount(safePhotosCount);
+                setProgressCount(uploadCount);
                 setTimeout(async () => {
                     setIsCreatingOrder(false);
                     await clearDraft();
                     clearPhotos();
+                    if (isPhotobook) await clearAlbumDraft(); // 포토북 무료주문 완료 → draft 비움
                     router.replace({ pathname: "/myorder/success", params: { id: orderId } });
                 }, 500);
             } else {
@@ -491,6 +554,8 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     </View>
 
+                    {/* 프로모코드 — 타일 전용(포토북은 고정 심리가라 쿠폰 미적용) */}
+                    {!isPhotobook && (
                     <View style={styles.promoSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["promoHaveCode"] || "PROMO CODE"}</Text>
                         <View style={styles.promoInputRow}>
@@ -501,9 +566,21 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                         {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
                     </View>
+                    )}
 
-                    {/* 가격(요약) — 안내문구는 이 아래로 이동 */}
-                    {!priceLoaded ? (
+                    {/* 가격(요약) — 포토북은 albumPrice 고정가(฿), 타일은 computePricing */}
+                    {isPhotobook ? (
+                        <View style={styles.summarySection}>
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryLabel}>{bookSpec}</Text>
+                                <Text style={styles.summaryValue}>฿{book.price.toLocaleString()}</Text>
+                            </View>
+                            <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
+                                <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
+                                <Text style={styles.totalValue}>฿{book.price.toLocaleString()}</Text>
+                            </View>
+                        </View>
+                    ) : !priceLoaded ? (
                         <View style={[styles.summarySection, { alignItems: "center", minHeight: 90, justifyContent: "center" }]}>
                             <ActivityIndicator color={colors?.ink || "#000"} />
                         </View>
@@ -544,8 +621,8 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     )}
 
-                    {/* ✨ 안내문구(세일) + 사진 더 담기 — 가격 바로 밑 */}
-                    {priceLoaded && !promoResult?.success ? (
+                    {/* ✨ 안내문구(세일) + 사진 더 담기 — 타일 전용(포토북은 수량할인/사진추가 개념 없음) */}
+                    {isPhotobook ? null : priceLoaded && !promoResult?.success ? (
                         <View style={styles.promoCard}>
                             <VolumeTierBar
                                 variant="compact"
@@ -648,8 +725,8 @@ export default function CheckoutStepTwoScreen() {
                         <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
                         {!isVerifyingPayment && (
                             <>
-                                <View style={styles.progressPill}><Text style={styles.progressPillText}>{Math.min(progressCount, safePhotosCount)} / {safePhotosCount}</Text></View>
-                                <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: safePhotosCount > 0 ? `${(Math.min(progressCount, safePhotosCount) / safePhotosCount) * 100}%` : '0%' }]} /></View>
+                                <View style={styles.progressPill}><Text style={styles.progressPillText}>{Math.min(progressCount, uploadCount)} / {uploadCount}</Text></View>
+                                <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: uploadCount > 0 ? `${(Math.min(progressCount, uploadCount) / uploadCount) * 100}%` : '0%' }]} /></View>
                             </>
                         )}
                     </View>

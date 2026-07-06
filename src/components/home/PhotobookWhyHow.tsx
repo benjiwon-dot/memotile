@@ -8,9 +8,11 @@ import { Feather } from "@expo/vector-icons";
 import { useLanguage } from "../../context/LanguageContext";
 import { usePhotobookTheme } from "../../config/photobookTheme";
 
-export function PhotobookWhyHow() {
+export function PhotobookWhyHow({ part = "both" }: { part?: "why" | "how" | "both" }) {
     const { t } = useLanguage();
     const c = usePhotobookTheme();
+    const showWhy = part === "both" || part === "why";
+    const showHow = part === "both" || part === "how";
 
     const services: { icon: any; title: string; desc: string }[] = [
         { icon: "aperture", title: t.svcAiTitle, desc: t.svcAiDesc },
@@ -24,29 +26,37 @@ export function PhotobookWhyHow() {
 
     return (
         <View style={styles.wrap}>
-            <Text style={[styles.sectionTitle, { color: c.ink }]}>{t.pbWhyTitle}</Text>
-            {services.map((s, i) => (
-                <View key={i} style={[styles.row, { backgroundColor: c.surface, borderColor: c.border }]}>
-                    <View style={[styles.iconCircle, { backgroundColor: c.surfaceAlt }]}>
-                        <Feather name={s.icon} size={20} color={c.coral} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={[styles.rowTitle, { color: c.ink }]}>{s.title}</Text>
-                        <Text style={[styles.rowDesc, { color: c.textSecondary }]}>{s.desc}</Text>
-                    </View>
-                </View>
-            ))}
+            {showWhy && (
+                <>
+                    <Text style={[styles.sectionTitle, { color: c.ink }]}>{t.pbWhyTitle}</Text>
+                    {services.map((s, i) => (
+                        <View key={i} style={[styles.row, { backgroundColor: c.surface, borderColor: c.border }]}>
+                            <View style={[styles.iconCircle, { backgroundColor: c.surfaceAlt }]}>
+                                <Feather name={s.icon} size={20} color={c.coral} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.rowTitle, { color: c.ink }]}>{s.title}</Text>
+                                <Text style={[styles.rowDesc, { color: c.textSecondary }]}>{s.desc}</Text>
+                            </View>
+                        </View>
+                    ))}
+                </>
+            )}
 
-            <Text style={[styles.sectionTitle, { color: c.ink, marginTop: 22 }]}>{t.pbHowTitle}</Text>
-            <View style={styles.tracks}>
-                {tracks.map((tr, i) => (
-                    <View key={i} style={[styles.track, { backgroundColor: c.surfaceAlt, borderColor: c.peach }]}>
-                        <Feather name={tr.icon} size={22} color={c.coral} />
-                        <Text style={[styles.trackTitle, { color: c.ink }]}>{tr.title}</Text>
-                        <Text style={[styles.trackDesc, { color: c.textSecondary }]}>{tr.desc}</Text>
+            {showHow && (
+                <>
+                    <Text style={[styles.sectionTitle, { color: c.ink, marginTop: showWhy ? 22 : 0 }]}>{t.pbHowTitle}</Text>
+                    <View style={styles.tracks}>
+                        {tracks.map((tr, i) => (
+                            <View key={i} style={[styles.track, { backgroundColor: c.surfaceAlt, borderColor: c.peach }]}>
+                                <Feather name={tr.icon} size={22} color={c.coral} />
+                                <Text style={[styles.trackTitle, { color: c.ink }]}>{tr.title}</Text>
+                                <Text style={[styles.trackDesc, { color: c.textSecondary }]}>{tr.desc}</Text>
+                            </View>
+                        ))}
                     </View>
-                ))}
-            </View>
+                </>
+            )}
         </View>
     );
 }

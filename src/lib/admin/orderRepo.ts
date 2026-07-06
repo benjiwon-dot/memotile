@@ -159,6 +159,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
         itemsCount: data.itemsCount || data.items?.length || 0,
         storageBasePath: data.storageBasePath,
         locale: data.locale || "EN",
+        productType: data.productType || "tile",
+        photobook: data.photobook,
     };
 
     // Subcollection items

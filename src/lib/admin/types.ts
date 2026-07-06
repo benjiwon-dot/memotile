@@ -53,6 +53,20 @@ export interface OrderHeader {
     refundedAt?: string;
     canceledAt?: string;
     hasPrintWarning?: boolean;
+    // 🆕 포토북 주문(productType==="photobook"). 타일 주문엔 없음.
+    productType?: "tile" | "photobook";
+    photobook?: {
+        size?: string;
+        cover?: string;
+        pageCount?: number;
+        density?: string | null;
+        title?: string | null;
+        coverPhotoId?: string | null;
+        coverThumbPath?: string | null;
+        originalsBasePath?: string | null;
+        layout?: any;
+        pdfPath?: string | null;
+    };
 }
 
 export interface OrderItemAdmin {

@@ -127,6 +127,9 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     const [printDims, setPrintDims] = useState<Record<number, { w: number; h: number }>>({});
 
+    // 🆕 포토북: 표지 썸네일 URL(인라인 표시용)
+    const [pbCoverUrl, setPbCoverUrl] = useState<string | null>(null);
+
     const storage = useMemo(() => getStorage(app), []);
     const db = useMemo(() => getFirestore(app), []);
     const functions = useMemo(() => getFunctions(app, "us-central1"), []);
@@ -266,6 +269,31 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     useEffect(() => {
         refetch();
     }, [orderId]);
+
+    // 🆕 포토북 표지 썸네일 URL 해석(인라인 표시)
+    useEffect(() => {
+        const p = (order as any)?.photobook?.coverThumbPath;
+        if (!isWeb || !p) { setPbCoverUrl(null); return; }
+        let alive = true;
+        getDownloadURL(ref(storage, p)).then((u) => { if (alive) setPbCoverUrl(u); }).catch(() => { if (alive) setPbCoverUrl(null); });
+        return () => { alive = false; };
+    }, [order, storage]);
+
+    // 🆕 포토북 원본 전체 ZIP (조판용). 확장된 adminExportZipPrints(type:"photobook") 호출 → originals/ + cover + layout.
+    const handleDownloadPhotobookZip = async () => {
+        setBusy(true);
+        try {
+            const fn = httpsCallable(functions, "adminExportZipPrints");
+            const res = await fn({ orderIds: [orderId], type: "photobook" });
+            const { url } = res.data as any;
+            if (url) { window.open(url, "_blank", "noreferrer"); }
+            else alert("Failed to generate originals ZIP.");
+        } catch (e: any) {
+            alertCallableError("Photobook ZIP error:", e);
+        } finally {
+            setBusy(false);
+        }
+    };
 
     const handleCopyZipLink = async () => {
         setBusy(true);
@@ -620,10 +648,12 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <FileJson size={16} /> JSON
                     </button>
 
-                    <button onClick={handleCopyZipLink} disabled={busy} className="admin-btn admin-btn-primary">
-                        {busy ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
-                        Copy ZIP Link
-                    </button>
+                    {order.productType !== "photobook" && (
+                        <button onClick={handleCopyZipLink} disabled={busy} className="admin-btn admin-btn-primary">
+                            {busy ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
+                            Copy ZIP Link
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -713,6 +743,63 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                 </div>
             </div>
 
+            {/* 🆕 포토북이면 아이템 그리드 대신 표지+스펙+다운로드 (items 없어도 안전) */}
+            {order.productType === "photobook" ? (
+                <div className="admin-card p-5 flex flex-col gap-5 shrink-0">
+                    <div className="flex items-center gap-2 text-sm font-black text-indigo-700 uppercase tracking-wider">📕 Photobook</div>
+                    <div className="flex gap-5 flex-col md:flex-row">
+                        <div className="w-full md:w-56 shrink-0">
+                            {pbCoverUrl ? (
+                                <img src={pbCoverUrl} className="w-full rounded-lg border border-zinc-200 object-cover" alt="cover" />
+                            ) : (
+                                <div className="w-full aspect-[4/3] bg-zinc-100 rounded-lg border border-zinc-100 flex items-center justify-center text-zinc-300"><ImageIcon size={28} /></div>
+                            )}
+                        </div>
+                        <div className="flex-1 flex flex-col gap-3 min-w-0">
+                            <div className="text-2xl font-black">
+                                {order.photobook?.pageCount ?? "?"}p · {order.photobook?.size ?? "?"} · {order.photobook?.cover === "hard" ? "Hardcover" : "Softcover"}
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                                {[
+                                    ["Pages", `${order.photobook?.pageCount ?? "-"}`],
+                                    ["Size", order.photobook?.size ?? "-"],
+                                    ["Cover", order.photobook?.cover ?? "-"],
+                                    ["Density", order.photobook?.density ?? "-"],
+                                    ["Photos", `${order.itemsCount || order.photobook?.layout?.order?.length || "-"}`],
+                                    ["Title", order.photobook?.title || "-"],
+                                ].map(([k, v]) => (
+                                    <div key={k} className="bg-zinc-50 rounded-lg px-3 py-2 border border-zinc-100">
+                                        <div className="text-[10px] font-black text-zinc-400 uppercase">{k}</div>
+                                        <div className="font-bold text-zinc-800 truncate">{v}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {order.photobook?.pdfPath ? (
+                                    <button onClick={() => openStoragePath(order.photobook?.pdfPath || undefined)} className="admin-btn admin-btn-primary">
+                                        <Download size={16} /> Download PDF
+                                    </button>
+                                ) : (
+                                    <button disabled className="admin-btn admin-btn-secondary opacity-60 cursor-not-allowed">
+                                        <Clock size={16} /> PDF 준비 중 (서버 생성 대기)
+                                    </button>
+                                )}
+                                <button onClick={handleDownloadPhotobookZip} disabled={busy} className="admin-btn admin-btn-secondary">
+                                    {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} 원본 전체 ZIP (조판용)
+                                </button>
+                                {order.photobook?.coverThumbPath && (
+                                    <button onClick={() => openStoragePath(order.photobook?.coverThumbPath || undefined)} className="admin-btn admin-btn-secondary">
+                                        <ExternalLink size={16} /> 표지 원본
+                                    </button>
+                                )}
+                            </div>
+                            <div className="text-xs text-zinc-400 mt-1">
+                                조판 참고: <span className="font-mono">{order.storageBasePath}/originals/</span> + order 문서 <span className="font-mono">photobook.layout</span>(페이지 순서·크롭·density)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
                 {order.items.map((item, idx) => {
                     const client = printDims[idx];
@@ -776,6 +863,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     );
                 })}
             </div>
+            )}
         </div>
     );
 }

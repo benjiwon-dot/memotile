@@ -78,6 +78,20 @@ export interface OrderDoc {
 
     items?: OrderItem[]; // Optional in Header (moved to subcollection)
 
+    // 포토북 주문 전용(productType==="photobook"일 때만). 타일 주문엔 없음.
+    photobook?: {
+        size: "A4" | "A3";
+        cover: "soft" | "hard";
+        pageCount: number;
+        density?: string | null;
+        title?: string | null;
+        coverPhotoId?: string | null;
+        coverThumbPath?: string | null;   // Storage 경로(표지 썸네일)
+        originalsBasePath?: string | null; // 선택 원본들이 올라간 Storage 폴더
+        layout?: any;                      // buildPages 결과(페이지별 사진·셀·크롭) 인라인 JSON
+        pdfPath?: string | null;           // 서버 함수 생성 후 채움(MVP엔 null)
+    };
+
     payment: {
         provider: string;
         transactionId?: string;

@@ -2,16 +2,24 @@
 import "react-native-gesture-handler";
 import { Buffer } from "buffer";
 (global as any).Buffer = Buffer;
-import React from "react";
+import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { View, Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import * as ScreenOrientation from "expo-screen-orientation";
 
 import { LanguageProvider } from "../src/context/LanguageContext";
 import { PhotoProvider } from "../src/context/PhotoContext";
 
 export default function RootLayout() {
     const isWeb = Platform.OS === 'web';
+
+    // 앱 전역 세로 고정. 프리뷰 화면만 진입 시 unlock, 나갈 때 다시 세로 → 타일·결제 등 다른 화면은 세로 유지.
+    useEffect(() => {
+        if (Platform.OS !== "web") {
+            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => { });
+        }
+    }, []);
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>

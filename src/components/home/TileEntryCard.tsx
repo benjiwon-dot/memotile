@@ -29,7 +29,7 @@ export function TileEntryCard({ onPress }: { onPress: () => void }) {
             accessibilityLabel={t.ctaStart}
         >
             <View style={styles.row}>
-                {/* 입체 타일 썸네일 */}
+                {/* 타일 썸네일 (원래 디자인: 흰 테두리 + 핑크 그림자) */}
                 <View style={styles.tileWrap}>
                     <View style={[styles.tileDepth, { backgroundColor: c.peach }]} />
                     <View style={[styles.tileFace, { borderColor: c.surface, shadowColor: c.shadow }]}>
@@ -38,8 +38,8 @@ export function TileEntryCard({ onPress }: { onPress: () => void }) {
                 </View>
 
                 <View style={{ flex: 1 }}>
-                    <Text style={[styles.title, { color: c.ink }]}>{t.ctaStart}</Text>
-                    <Text style={[styles.hint, { color: c.textMuted }]}>{t.ctaHint}</Text>
+                    <Text style={[styles.title, { color: c.ink }]}>{t.tileCardTitle}</Text>
+                    <Text style={[styles.hint, { color: c.textMuted }]}>{t.tileCardDesc}</Text>
                 </View>
             </View>
 

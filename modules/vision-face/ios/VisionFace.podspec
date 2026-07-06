@@ -17,4 +17,9 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+
+  # SFace CoreML 모델 (Apache-2.0). 빌드 시 .mlpackage → .mlmodelc 컴파일되어 VisionFace.bundle에 포함.
+  s.resource_bundles = {
+    'VisionFace' => ['SFace.mlpackage']
+  }
 end

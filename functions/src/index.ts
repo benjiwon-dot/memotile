@@ -834,6 +834,30 @@ export const adminExportZipPrints = onCall(
 
                 archive.append(infoText, { name: `${baseFolder}/order_info.txt` });
 
+                // 📕 포토북: 타일 items 대신 originals/ 전체 + 표지 + 레이아웃(조판용) zip
+                if (orderData?.productType === "photobook" || type === "photobook") {
+                    const base = orderData?.storageBasePath;
+                    if (base) {
+                        const [origFiles] = await bucket.getFiles({ prefix: `${base}/originals/` });
+                        for (const f of origFiles) {
+                            const nm = String(f.name).split("/").pop() || "photo.jpg";
+                            archive.append(f.createReadStream(), { name: `${baseFolder}/originals/${nm}` });
+                            addedCount++;
+                        }
+                        const coverPath = orderData?.photobook?.coverThumbPath || `${base}/cover.jpg`;
+                        const coverFile = bucket.file(coverPath);
+                        const [cExists] = await coverFile.exists();
+                        if (cExists) { archive.append(coverFile.createReadStream(), { name: `${baseFolder}/cover.jpg` }); addedCount++; }
+                        if (orderData?.photobook?.layout) {
+                            archive.append(JSON.stringify(orderData.photobook.layout, null, 2), { name: `${baseFolder}/layout.json` });
+                        }
+                        const pb = orderData?.photobook || {};
+                        const pbSpec = `[PHOTOBOOK]\nPages : ${pb.pageCount ?? "-"}\nSize  : ${pb.size ?? "-"}\nCover : ${pb.cover ?? "-"}\nDensity: ${pb.density ?? "-"}\nTitle : ${pb.title ?? "-"}\nPhotos: ${orderData?.itemsCount ?? "-"}\n`;
+                        archive.append(pbSpec, { name: `${baseFolder}/photobook_spec.txt` });
+                    }
+                    continue; // 타일 item 루프 건너뜀
+                }
+
                 for (const item of items) {
                     const index = Number.isFinite(item?.index) ? Number(item.index) : 0;
                     const fileIndex = String(index + 1).padStart(2, "0");

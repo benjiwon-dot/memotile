@@ -13,7 +13,7 @@ import {
     type StyleProp,
     type ViewStyle,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Image as ExpoImage, type ImageSource } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -30,6 +30,7 @@ import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
+import { hasAlbumDraft, loadAlbumDraft } from "../../src/services/albumDraft";
 import { AiPhotobookCard } from "../../src/components/home/AiPhotobookCard";
 import { TileEntryCard } from "../../src/components/home/TileEntryCard";
 import { usePhotobookTheme } from "../../src/config/photobookTheme";
@@ -74,6 +75,21 @@ export default function Index() {
     const [user, setUser] = useState<User | null>(auth.currentUser);
 
     const [isGhost, setIsGhost] = useState(false);
+
+    // 포토북 draft "이어서 하기" (앱 종료 후에도 AI 앨범 복구). 홈 포커스마다 재확인.
+    const [pbDraft, setPbDraft] = useState(false);
+    useFocusEffect(
+        React.useCallback(() => {
+            let alive = true;
+            hasAlbumDraft().then((v) => { if (alive) setPbDraft(v); });
+            return () => { alive = false; };
+        }, [])
+    );
+    const handleResumePhotobook = async () => {
+        const ok = await loadAlbumDraft();
+        if (ok) router.push("/photobook/preview");
+        else setPbDraft(false);
+    };
 
     useEffect(() => {
         if (hasDraft) setIsGhost(false);
@@ -228,6 +244,22 @@ export default function Index() {
                 </View>
             )}
 
+            {/* 포토북 "이어서 하기" 배너 (타일 배너와 겹치면 위로 띄움) */}
+            {photobookEnabled && pbDraft && (
+                <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 + (hasDraft && user && !isGhost ? 78 : 0), backgroundColor: c.surface, borderColor: c.border }]}>
+                    <View style={styles.resumeContent}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.resumeTitle, { color: c.ink }]}>{locale === "TH" ? "โฟโต้บุ๊กที่ค้างไว้" : "Your photobook in progress"}</Text>
+                            <Text style={[styles.resumeSubtitle, { color: c.textSecondary }]} numberOfLines={1}>{locale === "TH" ? "ทำต่อจากที่ค้างไว้" : "Continue where you left off"}</Text>
+                        </View>
+                        <Pressable style={[styles.resumeBtn, { backgroundColor: c.coral }]} onPress={handleResumePhotobook}>
+                            <Feather name="book-open" size={15} color="#fff" style={{ marginRight: 5 }} />
+                            <Text style={styles.resumeBtnText}>{t.resumeCta}</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            )}
+
             <ScrollView
                 contentContainerStyle={{
                     paddingTop: 0,
@@ -272,20 +304,24 @@ export default function Index() {
                             ]}>
                                 {t.heroHeadlineLine1}
                             </Text>
-                            <Text style={[
-                                styles.heroHeadline2,
-                                locale === 'TH' ? styles.heroHeadline2_TH : styles.heroHeadline2_EN
-                            ]}>
-                                {t.heroHeadlineLine2}
-                            </Text>
+                            {!!t.heroHeadlineLine2 && (
+                                <Text style={[
+                                    styles.heroHeadline2,
+                                    locale === 'TH' ? styles.heroHeadline2_TH : styles.heroHeadline2_EN
+                                ]}>
+                                    {t.heroHeadlineLine2}
+                                </Text>
+                            )}
                         </View>
 
-                        <Text style={[
-                            styles.heroSupporting,
-                            locale === 'TH' ? styles.heroSupporting_TH : styles.heroSupporting_EN
-                        ]}>
-                            {t.heroSupporting?.replace(/\.$/, '')}
-                        </Text>
+                        {!!t.heroSupporting && (
+                            <Text style={[
+                                styles.heroSupporting,
+                                locale === 'TH' ? styles.heroSupporting_TH : styles.heroSupporting_EN
+                            ]}>
+                                {t.heroSupporting.replace(/\.$/, '')}
+                            </Text>
+                        )}
 
                         {!photobookEnabled && slideshow}
 
@@ -293,7 +329,6 @@ export default function Index() {
                             <View style={styles.entryStack}>
                                 <AiPhotobookCard />
                                 <TileEntryCard onPress={handleStart} />
-                                {slideshow}
                             </View>
                         ) : (
                             <View style={styles.ctaWrapper}>
@@ -311,7 +346,10 @@ export default function Index() {
                     </View>
                 </View>
 
-                {photobookEnabled && <PhotobookWhyHow />}
+                {/* Why MemoTile → hero 슬라이드쇼 → How it works (플래그 ON) */}
+                {photobookEnabled && <PhotobookWhyHow part="why" />}
+                {photobookEnabled && slideshow}
+                {photobookEnabled && <PhotobookWhyHow part="how" />}
 
                 {!photobookEnabled && (
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
@@ -528,18 +566,19 @@ const styles = StyleSheet.create({
     hero: { paddingTop: 0, paddingBottom: 48, alignItems: "center" },
     heroContent: { maxWidth: 480, width: "100%", alignItems: "center" },
     headlineGroup: { marginBottom: 8, paddingHorizontal: 20, alignItems: "center" },
+    // 헤드라인 색 (메인=웜 차콜, 서브=코랄). 서브 쿨그레이 대안: "#8A8A8E"
 
-    heroHeadline1: { ...typography.h1, textAlign: "center", color: colors.ink },
-    heroHeadline2: { ...typography.h2, marginTop: 4, textAlign: "center", color: colors.ink },
-    heroSupporting: { ...typography.body, textAlign: "center", marginBottom: 30, paddingHorizontal: 24, opacity: 0.9, color: colors.textMuted },
+    heroHeadline1: { textAlign: "center", color: "#2B2320", fontWeight: "900" },
+    heroHeadline2: { marginTop: 0, textAlign: "center", color: "#2B2320", fontWeight: "900" },
+    heroSupporting: { textAlign: "center", marginTop: 6, marginBottom: 18, paddingHorizontal: 24, color: "#FF8C7C", fontWeight: "600" },
 
-    heroHeadline1_TH: { fontSize: 44, lineHeight: 56 },
-    heroHeadline2_TH: { fontSize: 36, lineHeight: 46 },
-    heroSupporting_TH: { fontSize: 18, lineHeight: 26 },
+    heroHeadline1_TH: { fontSize: 28, lineHeight: 42 },   // TH 메인: EN보다 작게 + lineHeight 여유(답답함 해소)
+    heroHeadline2_TH: { fontSize: 28, lineHeight: 42 },
+    heroSupporting_TH: { fontSize: 17, lineHeight: 28, fontWeight: "700" },  // TH 서브: 크기보다 굵기로 강조
 
-    heroHeadline1_EN: { fontSize: 36, lineHeight: 48 },
-    heroHeadline2_EN: { fontSize: 26, lineHeight: 40 },
-    heroSupporting_EN: { fontSize: 16, lineHeight: 24 },
+    heroHeadline1_EN: { fontSize: 34, lineHeight: 40 },   // EN 메인: 더 크게(폭 채움) + Black(900)
+    heroHeadline2_EN: { fontSize: 34, lineHeight: 40 },
+    heroSupporting_EN: { fontSize: 18, lineHeight: 24 },  // EN 서브: 크기 키움
 
     heroPreview: { height: 280, width: "100%", alignItems: "center", justifyContent: "center", marginBottom: 16 },
     slideshowContainer: { width: 260, height: 260 },

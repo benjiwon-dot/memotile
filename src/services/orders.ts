@@ -92,8 +92,20 @@ export async function createOrder(params: {
     currency?: string;
     instagram?: string;
     onProgress?: (current: number, total: number) => void;
+    // 🆕 포토북 주문(additive). 미지정이면 "tile"로 기존 타일 경로 그대로.
+    productType?: "tile" | "photobook";
+    photobook?: {
+        size: "A4" | "A3";
+        cover: "soft" | "hard";
+        pageCount: number;
+        density?: string;
+        title?: string;
+        coverPhotoId?: string | null;
+        coverThumbUri?: string;  // 업로드할 표지 썸네일 로컬 URI(선택)
+        layout?: any;            // buildPages 결과(페이지별 사진·셀·크롭)
+    };
 }): Promise<string> {
-    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram, onProgress } = params;
+    const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram, onProgress, productType = "tile" } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
@@ -111,7 +123,7 @@ export async function createOrder(params: {
     // 1. 주문서 먼저 생성 (에러가 나면 이 주문서는 Pending 상태로 버려집니다)
     const rawOrderData: any = {
         uid: authedUid,
-        productType: "tile", // Phase 1: 모든 주문은 타일. AI/포토북 흐름이 붙으면 분기.
+        productType, // "tile"(기본) | "photobook". 미지정 주문은 tile.
         orderCode,
         itemsCount: safePhotosCount,
         storageBasePath,
@@ -149,7 +161,56 @@ export async function createOrder(params: {
     }, { merge: true });
 
     try {
-        if (Platform.OS === 'web') {
+        if (productType === "photobook") {
+            // 📕 [포토북 MVP] item 서브컬렉션 없음 — 선택 원본 업로드 + 레이아웃JSON + 표지썸네일만 기록.
+            // PDF는 서버 함수 붙기 전까지 null. 타일 경로(아래 web/app)는 전혀 타지 않음.
+            const bookPhotos = Array.isArray(photos) ? photos : [];
+            const results: string[] = [];
+
+            for (let i = 0; i < bookPhotos.length; i++) {
+                const p = bookPhotos[i];
+                const src = p?.originalUri || p?.uri || (p?.assetId ? `ph://${p.assetId}` : p?.thumbUri);
+                if (!src) { if (onProgress) onProgress(i + 1, bookPhotos.length); continue; }
+
+                const originalPath = `${storageBasePath}/originals/${i}.jpg`;
+                let up;
+                try {
+                    up = await uploadFileUriToStorage(originalPath, src);
+                } catch (uploadErr) {
+                    console.error(`❌ [Photobook Upload Error] Index ${i} failed. Aborting order.`, uploadErr);
+                    throw new Error(`Failed to upload photo ${i + 1}. Please check your connection or try again using Wi-Fi.`);
+                }
+                results.push(up.downloadUrl);
+                if (onProgress) onProgress(i + 1, bookPhotos.length);
+            }
+
+            // 표지 썸네일(선택) — 실패해도 주문은 진행(비치명적)
+            let coverThumbPath: string | null = null;
+            if (params.photobook?.coverThumbUri) {
+                try {
+                    const cp = `${storageBasePath}/cover.jpg`;
+                    await uploadFileUriToStorage(cp, params.photobook.coverThumbUri);
+                    coverThumbPath = cp;
+                } catch (e) { console.warn("[Photobook] cover thumb upload failed (non-fatal)", e); }
+            }
+
+            await updateDoc(orderRef, {
+                photobook: stripUndefined({
+                    size: params.photobook?.size,
+                    cover: params.photobook?.cover,
+                    pageCount: params.photobook?.pageCount,
+                    density: params.photobook?.density ?? null,
+                    title: params.photobook?.title ?? null,
+                    coverPhotoId: params.photobook?.coverPhotoId ?? null,
+                    coverThumbPath,
+                    originalsBasePath: `${storageBasePath}/originals`,
+                    layout: params.photobook?.layout ?? null,
+                    pdfPath: null, // 서버 함수 생성 후 채움
+                }),
+                previewImages: results.slice(0, 5),
+                updatedAt: serverTimestamp(),
+            });
+        } else if (Platform.OS === 'web') {
             const webPhotos = Array.isArray(photos) && photos.length > 0 ? photos : [{ uri: "https://via.placeholder.com/600x600.png?text=Test+Order" }];
             const results: string[] = [];
 

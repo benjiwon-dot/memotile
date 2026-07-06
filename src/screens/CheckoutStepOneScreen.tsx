@@ -19,9 +19,14 @@ import {
     Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+
+// 🆕 포토북(additive): 결제1 진입 시 params.productType==="photobook"이면 albumDraft로 분기
+import { getAlbumOptions, getAlbumDraft } from "../services/albumDraft";
+import { albumPrice } from "../config/photobookPricing";
+import { PhotobookViewer } from "../components/photobook/PhotobookViewer";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -66,6 +71,19 @@ export default function CheckoutStepOneScreen() {
     const router = useRouter();
     const { photos, addPhotos, setCurrentIndex } = usePhoto();
     const { t, locale } = useLanguage();
+
+    // 🆕 포토북 분기 (isPhotobook=false면 아래 전부 기존 타일 경로 그대로)
+    const params = useLocalSearchParams<{ productType?: string }>();
+    const isPhotobook = params.productType === "photobook";
+    const albumOpts = getAlbumOptions();
+    const bookItems = getAlbumDraft().items;
+    const bookPhotoCount = bookItems.length;
+    const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
+    const bookCoverUri = bookCoverPhoto?.thumbUri || null;
+    const book = albumPrice(albumOpts.size, albumOpts.cover, bookPhotoCount); // { pages, price }
+    const bookSpec = locale === "TH"
+        ? `${book.pages} หน้า · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
+        : `${book.pages} pages · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
 
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
@@ -229,13 +247,15 @@ export default function CheckoutStepOneScreen() {
     };
 
     const [isPreparing, setIsPreparing] = useState(false);
+    const [viewerOpen, setViewerOpen] = useState(false); // 포토북 감상 뷰어
 
     const handleNext = async () => {
         if (!currentUser) return;
         if (isPreparing) return;
         try {
             setIsPreparing(true);
-            if (Platform.OS !== 'web') {
+            // 포토북은 타일 previewUri가 없으므로 대기 스킵(안 감싸면 무한대기)
+            if (!isPhotobook && Platform.OS !== 'web') {
                 const ok = await waitForPreviewUrisSnapshot(() => photosRef.current, 8000);
                 const latest = photosRef.current || [];
                 const missing = latest.map((p: any, idx: number) => ({ idx, previewUri: p?.output?.previewUri })).filter((x: any) => !x.previewUri);
@@ -244,7 +264,9 @@ export default function CheckoutStepOneScreen() {
                     return;
                 }
             }
-            router.push("/create/checkout/payment");
+            router.push(isPhotobook
+                ? { pathname: "/create/checkout/payment", params: { productType: "photobook" } }
+                : "/create/checkout/payment");
         } catch (e) {
             console.error("[CheckoutStepOne] wait failed", e);
             Alert.alert("Please wait", "Photos are still being prepared. Please try again in a moment.");
@@ -296,21 +318,59 @@ export default function CheckoutStepOneScreen() {
 
             <ScrollView contentContainerStyle={styles.content}>
                 <View style={styles.stepContainer}>
-                    {/* 1) 사진 */}
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll} contentContainerStyle={{ gap: 12 }}>
-                        {safePhotos.map((item: any, idx: number) => {
-                            const sourceUri = pickDisplayUri(item);
-                            if (!sourceUri) return null;
-                            return (
-                                <TouchableOpacity key={`${item.assetId || item.uri || "p"}-${idx}`} onPress={() => setPreviewUri(sourceUri)}>
-                                    <Image source={{ uri: sourceUri }} style={styles.previewImage} />
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </ScrollView>
+                    {/* 1) 사진 (타일) / 표지+스펙 (포토북) */}
+                    {isPhotobook ? (
+                        <View style={styles.bookCard}>
+                            {/* 표지 누르면 "받으실 포토북" 감상 뷰어(읽기전용). 수정은 뷰어 안 [수정하기]로. */}
+                            <TouchableOpacity onPress={() => setViewerOpen(true)} activeOpacity={0.85}>
+                                {/* 표지 뒤 오른쪽에 종이 단면 2겹 → 두께 있는 책 느낌 */}
+                                <View style={styles.bookStack}>
+                                    <View style={[styles.pageEdge, { left: 5, top: 3 }]} />
+                                    <View style={[styles.pageEdge, { left: 2.5, top: 1.5 }]} />
+                                    {bookCoverUri ? (
+                                        <Image source={{ uri: bookCoverUri }} style={styles.bookCover} />
+                                    ) : (
+                                        <View style={[styles.bookCover, styles.bookCoverEmpty]}><Ionicons name="book" size={28} color="#c4c4c4" /></View>
+                                    )}
+                                </View>
+                            </TouchableOpacity>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.bookTitle} numberOfLines={1}>{albumOpts.title || (locale === "TH" ? "โฟโต้บุ๊ก" : "Photobook")}</Text>
+                                <Text style={styles.bookSpec}>{bookSpec}</Text>
+                                <View style={styles.bookHintRow}>
+                                    <Ionicons name="hand-left-outline" size={13} color="#9CA3AF" />
+                                    <Text style={styles.bookHintText}>{locale === "TH" ? "แตะที่ปกเพื่อดู/แก้ไข" : "Tap cover to preview & edit"}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    ) : (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll} contentContainerStyle={{ gap: 12 }}>
+                            {safePhotos.map((item: any, idx: number) => {
+                                const sourceUri = pickDisplayUri(item);
+                                if (!sourceUri) return null;
+                                return (
+                                    <TouchableOpacity key={`${item.assetId || item.uri || "p"}-${idx}`} onPress={() => setPreviewUri(sourceUri)}>
+                                        <Image source={{ uri: sourceUri }} style={styles.previewImage} />
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                    )}
 
-                    {/* 2) 가격 (요약) */}
-                    {!priceLoaded ? (
+                    {/* 2) 가격 (요약) — 포토북은 albumPrice 고정가 */}
+                    {isPhotobook ? (
+                        <View style={styles.summaryBlock}>
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryLabel}>{bookSpec}</Text>
+                                <Text style={styles.summaryValue}>฿{book.price.toLocaleString()}</Text>
+                            </View>
+                            <View style={styles.divider} />
+                            <View style={styles.totalRow}>
+                                <Text style={styles.totalLabel}>{(t as any)["totalLabel"] || "Total"}</Text>
+                                <Text style={styles.totalValue}>฿{book.price.toLocaleString()}</Text>
+                            </View>
+                        </View>
+                    ) : !priceLoaded ? (
                         <View style={[styles.summaryBlock, { alignItems: "center", justifyContent: "center", minHeight: 130 }]}>
                             <ActivityIndicator color={colors.ink || "#000"} />
                             <Text style={{ marginTop: 10, color: "#9CA3AF", fontSize: 13 }}>{(t as any)["loadingPrice"] || "Loading price…"}</Text>
@@ -344,8 +404,8 @@ export default function CheckoutStepOneScreen() {
                         </View>
                     )}
 
-                    {/* 3) 안내문구(세일) + 사진추가 — 가격 바로 밑 */}
-                    {priceLoaded && renderPromo()}
+                    {/* 3) 안내문구(세일) + 사진추가 — 타일 전용(포토북은 '프리뷰에서 수정'으로 대체) */}
+                    {!isPhotobook && priceLoaded && renderPromo()}
 
                     {/* 4) 로그인 */}
                     <View style={styles.authSection}>
@@ -410,6 +470,15 @@ export default function CheckoutStepOneScreen() {
                     {previewUri && <Image source={{ uri: previewUri }} style={styles.modalImage} resizeMode="contain" />}
                 </View>
             </Modal>
+
+            {/* 포토북 감상 뷰어(읽기전용). [수정하기] → 편집 프리뷰(router.back)로. */}
+            {isPhotobook && (
+                <PhotobookViewer
+                    visible={viewerOpen}
+                    onClose={() => setViewerOpen(false)}
+                    onEdit={() => { setViewerOpen(false); router.back(); }}
+                />
+            )}
         </SafeAreaView>
     );
 }
@@ -424,6 +493,17 @@ const styles = StyleSheet.create({
 
     imageScroll: { marginBottom: 16 },
     previewImage: { width: 100, height: 100, borderRadius: 8, backgroundColor: "#eee", resizeMode: "cover" },
+
+    // 🆕 포토북 표지+스펙 카드
+    bookCard: { flexDirection: "row", gap: 14, alignItems: "center", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#f0f0f0", backgroundColor: "#fff", marginBottom: 16 },
+    bookStack: { width: 117, height: 87 }, // 표지 112×84 + 종이 단면 여백
+    pageEdge: { position: "absolute", width: 112, height: 84, borderRadius: 3, backgroundColor: "#F1E9DD", borderWidth: 0.5, borderColor: "rgba(0,0,0,0.08)" }, // 책 종이 단면
+    bookCover: { position: "absolute", left: 0, top: 0, width: 112, height: 84, borderRadius: 3, backgroundColor: "#eee", resizeMode: "cover" }, // 가로 표지, 라운드 축소(8→3)
+    bookCoverEmpty: { alignItems: "center", justifyContent: "center" },
+    bookTitle: { fontSize: 17, fontWeight: "800", color: "#111" },
+    bookSpec: { fontSize: 13, color: "#6B7280", marginTop: 4 },
+    bookHintRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
+    bookHintText: { fontSize: 12, color: "#9CA3AF", fontWeight: "600" },
 
     // 🆕 안내 카드 — 작고 덜 튀게 (가격 밑)
     promoCard: { borderWidth: 1, borderColor: "#D7F0E4", backgroundColor: "#F6FCF9", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 24 },

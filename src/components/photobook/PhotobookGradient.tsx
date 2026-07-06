@@ -20,7 +20,9 @@ export function PhotobookGradient({
 }) {
     const id = useRef(`pbgrad_${_seq++}`).current;
     return (
-        <View style={[style, { overflow: "hidden", borderRadius: radius }]}>
+        // pointerEvents none — 그라데이션(배경+라벨)이 터치를 가로채지 않게. 항상 Pressable로 감싸 쓰므로 부모가 탭을 받음.
+        // backgroundColor 단색 폴백 — SVG가 높이를 덜 칠해도 뒤 배경(크림)이 비치지 않게.
+        <View pointerEvents="none" style={[style, { overflow: "hidden", borderRadius: radius, backgroundColor: colors[0] }]}>
             <Svg style={StyleSheet.absoluteFill}>
                 <Defs>
                     <LinearGradient id={id} x1="0%" y1="0%" x2="100%" y2="100%">

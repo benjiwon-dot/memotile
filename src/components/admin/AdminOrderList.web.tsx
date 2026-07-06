@@ -677,6 +677,8 @@ export default function AdminOrderList() {
                             const totalAmount = getOrderTotal(order);
                             const qty = order.itemsCount || 0;
                             const isTrash = normStatus(order.status) === "TRASH";
+                            const isPb = (order as any).productType === "photobook";
+                            const pb = (order as any).photobook || {};
 
                             return (
                                 <tr key={order.id} className={`border-b last:border-0 hover:bg-zinc-50 transition-colors h-[60px] ${isTrash ? "bg-rose-50/50" : ""}`}>
@@ -692,7 +694,12 @@ export default function AdminOrderList() {
                                         </div>
                                     </td>
                                     <td className="p-4 font-mono font-bold text-sm whitespace-nowrap">
-                                        <div className={isTrash ? "text-rose-600 line-through" : "text-blue-600"}>{order.orderCode}</div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className={isTrash ? "text-rose-600 line-through" : "text-blue-600"}>{order.orderCode}</div>
+                                            {isPb
+                                                ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200">📕 BOOK</span>
+                                                : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black bg-zinc-100 text-zinc-500 border border-zinc-200">🖼️ TILE</span>}
+                                        </div>
                                         <div className="text-xs text-zinc-500 mt-1">
                                             {order.trackingNumber ? `🚚 ${order.trackingNumber}` : "운송장 미입력"}
                                         </div>
@@ -718,9 +725,16 @@ export default function AdminOrderList() {
                                         </div>
                                     </td>
                                     <td className="p-4 text-center">
-                                        <div className="inline-flex items-center justify-center bg-zinc-100 px-2 py-1 rounded text-xs font-black text-zinc-700">
-                                            {qty}
-                                        </div>
+                                        {isPb ? (
+                                            <div className="inline-flex flex-col items-center bg-indigo-50 px-2 py-1 rounded text-[10px] font-black text-indigo-700 border border-indigo-100 leading-tight">
+                                                <span>{pb.pageCount ?? "?"}p {pb.size || ""}</span>
+                                                <span>{pb.cover === "hard" ? "Hardcover" : "Softcover"}</span>
+                                            </div>
+                                        ) : (
+                                            <div className="inline-flex items-center justify-center bg-zinc-100 px-2 py-1 rounded text-xs font-black text-zinc-700">
+                                                {qty}
+                                            </div>
+                                        )}
                                     </td>
                                     <td className="p-4 font-black text-sm whitespace-nowrap">
                                         ฿{totalAmount.toLocaleString()}
