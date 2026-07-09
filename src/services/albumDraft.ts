@@ -32,6 +32,8 @@ let _subjectName = "";
 let _crops: Record<string, PhotoCrop> = {}; // assetId → crop (없으면 얼굴 자동중심 기본값 사용)
 let _options: AlbumOptions = defaultOptions("");
 
+const DRAFT_TTL_MS = 24 * 60 * 60 * 1000; // 이어서 하기 유효기간 = 24시간(하루 지나면 만료)
+
 // ── 영구저장 (디바운스) ──
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;
 function persist() {
@@ -45,23 +47,29 @@ function persist() {
     }, 400);
 }
 
-/** 저장된 포토북 draft가 있나 (홈 배너 표시 판단, 가벼운 체크) */
+// 만료(>24h)면 삭제하고 false. 유효하면 파싱된 draft 반환.
+async function readFreshDraft(): Promise<any | null> {
+    const raw = await AsyncStorage.getItem(PB_DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!Array.isArray(d?.items) || d.items.length === 0) return null;
+    if (d.savedAt && Date.now() - d.savedAt > DRAFT_TTL_MS) { // 하루 지남 → 만료
+        try { await AsyncStorage.removeItem(PB_DRAFT_KEY); } catch { /* 무시 */ }
+        return null;
+    }
+    return d;
+}
+
+/** 저장된 포토북 draft가 있나 (홈 배너 표시 판단, 만료 반영) */
 export async function hasAlbumDraft(): Promise<boolean> {
-    try {
-        const raw = await AsyncStorage.getItem(PB_DRAFT_KEY);
-        if (!raw) return false;
-        const d = JSON.parse(raw);
-        return Array.isArray(d?.items) && d.items.length > 0;
-    } catch { return false; }
+    try { return (await readFreshDraft()) != null; } catch { return false; }
 }
 
 /** 저장된 draft를 메모리 store로 복원 → 프리뷰로 이어서. 성공 시 true */
 export async function loadAlbumDraft(): Promise<boolean> {
     try {
-        const raw = await AsyncStorage.getItem(PB_DRAFT_KEY);
-        if (!raw) return false;
-        const d = JSON.parse(raw);
-        if (!Array.isArray(d?.items) || d.items.length === 0) return false;
+        const d = await readFreshDraft();
+        if (!d) return false;
         _items = d.items;
         _subjectName = d.subjectName || "";
         _crops = d.crops || {};

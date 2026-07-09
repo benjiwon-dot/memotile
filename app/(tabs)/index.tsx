@@ -87,8 +87,9 @@ export default function Index() {
     );
     const handleResumePhotobook = async () => {
         const ok = await loadAlbumDraft();
-        if (ok) router.push("/photobook/preview");
-        else setPbDraft(false);
+        if (!ok) { setPbDraft(false); return; }
+        // 프리뷰로 단일 push(깨끗한 focus → 가로 언락 정상). 뒤로가기=홈(album 편집 복귀는 landscape 확인 후 재설계).
+        router.push("/photobook/preview");
     };
 
     useEffect(() => {

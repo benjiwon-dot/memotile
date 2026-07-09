@@ -103,6 +103,7 @@ export async function createOrder(params: {
         coverPhotoId?: string | null;
         coverThumbUri?: string;  // 업로드할 표지 썸네일 로컬 URI(선택)
         layout?: any;            // buildPages 결과(페이지별 사진·셀·크롭)
+        frozen?: any;            // P1 동결 레이아웃(FrozenLayout) — 서버 PDF 렌더러 입력
     };
 }): Promise<string> {
     const { uid, shipping, photos, totals, promoCode, locale = "EN", currency = "THB", instagram, onProgress, productType = "tile" } = params;
@@ -150,6 +151,8 @@ export async function createOrder(params: {
     };
 
     if (promoCode) rawOrderData.promo = promoCode;
+    // 📕 포토북: 원본 업로드 완료 전임을 표시(어드민에서 "업로드 중"으로 구분). 업로드 후 updateDoc가 전체 photobook으로 교체.
+    if (productType === "photobook") rawOrderData.photobook = { uploadStatus: "uploading" };
 
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
@@ -165,24 +168,56 @@ export async function createOrder(params: {
             // 📕 [포토북 MVP] item 서브컬렉션 없음 — 선택 원본 업로드 + 레이아웃JSON + 표지썸네일만 기록.
             // PDF는 서버 함수 붙기 전까지 null. 타일 경로(아래 web/app)는 전혀 타지 않음.
             const bookPhotos = Array.isArray(photos) ? photos : [];
-            const results: string[] = [];
+            const results: string[] = new Array(bookPhotos.length).fill("");
 
-            for (let i = 0; i < bookPhotos.length; i++) {
-                const p = bookPhotos[i];
-                const src = p?.originalUri || p?.uri || (p?.assetId ? `ph://${p.assetId}` : p?.thumbUri);
-                if (!src) { if (onProgress) onProgress(i + 1, bookPhotos.length); continue; }
+            // P0(속도): 원본 43장을 순차·풀해상도(0.98)로 올리면 ~15분. 병렬(동시 5장) + 0.9 재압축으로 단축.
+            // 300dpi 인쇄 품질 보호를 위해 리사이즈는 하지 않고 재압축만. 타일 경로(web/app)와는 완전 무관.
+            const UPLOAD_CONCURRENCY = 5;
+            let doneCount = 0;
+            let nextIdx = 0;
+            let uploadAbort: Error | null = null;
 
-                const originalPath = `${storageBasePath}/originals/${i}.jpg`;
-                let up;
-                try {
-                    up = await uploadFileUriToStorage(originalPath, src);
-                } catch (uploadErr) {
-                    console.error(`❌ [Photobook Upload Error] Index ${i} failed. Aborting order.`, uploadErr);
-                    throw new Error(`Failed to upload photo ${i + 1}. Please check your connection or try again using Wi-Fi.`);
+            const uploadWorker = async () => {
+                while (true) {
+                    if (uploadAbort) return;
+                    const i = nextIdx++;
+                    if (i >= bookPhotos.length) return;
+
+                    const p = bookPhotos[i];
+                    const rawSrc = p?.originalUri || p?.uri || (p?.assetId ? `ph://${p.assetId}` : p?.thumbUri);
+                    if (!rawSrc) { doneCount++; if (onProgress) onProgress(doneCount, bookPhotos.length); continue; }
+
+                    // 업로드 전 다운스케일(장변 ≤ MAX_EDGE) + 0.85 재압축 → 업로드 용량 대폭↓·속도↑.
+                    // 3500px = A4 풀블리드도 300dpi 이상(27.9cm×300/2.54≈3295). 대부분 셀은 훨씬 여유. 인쇄 품질 보호.
+                    const MAX_EDGE = 3500;
+                    let src = rawSrc;
+                    try {
+                        const w = (p as any)?.width, h = (p as any)?.height;
+                        const ops: any[] = (w && h && Math.max(w, h) > MAX_EDGE)
+                            ? [{ resize: w >= h ? { width: MAX_EDGE } : { height: MAX_EDGE } }]
+                            : [];
+                        const out = await manipulateAsync(rawSrc, ops, { compress: 0.85, format: SaveFormat.JPEG });
+                        src = out.uri;
+                    } catch (e) { /* 실패 시 원본 그대로 업로드(비치명적) */ }
+
+                    const originalPath = `${storageBasePath}/originals/${i}.jpg`;
+                    try {
+                        const up = await uploadFileUriToStorage(originalPath, src);
+                        results[i] = up.downloadUrl;
+                    } catch (uploadErr) {
+                        console.error(`❌ [Photobook Upload Error] Index ${i} failed. Aborting order.`, uploadErr);
+                        uploadAbort = new Error(`Failed to upload photo ${i + 1}. Please check your connection or try again using Wi-Fi.`);
+                        return;
+                    }
+                    doneCount++;
+                    if (onProgress) onProgress(doneCount, bookPhotos.length);
                 }
-                results.push(up.downloadUrl);
-                if (onProgress) onProgress(i + 1, bookPhotos.length);
-            }
+            };
+
+            await Promise.all(
+                Array.from({ length: Math.min(UPLOAD_CONCURRENCY, bookPhotos.length) }, () => uploadWorker())
+            );
+            if (uploadAbort) throw uploadAbort;
 
             // 표지 썸네일(선택) — 실패해도 주문은 진행(비치명적)
             let coverThumbPath: string | null = null;
@@ -204,8 +239,11 @@ export async function createOrder(params: {
                     coverPhotoId: params.photobook?.coverPhotoId ?? null,
                     coverThumbPath,
                     originalsBasePath: `${storageBasePath}/originals`,
+                    uploadStatus: "complete", // 원본 업로드 완료
                     layout: params.photobook?.layout ?? null,
+                    frozen: params.photobook?.frozen ?? null, // P1: 동결 조판(서버 PDF 렌더 입력)
                     pdfPath: null, // 서버 함수 생성 후 채움
+                    pdfStatus: "pending", // pending | ready | failed — P2 렌더러가 갱신
                 }),
                 previewImages: results.slice(0, 5),
                 updatedAt: serverTimestamp(),

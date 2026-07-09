@@ -165,7 +165,7 @@ export function PhotobookViewer({ visible, onClose, onEdit }: {
 
     const renderPage = (page: LayoutPage | null, side: "l" | "r") => (
         <View style={{ width: pageW, height: pageH, backgroundColor: c.surface, borderRightWidth: side === "l" ? 1 : 0, borderRightColor: "rgba(0,0,0,0.06)" }}>
-            {page && monthRange(page.photos) ? (
+            {page && page.kind !== "hero" && monthRange(page.photos) ? (
                 <Text style={{ position: "absolute", top: pageH * PAGE_TOP_BAND * 0.3, left: pageW * 0.055, fontSize: Math.max(8, Math.min(13, Math.round(pageH * 0.055))), fontWeight: "700", letterSpacing: 0.5, color: c.coral }}>
                     {monthRange(page.photos)}
                 </Text>

@@ -18,6 +18,8 @@ import * as MediaLibrary from "expo-media-library";
 // 🆕 포토북(additive): productType==="photobook"이면 albumDraft로 분기, 가격은 albumPrice
 import { getAlbumOptions, getAlbumDraft, getAllCrops } from "../services/albumDraft";
 import { albumPrice } from "../config/photobookPricing";
+import { countPages } from "../services/photoLayout";
+import { buildFrozenLayout } from "../services/photobookFreeze";
 
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from 'expo-linking';
@@ -71,9 +73,11 @@ export default function CheckoutStepTwoScreen() {
     const bookItems = getAlbumDraft().items;
     const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
     const book = albumPrice(albumOpts.size, albumOpts.cover, bookItems.length); // { pages, price(THB) }
+    const bookPages = countPages(bookItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 내부 내지 페이지수(주문 payload/PDF용, 표지 제외)
+    // 고객 표시는 사진 수 중심(페이지 표현 X)
     const bookSpec = (locale || "EN") === "TH"
-        ? `${book.pages} หน้า · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
-        : `${book.pages} pages · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
+        ? `${bookItems.length} รูป · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
+        : `${bookItems.length} photos · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
 
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
@@ -204,11 +208,12 @@ export default function CheckoutStepTwoScreen() {
         [safePhotosCount, pricePerTile, volumeDiscounts, shippingTiers, freeShipThreshold, shippingFeeLocal, promoInput, promoStackVolume]
     );
 
-    // 포토북은 albumPrice 고정가(THB), 타일은 computePricing. (수량할인/배송비 개념 없음)
+    // 포토북은 albumPrice 고정가(THB) + 프로모 할인 적용, 타일은 computePricing. (포토북은 수량할인/배송비 개념 없음)
+    const bookPromoDiscount = isPhotobook && promoResult?.success ? Math.min(promoResult.discountAmount || 0, book.price) : 0;
     const rawSubtotal = isPhotobook ? book.price : pricing.subtotal;
-    const totalDiscount = isPhotobook ? 0 : pricing.totalDiscount;
+    const totalDiscount = isPhotobook ? bookPromoDiscount : pricing.totalDiscount;
     const shippingFee = isPhotobook ? 0 : pricing.shippingFee;
-    const total = isPhotobook ? book.price : pricing.total;
+    const total = isPhotobook ? Math.max(0, book.price - bookPromoDiscount) : pricing.total;
 
     const totalInUSD = useMemo(() => {
         const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
@@ -228,7 +233,7 @@ export default function CheckoutStepTwoScreen() {
 
     // 🆕 실제 과금 USD: 포토북은 ฿가격 × 타일과 동일 환산율(basePriceUSD/pricePerTile). 타일은 기존 totalInUSD.
     const usdRate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
-    const chargeUSD = isPhotobook ? Number((book.price * usdRate).toFixed(2)) : totalInUSD;
+    const chargeUSD = isPhotobook ? Number((total * usdRate).toFixed(2)) : totalInUSD;
 
     // 🆕 사진 더 담기
     const handleAddMorePhotos = async () => {
@@ -261,7 +266,9 @@ export default function CheckoutStepTwoScreen() {
         if (!promoCode) return;
         setIsApplyingPromo(true);
         try {
-            const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, safePhotosCount, pricePerTile);
+            // 포토북은 수량이 0(타일 컨텍스트 비어있음)이라 앨범 사진 수를 넘김(최소수량 쿠폰 오판 방지)
+            const promoCount = isPhotobook ? bookItems.length : safePhotosCount;
+            const res = await validatePromo(promoCode, currentUser?.uid || "anon", rawSubtotal, promoCount, pricePerTile);
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setPromoResult(res);
             if (!res.success) Alert.alert("Promo", res.error === 'promoInvalid' ? ((t as any)?.[res.error] || "Invalid promo.") : res.error);
@@ -403,21 +410,32 @@ export default function CheckoutStepTwoScreen() {
             let orderPhotos: any[] = Array.isArray(safePhotos) ? safePhotos : [];
             let photobookPayload: any = undefined;
             if (isPhotobook) {
-                const resolved: any[] = [];
-                for (let i = 0; i < bookItems.length; i++) {
-                    const it = bookItems[i];
-                    let originalUri: string | undefined;
-                    try {
-                        const info = await MediaLibrary.getAssetInfoAsync(it.assetId);
-                        originalUri = (info as any)?.localUri || (info as any)?.uri;
-                    } catch (e) { console.warn("[Photobook] asset resolve failed", it.assetId, e); }
-                    resolved.push({ assetId: it.assetId, originalUri, thumbUri: it.thumbUri });
-                }
+                // P0(속도): 43장을 순차 getAssetInfoAsync로 resolve하면(iCloud는 다운로드까지) 앞단이 느림 → 병렬(동시 5장).
+                const resolved: any[] = new Array(bookItems.length);
+                const RESOLVE_CONCURRENCY = 5;
+                let rIdx = 0;
+                const resolveWorker = async () => {
+                    while (true) {
+                        const i = rIdx++;
+                        if (i >= bookItems.length) return;
+                        const it = bookItems[i];
+                        let originalUri: string | undefined;
+                        let ow: number | undefined, oh: number | undefined;
+                        try {
+                            const info = await MediaLibrary.getAssetInfoAsync(it.assetId);
+                            originalUri = (info as any)?.localUri || (info as any)?.uri;
+                            ow = (info as any)?.width; oh = (info as any)?.height;
+                        } catch (e) { console.warn("[Photobook] asset resolve failed", it.assetId, e); }
+                        // 원본 px 크기 전달 → 업로드 시 장변 3500px로 다운스케일(업로드 용량↓·속도↑, 300dpi 인쇄 보호)
+                        resolved[i] = { assetId: it.assetId, originalUri, thumbUri: it.thumbUri, width: ow, height: oh };
+                    }
+                };
+                await Promise.all(Array.from({ length: Math.min(RESOLVE_CONCURRENCY, bookItems.length) }, () => resolveWorker()));
                 orderPhotos = resolved;
                 photobookPayload = {
                     size: albumOpts.size,
                     cover: albumOpts.cover,
-                    pageCount: book.pages,
+                    pageCount: bookPages, // 실제 내지 페이지수(커버·뒷표지 제외) — 어드민/주문에도 동일
                     density: albumOpts.density ?? "balanced",
                     title: albumOpts.title,
                     coverPhotoId: albumOpts.coverPhotoId,
@@ -432,6 +450,24 @@ export default function CheckoutStepTwoScreen() {
                         order: bookItems.map((x) => x.assetId),
                         crops: getAllCrops(),
                     },
+                    // P1: 조판 결과 동결 — 서버 PDF 렌더러가 프리뷰와 100% 동일하게 그릴 입력.
+                    frozen: buildFrozenLayout({
+                        items: bookItems,
+                        size: albumOpts.size,
+                        coverMaterial: albumOpts.cover,
+                        density: (albumOpts.density as any) || "balanced",
+                        crops: getAllCrops(),
+                        cover: {
+                            // 표지 미선택(coverPhotoId=null)이면 프리뷰와 동일하게 items[0]로 폴백 → 서버가 표지를 반드시 렌더.
+                            assetId: albumOpts.coverPhotoId ?? bookCoverPhoto?.assetId ?? null,
+                            style: albumOpts.coverStyle,
+                            title: albumOpts.title,
+                            // null이면 freeze가 표지 사진 얼굴중심으로 자동 크롭(중앙 아님)
+                            fx: albumOpts.coverFocusX ?? null,
+                            fy: albumOpts.coverFocusY ?? null,
+                            zoom: albumOpts.coverZoom ?? null,
+                        },
+                    }),
                 };
             }
 
@@ -481,15 +517,20 @@ export default function CheckoutStepTwoScreen() {
     const instaPlaceholder = (t as any)?.["instaPlaceholder"] || "Instagram ID (Get free coupons!)";
     const getCleanCardName = () => ((t as any)?.["payCard"] || "Credit/Debit Card").replace(" (Visa, Master)", "");
 
+    const isTH = safeLocale?.toUpperCase() === "TH";
     const getProgressTitle = () => isVerifyingPayment
-        ? ((t as any)?.["verifyingPayment"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment..."))
-        : ((t as any)?.["preparingMemories"] || (safeLocale?.toUpperCase() === "TH" ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories..."));
+        ? ((t as any)?.["verifyingPayment"] || (isTH ? "กำลังตรวจสอบการชำระเงิน..." : "Verifying Payment..."))
+        : isPhotobook
+            ? (isTH ? "กำลังสร้างโฟโต้บุ๊กของคุณ..." : "Creating your photobook...")
+            : ((t as any)?.["preparingMemories"] || (isTH ? "กำลังเตรียมรูปภาพของคุณ..." : "Preparing your memories..."));
 
     const getProgressSubtitle = () => isVerifyingPayment
-        ? ((t as any)?.["pleaseWait"] || (safeLocale?.toUpperCase() === "TH" ? "กรุณารอสักครู่..." : "Please wait a moment..."))
-        : ((t as any)?.["optimizingImages"] || (safeLocale?.toUpperCase() === "TH"
-            ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nใช้เวลาสักครู่ กรุณาอย่าปิดแอปพลิเคชัน"
-            : "Optimizing high-resolution tiles for the best print quality.\nThis may take a few minutes. Please keep the app open."));
+        ? ((t as any)?.["pleaseWait"] || (isTH ? "กรุณารอสักครู่..." : "Please wait a moment..."))
+        : isPhotobook
+            ? (isTH ? "กำลังอัปโหลดและจัดหน้าโฟโต้บุ๊ก\nใช้เวลาสักครู่ กรุณาอย่าปิดแอป" : "Uploading & laying out your photobook.\nThis may take a moment. Please keep the app open.")
+            : ((t as any)?.["optimizingImages"] || (isTH
+                ? "กำลังประมวลผลรูปภาพความละเอียดสูงเพื่อคุณภาพการพิมพ์ที่ดีที่สุด\nใช้เวลาสักครู่ กรุณาอย่าปิดแอปพลิเคชัน"
+                : "Optimizing high-resolution tiles for the best print quality.\nThis may take a few minutes. Please keep the app open."));
 
     const addMoreLabel = safeLocale === "TH" ? "เพิ่มรูป (ยิ่งเยอะยิ่งถูก)" : "Add more photos — save more";
 
@@ -554,8 +595,7 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     </View>
 
-                    {/* 프로모코드 — 타일 전용(포토북은 고정 심리가라 쿠폰 미적용) */}
-                    {!isPhotobook && (
+                    {/* 프로모코드 — 타일·포토북 공용 */}
                     <View style={styles.promoSection}>
                         <Text style={styles.sectionTitle}>{(t as any)?.["promoHaveCode"] || "PROMO CODE"}</Text>
                         <View style={styles.promoInputRow}>
@@ -566,7 +606,6 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                         {promoResult?.success && <Text style={styles.promoSuccessText}>{(t as any)?.["promoApplied"]}: {promoResult.promoCode}</Text>}
                     </View>
-                    )}
 
                     {/* 가격(요약) — 포토북은 albumPrice 고정가(฿), 타일은 computePricing */}
                     {isPhotobook ? (
@@ -575,9 +614,15 @@ export default function CheckoutStepTwoScreen() {
                                 <Text style={styles.summaryLabel}>{bookSpec}</Text>
                                 <Text style={styles.summaryValue}>฿{book.price.toLocaleString()}</Text>
                             </View>
+                            {bookPromoDiscount > 0 && (
+                                <View style={styles.summaryRow}>
+                                    <Text style={[styles.summaryLabel, { color: colors?.primary || "#E4405F" }]}>{(t as any)?.["discountLabel"] || "Promo Discount"}</Text>
+                                    <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-฿{bookPromoDiscount.toLocaleString()}</Text>
+                                </View>
+                            )}
                             <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
                                 <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
-                                <Text style={styles.totalValue}>฿{book.price.toLocaleString()}</Text>
+                                <Text style={styles.totalValue}>฿{total.toLocaleString()}</Text>
                             </View>
                         </View>
                     ) : !priceLoaded ? (
@@ -725,7 +770,7 @@ export default function CheckoutStepTwoScreen() {
                         <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
                         {!isVerifyingPayment && (
                             <>
-                                <View style={styles.progressPill}><Text style={styles.progressPillText}>{Math.min(progressCount, uploadCount)} / {uploadCount}</Text></View>
+                                <View style={styles.progressPill}><Text style={styles.progressPillText}>{isPhotobook ? `${uploadCount > 0 ? Math.round((Math.min(progressCount, uploadCount) / uploadCount) * 100) : 0}%` : `${Math.min(progressCount, uploadCount)} / ${uploadCount}`}</Text></View>
                                 <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: uploadCount > 0 ? `${(Math.min(progressCount, uploadCount) / uploadCount) * 100}%` : '0%' }]} /></View>
                             </>
                         )}

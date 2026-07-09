@@ -1,4 +1,5 @@
 import Expo
+import ExpoScreenOrientation
 import FirebaseCore
 import React
 import ReactAppDependencyProvider
@@ -6,6 +7,16 @@ import ReactAppDependencyProvider
 @UIApplicationMain
 public class AppDelegate: ExpoAppDelegate {
   var window: UIWindow?
+
+  // expo-screen-orientation의 subscriber가 이 메서드로 전달되지 않는 케이스 대비 → 직접 오버라이드.
+  // JS의 lock/unlockAsync가 설정한 마스크를 iOS에 반환(프리뷰만 가로 허용, 나머지 세로 유지).
+  public override func application(
+    _ application: UIApplication,
+    supportedInterfaceOrientationsFor window: UIWindow?
+  ) -> UIInterfaceOrientationMask {
+    let mask = ScreenOrientationRegistry.shared.requiredOrientationMask()
+    return mask.isEmpty ? .portrait : mask
+  }
 
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?

@@ -22,6 +22,7 @@ export interface ScanItem {
     faces: FaceBox[];
     creationTime?: number;    // 촬영(생성) 시각 epoch ms — 타임라인/나이계산용 (STEP6)
     processedAt: number;      // epoch ms
+    manual?: boolean;         // 사용자가 갤러리에서 직접 추가 → 자동 큐레이션에서 제외(항상 유지)
 }
 
 export interface ScanProgress {

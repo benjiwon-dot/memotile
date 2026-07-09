@@ -5,10 +5,13 @@
 // 내지 배치는 photoLayout.buildPages — 사진 비율대로 저스티파이드(여백 최소, 크롭 최소).
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    View, Text, StyleSheet, Pressable, FlatList, Alert, Modal, useWindowDimensions, Animated, ScrollView,
+    View, Text, StyleSheet, Pressable, FlatList, Alert, Modal, useWindowDimensions, Animated, ScrollView, Linking,
     NativeSyntheticEvent, NativeScrollEvent, LayoutChangeEvent,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import { scanAsset } from "../../modules/vision-face";
+import { thumbPath } from "../../src/services/scanCache";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -127,7 +130,7 @@ function DragCell({ item, uri, x, y, spX, spY, w, h, crop, bg, drag, onTap, onLi
 export default function PhotobookPreview() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { t } = useLanguage();
+    const { t, locale } = useLanguage();
     const c = usePhotobookTheme();
     const enabled = usePhotobookEnabled();
 
@@ -140,6 +143,8 @@ export default function PhotobookPreview() {
     const RATIO = opts.size === "A3" ? 38.6 / 29.7 : 27.9 / 21.5; // 가로형 w/h
 
     const [items, setItemsRaw] = useState<ScanItem[]>(() => [...draft0.items].sort((a, b) => (a.creationTime ?? 0) - (b.creationTime ?? 0)));
+    // 초기 정렬(creationTime) 순서를 draft에 1회 고정 → 조작 없이 바로 주문해도 checkout/freeze가 프리뷰와 동일 순서로 렌더.
+    useEffect(() => { setAlbumItems(items); }, []); // eslint-disable-line react-hooks/exhaustive-deps
     const [dragging, setDragging] = useState(false);
     const dragActive = useSharedValue(0);
     const dragOverIdx = useSharedValue(-1);
@@ -149,7 +154,7 @@ export default function PhotobookPreview() {
     const dragCentersJS = useRef<{ id: string }[]>([]);
     const dragCtx = useMemo<DragCtx>(() => ({ active: dragActive, overIdx: dragOverIdx, fromSpX: dragFromSpX, fromSpY: dragFromSpY, centers: dragCentersSV }), []);
     const [cur, setCur] = useState(0);
-    const [density, setDensityState] = useState<Density>("balanced");
+    const [density, setDensityState] = useState<Density>((opts.density as Density) || "balanced");
     const [crops, setCrops] = useState<Record<string, PhotoCrop>>(getAllCrops());
     const [areaH, setAreaH] = useState(320); // 스와이프 영역 높이(실측)
 
@@ -168,12 +173,6 @@ export default function PhotobookPreview() {
     const editUri = useHiResCover(editing?.assetId, editing?.thumb);
     const listRef = useRef<FlatList<Row>>(null);
 
-    // 화면 회전(WIN_W 변경) 시 캐러셀 폭이 바뀌므로 현재 펼침면(cur)으로 다시 스냅 → 중간 정지 방지.
-    // rAF로 FlatList가 새 폭으로 재레이아웃된 뒤 오프셋 재정렬.
-    useEffect(() => {
-        const id = requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: cur * WIN_W, animated: false }));
-        return () => cancelAnimationFrame(id);
-    }, [WIN_W]);
 
     // ── undo/redo (사진 제거·크롭 변경) ──
     const past = useRef<Snapshot[]>([]);
@@ -200,7 +199,14 @@ export default function PhotobookPreview() {
     const dateLabel = useMemo(() => dateRangeLabel(items), [items]);
     // 표지 사진/크롭은 프리뷰에서도 바꿀 수 있게 로컬 상태로 (변경 시 setAlbumOptions로 반영)
     const [coverPhotoId, setCoverPhotoId] = useState<string | null>(opts.coverPhotoId ?? null);
-    const [coverCrop, setCoverCrop] = useState<PhotoCrop>({ fx: opts.coverFocusX ?? 0.5, fy: opts.coverFocusY ?? 0.5, zoom: opts.coverZoom ?? 1 });
+    const [coverCrop, setCoverCrop] = useState<PhotoCrop>(() => {
+        // 명시 크롭 있으면 우선, 없으면 표지 사진 얼굴중심(중앙 0.5 아님) — PDF freeze와 동일 규칙
+        if (opts.coverFocusX != null && opts.coverFocusY != null) return { fx: opts.coverFocusX, fy: opts.coverFocusY, zoom: opts.coverZoom ?? 1 };
+        const cid = opts.coverPhotoId ?? draft0.items[0]?.assetId;
+        const it = draft0.items.find((x) => x.assetId === cid);
+        const fc = faceCenterOf(it as any);
+        return { fx: fc.x, fy: fc.y, zoom: 1 };
+    });
     const [coverEditOpen, setCoverEditOpen] = useState(false);
     const [coverDraft, setCoverDraft] = useState<PhotoCrop>(coverCrop);
     const [coverPickerOpen, setCoverPickerOpen] = useState(false);
@@ -228,13 +234,15 @@ export default function PhotobookPreview() {
     };
 
     const rows = useMemo<Row[]>(() => {
-        const pages = buildPages(items, RATIO, density);
+        // 표지 사진은 내지에서 제외(표지 다음 첫 장 중복 방지) — freeze와 동일 규칙
+        const interior = coverAssetId ? items.filter((x) => x.assetId !== coverAssetId) : items;
+        const pages = buildPages(interior, RATIO, density);
         const spreads: Row[] = [];
         for (let i = 0; i < pages.length; i += 2) {
             spreads.push({ kind: "spread", left: pages[i] ?? null, right: pages[i + 1] ?? null, n: i / 2 + 1 });
         }
         return [{ kind: "cover" }, ...spreads, { kind: "back" }];
-    }, [items, RATIO, density]);
+    }, [items, RATIO, density, coverAssetId]);
 
     // (C) 현재 펼침면 + 양옆만 중간해상도로 선명하게(나머지 셀은 썸네일). 보이는 윈도우만 로드.
     const windowAssetIds = useMemo(() => {
@@ -301,6 +309,48 @@ export default function PhotobookPreview() {
         setEditing(null);
     };
 
+    // 갤러리에서 사진 추가 — assetId 보존(주문 시 원본 업로드), 끝에 추가. undo/가격/앨범 자동 동기화(commit).
+    const [adding, setAdding] = useState(false);
+    const addPhotos = async () => {
+        if (adding) return;
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+            Alert.alert(t.permissionDeniedTitle, t.permissionDeniedBody, [
+                { text: t.cancel, style: "cancel" },
+                { text: t.openSettings, onPress: () => Linking.openSettings() },
+            ]);
+            return;
+        }
+        try {
+            setAdding(true);
+            const res = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsMultipleSelection: true,
+                quality: 1,
+                exif: false,
+            });
+            if (res.canceled || !res.assets?.length) return;
+            const existing = new Set(items.map((x) => x.assetId));
+            // 추가 사진도 얼굴검출 실행 → 하이라이트/배치를 스캔 사진과 동일하게 AI 판단(맞춤형)
+            const add: ScanItem[] = [];
+            for (const a of res.assets) {
+                const id = a.assetId as string;
+                if (!id || existing.has(id)) continue;
+                let faces: any[] = [], w = a.width || 0, h = a.height || 0;
+                try {
+                    const r: any = await scanAsset(id, 256, thumbPath(id));
+                    if (r && !r.unavailable) { faces = r.faces || []; w = r.width || w; h = r.height || h; }
+                } catch { /* 검출 실패 → 얼굴 없이(manual로 유지) */ }
+                add.push({ assetId: id, thumbUri: a.uri, width: w, height: h, faces, creationTime: (a as any).creationTime ?? Date.now(), processedAt: Date.now(), manual: true });
+            }
+            if (add.length === 0) return;
+            commit([...items, ...add], crops); // 끝에 추가(드래그 순서 보존)
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } finally {
+            setAdding(false);
+        }
+    };
+
     // 사진 제거로 페이지 수가 줄면 현재 위치 보정
     useEffect(() => { if (cur > rows.length - 1) setCur(Math.max(0, rows.length - 1)); }, [rows.length]);
 
@@ -319,7 +369,7 @@ export default function PhotobookPreview() {
         setHintShown(true);
         Animated.sequence([
             Animated.timing(hintOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
-            Animated.delay(3400), // 2400→3400 (1초 길게)
+            Animated.delay(4900), // 꾹눌러 이동 안내까지 읽도록 1.5초 더
             Animated.timing(hintOpacity, { toValue: 0, duration: 420, useNativeDriver: true }),
         ]).start(() => setHintShown(false));
     }, []);
@@ -327,10 +377,10 @@ export default function PhotobookPreview() {
     if (!enabled) return null;
 
     const curRow = rows[cur];
+    // 표지/뒷표지만 라벨(내지 spread 번호는 숨김 — 고객은 시작·끝만 이해)
     const curLabel =
         curRow?.kind === "cover" ? t.pbFrontCover :
-        curRow?.kind === "back" ? t.pbBackCover :
-        curRow?.kind === "spread" ? `${t.pbSpread} ${curRow.n}` : "";
+        curRow?.kind === "back" ? t.pbBackCover : "";
 
     function onScrollEnd(e: NativeSyntheticEvent<NativeScrollEvent>) {
         const i = Math.round(e.nativeEvent.contentOffset.x / WIN_W);
@@ -347,7 +397,7 @@ export default function PhotobookPreview() {
     const renderPage = (page: LayoutPage | null, side: "l" | "r", pageOffX: number) => (
         <View style={{ width: pageW, height: pageH, backgroundColor: c.surface, borderRightWidth: side === "l" ? 1 : 0, borderRightColor: "rgba(0,0,0,0.06)" }}>
             {/* 상단 밴드에 실제 인쇄되는 년월 (화면 UI가 아니라 페이지의 일부) */}
-            {page && monthRange(page.photos) ? (
+            {page && page.kind !== "hero" && monthRange(page.photos) ? (
                 <Text style={{ position: "absolute", top: pageH * PAGE_TOP_BAND * 0.3, left: pageW * 0.055, fontSize: Math.max(8, Math.min(13, Math.round(pageH * 0.055))), fontWeight: "700", letterSpacing: 0.5, color: c.coral }}>
                     {monthRange(page.photos)}
                 </Text>
@@ -480,7 +530,7 @@ export default function PhotobookPreview() {
                 </View>
             )}
 
-            {/* 되돌리기 툴바 — 포토북 바로 위. 활성=연한 코랄, 비활성=흐림 */}
+            {/* 되돌리기 툴바 — 활성=연한 코랄, 비활성=흐림 */}
             {!landscape && (
                 <View style={styles.undoBar}>
                     <Pressable onPress={undo} disabled={!canUndo} hitSlop={10} style={styles.undoBtn}>
@@ -495,6 +545,8 @@ export default function PhotobookPreview() {
             <View style={{ flex: 1, justifyContent: "center", overflow: "hidden" }} onLayout={(e: LayoutChangeEvent) => setAreaH(e.nativeEvent.layout.height)}>
                 <FlatList
                     ref={listRef}
+                    key={landscape ? "land" : "port"} /* 회전 시 재마운트 → 새 방향에서 현재 펼침면 바로 렌더(스크롤 점프·지연 없음) */
+                    initialScrollIndex={cur}
                     data={rows}
                     keyExtractor={(_, i) => String(i)}
                     renderItem={renderRow}
@@ -523,7 +575,17 @@ export default function PhotobookPreview() {
                 )}
             </View>
 
-            {/* 위치 표시 + 진행 바 (가로에선 숨김) */}
+            {/* 표지 바로 밑 · 위치표시 위: 작은 사진추가 버튼 (구매 전환에 부담 안 주게) */}
+            {!landscape && (
+                <View style={{ alignItems: "center", marginTop: 6 }}>
+                    <Pressable onPress={addPhotos} disabled={adding} style={[styles.addPill, { borderColor: c.coral, backgroundColor: c.surface }]}>
+                        <Feather name="plus" size={15} color={c.coral} />
+                        <Text style={{ color: c.coral, fontWeight: "800", fontSize: 13, marginLeft: 5 }}>{locale === "TH" ? "เพิ่มรูป" : "Add photos"}</Text>
+                    </Pressable>
+                </View>
+            )}
+
+            {/* 위치 표시(표지/뒷표지만 라벨) + 슬라이드 카운트 + 진행 바 (가로에선 숨김) */}
             {!landscape && (
                 <View style={styles.pager}>
                     <Text style={[styles.pagerLabel, { color: c.ink }]}>{curLabel}</Text>
@@ -534,6 +596,7 @@ export default function PhotobookPreview() {
                 </View>
             )}
 
+            {/* 프리뷰에선 가격/스펙 숨김(사진에만 집중) — 가격은 주문 화면에서 표시 */}
             {!landscape && (
                 <View style={[styles.bottomBar, { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: Math.max(insets.bottom, 14) + 12 }]}>
                     <Pressable onPress={() => router.push({ pathname: "/create/checkout", params: { productType: "photobook" } })} style={{ width: "100%" }}>
@@ -558,9 +621,15 @@ export default function PhotobookPreview() {
 
             {/* 가로 보기 안내 토스트 (1회) */}
             {hintShown && (
-                <Animated.View pointerEvents="none" style={[styles.hintToast, { top: insets.top + 150, opacity: hintOpacity }]}>
-                    <Feather name="rotate-cw" size={13} color="#fff" />
-                    <Text style={styles.hintToastTxt}>{t.pbLandscapeHint}</Text>
+                <Animated.View pointerEvents="none" style={[styles.hintToast, { top: insets.top + 120, opacity: hintOpacity }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Feather name="rotate-cw" size={13} color="#fff" />
+                        <Text style={styles.hintToastTxt}>{t.pbLandscapeHint}</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }}>
+                        <Feather name="move" size={13} color="#fff" />
+                        <Text style={styles.hintToastTxt}>{locale === "TH" ? "กดค้างที่รูปเพื่อย้ายตำแหน่ง" : "Long-press a photo to move it"}</Text>
+                    </View>
                 </Animated.View>
             )}
 
@@ -660,8 +729,10 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: 18, fontWeight: "800", flex: 1, textAlign: "center" },
     undoBar: { flexDirection: "row", justifyContent: "flex-end", gap: 4, paddingHorizontal: OUTER, marginTop: 2 },
     undoBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+    addPill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, height: 34, borderRadius: 99, borderWidth: 1.5 },
+    priceLine: { fontSize: 13, fontWeight: "700", textAlign: "center", marginBottom: 10 },
     floatBtn: { position: "absolute", height: 36, minWidth: 36, borderRadius: 18, borderWidth: 0.5, alignItems: "center", justifyContent: "center", zIndex: 30 },
-    hintToast: { position: "absolute", alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "rgba(20,16,14,0.82)", paddingHorizontal: 14, paddingVertical: 9, borderRadius: 99, zIndex: 20 },
+    hintToast: { position: "absolute", alignSelf: "center", backgroundColor: "rgba(20,16,14,0.86)", paddingHorizontal: 16, paddingVertical: 11, borderRadius: 18, zIndex: 20 },
     hintToastTxt: { fontSize: 12.5, fontWeight: "700", color: "#fff" },
     note: { fontSize: 12, textAlign: "center", marginBottom: 4 },
 

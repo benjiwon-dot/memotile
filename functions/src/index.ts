@@ -4,7 +4,7 @@ import * as admin from "firebase-admin";
 // ✅ Gen2 (v2) imports
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
@@ -15,6 +15,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 // ✅ External Libraries
 import sharp from "sharp";
+import { generateAndStorePhotobookPdf } from "./photobookPdf";
 const crypto = require("crypto");
 const archiver = require("archiver");
 const axios = require("axios");
@@ -246,6 +247,54 @@ export const onNewOrderCreated = onDocumentCreated(
             await sendExpoPushNotification("MjM1VUND8wPg9CqE17jLhv4kZdQ2", "💸 새 주문 도착!", `${customerName}님의 주문이 접수되었습니다.`);
         } catch (error) {
             console.error("[Slack/Push Notification] 알림 발송 실패:", error);
+        }
+    }
+);
+
+
+// 📕 포토북 PDF 자동생성 — createOrder가 원본 업로드 후 photobook.frozen + pdfStatus:"pending"을 기록하면
+// 이 트리거가 조판 PDF를 렌더해 Storage에 저장하고 pdfPath/pdfStatus를 갱신한다. (타일 주문엔 무반응)
+export const generatePhotobookPdf = onDocumentUpdated(
+    { document: "orders/{orderId}", region: "us-central1", memory: "2GiB", cpu: 2, timeoutSeconds: 540 },
+    async (event) => {
+        const after = event.data?.after.data();
+        if (!after || after.productType !== "photobook") return;
+        const pb = after.photobook;
+        if (!pb?.frozen || !pb?.originalsBasePath) return;
+        // pending/failed(재시도)만 대상. processing/ready는 스킵 → 자기 업데이트 재트리거 루프 차단.
+        if (pb.pdfStatus !== "pending" && pb.pdfStatus !== "failed") return;
+
+        const ref = event.data!.after.ref;
+        const db = getFirestore();
+
+        // 원자적 클레임: 동시 트리거(주문 update + 결제 update)가 겹쳐도 한 번만 렌더.
+        const claimed = await db.runTransaction(async (tx) => {
+            const cur = await tx.get(ref);
+            const st = cur.get("photobook.pdfStatus");
+            if (st !== "pending" && st !== "failed") return false;
+            tx.update(ref, { "photobook.pdfStatus": "processing" });
+            return true;
+        });
+        if (!claimed) return;
+
+        try {
+            const { pdfPath, coverPdfPath, pagesBasePath, pageCount, previewBasePath, coverRenderPath } = await generateAndStorePhotobookPdf(after);
+            await ref.update({
+                "photobook.pdfPath": pdfPath,              // 통합 프리뷰 PDF
+                "photobook.coverPdfPath": coverPdfPath,    // 🔴 인쇄용 표지(앞+책등+뒤)
+                "photobook.pagesBasePath": pagesBasePath,  // 🔴 인쇄용 속지 페이지별 PDF 폴더
+                "photobook.pdfPageCount": pageCount,
+                "photobook.previewBasePath": previewBasePath,
+                "photobook.coverRenderPath": coverRenderPath ?? null, // 어드민용 크롭된 표지 썸네일
+
+                "photobook.pdfStatus": "ready",
+                "photobook.pdfGeneratedAt": new Date().toISOString(),
+                "photobook.pdfError": FieldValue.delete(),
+            });
+            console.log(`[photobookPdf] ready: ${event.params.orderId} → ${pdfPath}`);
+        } catch (e: any) {
+            console.error(`[photobookPdf] failed: ${event.params.orderId}`, e);
+            await ref.update({ "photobook.pdfStatus": "failed", "photobook.pdfError": String(e?.message || e) });
         }
     }
 );
@@ -830,32 +879,62 @@ export const adminExportZipPrints = onCall(
                 const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
                 const items = itemsSnap.empty ? orderData?.items || [] : itemsSnap.docs.map((d) => d.data());
                 const shipping = orderData?.shipping || {};
-                const infoText = `[ORDER INFO]\nOrder Code : ${orderCode}\nDate       : ${dateKey}\nCustomer   : ${customerName}\nPhone      : ${orderData?.customer?.phone || shipping?.phone || "-"}\nEmail      : ${orderData?.customer?.email || "-"}\n\n[SHIPPING ADDRESS]\nName       : ${shipping?.fullName || "-"}\nAddress    : ${shipping?.address1 || ""} ${shipping?.address2 || ""}\nCity/State : ${shipping?.city || ""}, ${shipping?.state || ""}\nPostal Code: ${shipping?.postalCode || ""}\nPhone      : ${shipping?.phone || "-"} (Required)\n\n[ITEMS]\nTotal Items: ${items.length} EA\nNote       : ${orderData?.adminNote || "-"}\n`.trim();
+                // 포토북이면 order_info 안에 photobook 스펙도 포함(별도 spec 파일 불필요)
+                const _pb = orderData?.photobook || {};
+                const pbSpecBlock = orderData?.productType === "photobook"
+                    ? `\n\n[PHOTOBOOK]\nPhotos  : ${orderData?.itemsCount ?? "-"}\nPages   : ${_pb.pageCount ?? "-"}\nSize    : ${_pb.size ?? "-"}\nCover   : ${_pb.cover ?? "-"}\nDensity : ${_pb.density ?? "-"}\nTitle   : ${_pb.title ?? "-"}\n`
+                    : "";
+                const infoText = `[ORDER INFO]\nOrder Code : ${orderCode}\nDate       : ${dateKey}\nCustomer   : ${customerName}\nPhone      : ${orderData?.customer?.phone || shipping?.phone || "-"}\nEmail      : ${orderData?.customer?.email || "-"}\n\n[SHIPPING ADDRESS]\nName       : ${shipping?.fullName || "-"}\nAddress    : ${shipping?.address1 || ""} ${shipping?.address2 || ""}\nCity/State : ${shipping?.city || ""}, ${shipping?.state || ""}\nPostal Code: ${shipping?.postalCode || ""}\nPhone      : ${shipping?.phone || "-"} (Required)\n\n[ITEMS]\nTotal Items: ${items.length} EA\nNote       : ${orderData?.adminNote || "-"}${pbSpecBlock}\n`.trim();
 
                 archive.append(infoText, { name: `${baseFolder}/order_info.txt` });
 
-                // 📕 포토북: 타일 items 대신 originals/ 전체 + 표지 + 레이아웃(조판용) zip
-                if (orderData?.productType === "photobook" || type === "photobook") {
+                // 📕 포토북 주문
+                if (orderData?.productType === "photobook" || type === "photobook" || type === "photobook_pdf") {
                     const base = orderData?.storageBasePath;
-                    if (base) {
+                    const pbDoc = orderData?.photobook || {};
+                    const pbSpec = `[PHOTOBOOK]\nPhotos : ${orderData?.itemsCount ?? "-"}\nPages  : ${pbDoc.pdfPageCount ?? pbDoc.pageCount ?? "-"}\nSize   : ${pbDoc.size ?? "-"}\nCover  : ${pbDoc.cover ?? "-"}\nDensity: ${pbDoc.density ?? "-"}\nTitle  : ${pbDoc.title ?? "-"}\n`;
+
+                    // (A) 원본 뭉치(originals+cover.jpg+layout.json) — 오직 명시적 type "photobook"(어드민 '부가 자료' 버튼)일 때만.
+                    if (type === "photobook" && base) {
                         const [origFiles] = await bucket.getFiles({ prefix: `${base}/originals/` });
                         for (const f of origFiles) {
                             const nm = String(f.name).split("/").pop() || "photo.jpg";
                             archive.append(f.createReadStream(), { name: `${baseFolder}/originals/${nm}` });
                             addedCount++;
                         }
-                        const coverPath = orderData?.photobook?.coverThumbPath || `${base}/cover.jpg`;
+                        const coverPath = pbDoc?.coverThumbPath || `${base}/cover.jpg`;
                         const coverFile = bucket.file(coverPath);
                         const [cExists] = await coverFile.exists();
                         if (cExists) { archive.append(coverFile.createReadStream(), { name: `${baseFolder}/cover.jpg` }); addedCount++; }
-                        if (orderData?.photobook?.layout) {
-                            archive.append(JSON.stringify(orderData.photobook.layout, null, 2), { name: `${baseFolder}/layout.json` });
-                        }
-                        const pb = orderData?.photobook || {};
-                        const pbSpec = `[PHOTOBOOK]\nPages : ${pb.pageCount ?? "-"}\nSize  : ${pb.size ?? "-"}\nCover : ${pb.cover ?? "-"}\nDensity: ${pb.density ?? "-"}\nTitle : ${pb.title ?? "-"}\nPhotos: ${orderData?.itemsCount ?? "-"}\n`;
+                        if (pbDoc?.layout) archive.append(JSON.stringify(pbDoc.layout, null, 2), { name: `${baseFolder}/layout.json` });
                         archive.append(pbSpec, { name: `${baseFolder}/photobook_spec.txt` });
+                        continue;
                     }
-                    continue; // 타일 item 루프 건너뜀
+
+                    // (B) 인쇄용 PDF 딜리버리(기본) — CSV/photobook_pdf/print 등 그 외 모든 경우.
+                    //     ZIP 내용물: cover.pdf + pages/*.pdf + order_info.txt(위에서 추가) + photobook_spec.txt. 원본/cover.jpg/json 없음.
+                    let anyPdf = false;
+                    if (pbDoc?.coverPdfPath) {
+                        const cf = bucket.file(pbDoc.coverPdfPath);
+                        const [ce] = await cf.exists();
+                        if (ce) { archive.append(cf.createReadStream(), { name: `${baseFolder}/cover.pdf` }); anyPdf = true; addedCount++; }
+                    }
+                    if (pbDoc?.pagesBasePath) {
+                        const [pageFiles] = await bucket.getFiles({ prefix: `${pbDoc.pagesBasePath}/` });
+                        for (const f of pageFiles) {
+                            const nm = String(f.name).split("/").pop() || "page.pdf";
+                            archive.append(f.createReadStream(), { name: `${baseFolder}/pages/${nm}` });
+                            anyPdf = true; addedCount++;
+                        }
+                    }
+                    // 폴백(PDF 미생성 구주문): 통합 PDF라도
+                    if (!anyPdf && pbDoc?.pdfPath) {
+                        const pf = bucket.file(pbDoc.pdfPath);
+                        const [pe] = await pf.exists();
+                        if (pe) { archive.append(pf.createReadStream(), { name: `${baseFolder}/photobook.pdf` }); addedCount++; }
+                    }
+                    archive.append(pbSpec, { name: `${baseFolder}/photobook_spec.txt` });
+                    continue;
                 }
 
                 for (const item of items) {

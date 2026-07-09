@@ -15,11 +15,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, onSnapshot, getDocs, collection } from "firebase/firestore";
-import { db, auth } from "../../src/lib/firebase";
+import { ref, getDownloadURL } from "firebase/storage";
+import { db, auth, storage } from "../../src/lib/firebase";
 import { OrderDoc } from "../../src/types/order";
 import { useLanguage } from "../../src/context/LanguageContext";
 import StatusBadgeRN from "../../src/components/orders/StatusBadgeRN";
 import PreviewModalRN from "../../src/components/orders/PreviewModalRN";
+import { OrderPhotobookViewer } from "../../src/components/orders/OrderPhotobookViewer";
 
 const { width } = Dimensions.get("window");
 const GRID_SPACING = 12;
@@ -77,6 +79,8 @@ export default function OrderDetailScreen() {
 
     const [gaveUp, setGaveUp] = useState(false);
     const [previewItem, setPreviewItem] = useState<any | null>(null);
+    const [pbViewerOpen, setPbViewerOpen] = useState(false);
+    const [pbCoverUrl, setPbCoverUrl] = useState<string | null>(null);
 
     const aliveRef = useRef(true);
 
@@ -151,6 +155,24 @@ export default function OrderDetailScreen() {
             if (unsub) unsub();
         };
     }, [id, user, isAuthLoading]);
+
+    // 📕 포토북 표지 URL 해석 — 디테일은 화질 조금 좋게: 표지 사진의 미드해상도 preview 우선, 없으면 썸네일 폴백
+    useEffect(() => {
+        const pb = (order as any)?.photobook;
+        if (!pb) { setPbCoverUrl(null); return; }
+        const coverIdx = pb?.frozen?.coverPage?.idx;
+        const previewBase = pb?.previewBasePath;
+        const primary = (previewBase != null && coverIdx != null && coverIdx >= 0) ? `${previewBase}/${coverIdx}.jpg` : pb?.coverThumbPath;
+        if (!primary) { setPbCoverUrl(null); return; }
+        let alive = true;
+        getDownloadURL(ref(storage, primary))
+            .then((u) => { if (alive) setPbCoverUrl(u); })
+            .catch(() => {
+                if (!pb?.coverThumbPath || primary === pb.coverThumbPath) { if (alive) setPbCoverUrl(null); return; }
+                getDownloadURL(ref(storage, pb.coverThumbPath)).then((u) => { if (alive) setPbCoverUrl(u); }).catch(() => { if (alive) setPbCoverUrl(null); });
+            });
+        return () => { alive = false; };
+    }, [order]);
 
     // ✨ 날짜 포맷 함수 (다국어 지원)
     const getFormattedDate = (dateVal: any) => {
@@ -325,6 +347,30 @@ export default function OrderDetailScreen() {
                     }
 
                     if (item.type === "items") {
+                        // 📕 포토북: 사진 나열 대신 표지 1장 → 탭하면 펼침면 뷰어
+                        if ((order as any).productType === "photobook") {
+                            const frozen = (order as any)?.photobook?.frozen;
+                            return (
+                                <View style={styles.section}>
+                                    <Text style={styles.sectionTitle}>{locale === 'TH' ? "สมุดภาพ" : (locale === 'EN' ? "Photobook" : "포토북")}</Text>
+                                    <TouchableOpacity activeOpacity={0.85} disabled={!frozen} onPress={() => setPbViewerOpen(true)} style={styles.pbCoverCard}>
+                                        {pbCoverUrl ? (
+                                            <Image source={{ uri: pbCoverUrl }} style={styles.pbCoverImg} resizeMode="cover" />
+                                        ) : (
+                                            <View style={[styles.pbCoverImg, { backgroundColor: "#f0f0f0", alignItems: "center", justifyContent: "center" }]}>
+                                                <Ionicons name="book-outline" size={30} color="#c9b8a8" />
+                                            </View>
+                                        )}
+                                        <View style={styles.pbCoverOverlay}>
+                                            <Ionicons name="albums" size={18} color="#fff" />
+                                            <Text style={styles.pbCoverOverlayText}>
+                                                {frozen ? (locale === 'TH' ? "แตะเพื่อดูตัวอย่าง" : (locale === 'EN' ? "Tap to preview" : "탭하여 미리보기")) : (locale === 'TH' ? "กำลังเตรียม..." : "준비 중...")}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        }
                         return (
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>{t.itemsTitle || (locale === 'TH' ? "รายการสินค้า" : "Items")}</Text>
@@ -413,6 +459,14 @@ export default function OrderDetailScreen() {
                 downloadUrl={null}
                 onClose={() => setPreviewItem(null)}
             />
+
+            <OrderPhotobookViewer
+                visible={pbViewerOpen}
+                onClose={() => setPbViewerOpen(false)}
+                frozen={(order as any)?.photobook?.frozen}
+                // 뷰어는 미드해상도 preview 우선(빠름), 없으면 원본
+                originalsBasePath={(order as any)?.photobook?.previewBasePath || (order as any)?.photobook?.originalsBasePath}
+            />
         </SafeAreaView>
     );
 }
@@ -445,6 +499,10 @@ const styles = StyleSheet.create({
     orderDate: { fontSize: 14, color: "#666", fontWeight: "600" },
     orderTotal: { fontSize: 22, fontWeight: "800", color: "#111" },
     itemGrid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_SPACING },
+    pbCoverCard: { width: "100%", aspectRatio: 27.9 / 21.5, borderRadius: 14, overflow: "hidden", backgroundColor: "#faf7f2", borderWidth: 1, borderColor: "#eee" },
+    pbCoverImg: { width: "100%", height: "100%" },
+    pbCoverOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, backgroundColor: "rgba(20,16,14,0.42)" },
+    pbCoverOverlayText: { color: "#fff", fontWeight: "800", fontSize: 14 },
     itemCard: { width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: 12, overflow: "hidden", backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee" },
     itemImg: { width: "100%", height: "100%" },
     detailsCard: { backgroundColor: "#fff", padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "#eee" },

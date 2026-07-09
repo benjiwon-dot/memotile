@@ -7,9 +7,9 @@ import { useEffect, useState } from "react";
 import * as MediaLibrary from "expo-media-library";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
-const MID_WIDTH = 1280; // 가로모드 히어로 셀(~1170px)까지 커버. 파일 수백 KB, 디코드 가벼움.
+const MID_WIDTH = 2048; // 가로 히어로/큰 리드 슬롯까지 선명. expo-image가 셀 크기로 다운샘플 디코드 → 메모리 안전.
 
-const midCache = new Map<string, string>();          // assetId → 캐시된 1280px 파일 uri
+const midCache = new Map<string, string>();          // assetId → 캐시된 중간해상도 파일 uri
 const inflight = new Map<string, Promise<string | null>>(); // 중복 생성 방지
 
 // 원본 localUri에서 1280px JPEG 생성(캐시). iCloud-only(로컬 없음)면 null → 호출부가 썸네일 폴백.
@@ -18,11 +18,11 @@ async function resolveMidRes(assetId: string): Promise<string | null> {
     if (inflight.has(assetId)) return inflight.get(assetId)!;
     const p = (async () => {
         try {
-            // shouldDownloadFromNetwork:false → iCloud 다운로드 안 함(느린 대기 방지)
-            const info = await MediaLibrary.getAssetInfoAsync(assetId, { shouldDownloadFromNetwork: false });
+            // 보이는 윈도우(적은 수)만이므로 iCloud 원본도 다운로드 허용 → 선명. (전체가 아니라 감당됨)
+            const info = await MediaLibrary.getAssetInfoAsync(assetId, { shouldDownloadFromNetwork: true });
             const src = (info as any)?.localUri || (info as any)?.uri;
-            if (!src) return null; // 로컬 원본 없음 → 썸네일 유지
-            const out = await manipulateAsync(src, [{ resize: { width: MID_WIDTH } }], { compress: 0.82, format: SaveFormat.JPEG });
+            if (!src) return null; // 그래도 없으면 썸네일 유지
+            const out = await manipulateAsync(src, [{ resize: { width: MID_WIDTH } }], { compress: 0.9, format: SaveFormat.JPEG });
             midCache.set(assetId, out.uri);
             return out.uri;
         } catch {

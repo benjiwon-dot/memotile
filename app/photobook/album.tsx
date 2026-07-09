@@ -18,7 +18,7 @@ import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhotobookEnabled } from "../../src/config/featureFlags";
 import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
 import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
-import { getAlbumDraft, setAlbumOptions, CoverStyle } from "../../src/services/albumDraft";
+import { getAlbumDraft, getAlbumOptions, setAlbumOptions, setAlbumItems, CoverStyle } from "../../src/services/albumDraft";
 import { useHiResCover } from "../../src/services/coverImage";
 import { CoverCrop } from "../../src/components/photobook/CoverCrop";
 import { PhotobookCropEditor } from "../../src/components/photobook/PhotobookCropEditor";
@@ -71,19 +71,21 @@ export default function PhotobookAlbum() {
     const enabled = usePhotobookEnabled();
 
     const draft = getAlbumDraft();
+    const opts0 = getAlbumOptions(); // 이어서 하기 복귀 시 이전 옵션 복원(신규 흐름이면 기본값)
+    const COVER_STYLE_IDX: Record<CoverStyle, number> = { photo: 0, style: 1, logo: 2, text: 3 };
     const [items, setItems] = useState(draft.items);
-    const [size, setSize] = useState<AlbumSize>("A4");
-    const [cover, setCover] = useState<CoverType>("soft");
-    const [coverIdx, setCoverIdx] = useState(0); // 0 photo · 1 style · 2 logo · 3 text
-    const [coverPhotoId, setCoverPhotoId] = useState<string | null>(null);
-    const [title, setTitle] = useState(draft.subjectName || "");
+    const [size, setSize] = useState<AlbumSize>(opts0.size ?? "A4");
+    const [cover, setCover] = useState<CoverType>(opts0.cover ?? "soft");
+    const [coverIdx, setCoverIdx] = useState(COVER_STYLE_IDX[opts0.coverStyle] ?? 0); // 0 photo · 1 style · 2 logo · 3 text
+    const [coverPhotoId, setCoverPhotoId] = useState<string | null>(opts0.coverPhotoId ?? null);
+    const [title, setTitle] = useState(opts0.title || draft.subjectName || "");
     const [gridOpen, setGridOpen] = useState(false);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [repositionOpen, setRepositionOpen] = useState(false);
     const initFace = faceCenterOf(draft.items[0]);
-    const [focusX, setFocusX] = useState(initFace.x);
-    const [focusY, setFocusY] = useState(initFace.y);
-    const [zoom, setZoom] = useState(1);
+    const [focusX, setFocusX] = useState(opts0.coverFocusX ?? initFace.x);
+    const [focusY, setFocusY] = useState(opts0.coverFocusY ?? initFace.y);
+    const [zoom, setZoom] = useState(opts0.coverZoom ?? 1);
     const carouselRef = useRef<any>(null);
     const scrollX = useSharedValue(0);
     const scrollHandler = useAnimatedScrollHandler((e) => { scrollX.value = e.contentOffset.x; });
@@ -108,7 +110,7 @@ export default function PhotobookAlbum() {
     const coverItem = coverPhotoId ? items.find((i) => i.assetId === coverPhotoId) : items[0];
     const coverAspect = coverItem && coverItem.height ? coverItem.width / coverItem.height : 1;
     const dateLabel = useMemo(() => dateRangeLabel(items), [items]);
-    const { pages, price } = albumPrice(size, cover, items.length);
+    const { price } = albumPrice(size, cover, items.length);
 
     if (!enabled) return null;
 
@@ -133,6 +135,7 @@ export default function PhotobookAlbum() {
     };
 
     function onNext() {
+        setAlbumItems(items); // 여기서 삭제한 사진을 draft에 반영(프리뷰/주문에 동기화)
         setAlbumOptions({ size, cover, coverStyle: COVER_STYLES[coverIdx], coverPhotoId, coverFocusX: focusX, coverFocusY: focusY, coverZoom: zoom, title });
         router.push("/photobook/preview");
     }
@@ -280,6 +283,7 @@ export default function PhotobookAlbum() {
                 <View style={styles.section}>
                     <Text style={[styles.label, { color: c.textSecondary }]}>{t.pbAlbumSize}</Text>
                     <View style={styles.row}>
+                        {RatioCard("A5", 46, 35, "21.0 × 14.8 cm")}
                         {RatioCard("A4", 66, 51, "27.9 × 21.5 cm")}
                         {RatioCard("A3", 92, 71, "38.6 × 29.7 cm")}
                     </View>
@@ -313,7 +317,7 @@ export default function PhotobookAlbum() {
                     <View style={[styles.priceBox, { backgroundColor: c.surfaceAlt, borderColor: c.coral }]}>
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <Text style={{ fontSize: 12.5, fontWeight: "700", color: c.coral }} numberOfLines={1}>
-                                {items.length} {t.pbPhotosUnit} · {pages} {t.pbPagesUnit} · {size} {cover === "soft" ? t.pbCoverSoft : t.pbCoverHard}
+                                {items.length} {t.pbPhotosUnit} · {size} {cover === "soft" ? t.pbCoverSoft : t.pbCoverHard}
                             </Text>
                             <Text style={{ fontSize: 11, color: c.coral, opacity: 0.8 }} numberOfLines={1}>{t.pbInclVat}</Text>
                         </View>

@@ -26,6 +26,7 @@ import {
 // ✨ 완전삭제(deleteDoc) 대신 정보 업데이트용 updateDoc 추가
 import { getFirestore, doc, deleteDoc, updateDoc, collection, addDoc, getDocs } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { getStorage, ref as storageRef, getDownloadURL } from "firebase/storage";
 
 import { OrderHeader } from "@/lib/admin/types";
 import StatusBadge from "./StatusBadge";
@@ -100,6 +101,27 @@ const getFullAddress = (shipping: any): string => {
         .filter(Boolean)
         .join(" ");
 };
+
+// 📕 리스트용 표지 썸네일 — Storage 경로를 lazy resolve, 표지 crop으로 가로 크롭(object-position).
+const _pbCoverUrlCache: Record<string, string> = {};
+function PbCoverThumb({ path, crop }: { path?: string | null; crop?: { fx?: number; fy?: number } }) {
+    const [url, setUrl] = useState<string | null>(path ? _pbCoverUrlCache[path] || null : null);
+    useEffect(() => {
+        let alive = true;
+        if (!path) return;
+        if (_pbCoverUrlCache[path]) { setUrl(_pbCoverUrlCache[path]); return; }
+        getDownloadURL(storageRef(getStorage(app), path))
+            .then((u) => { if (alive) { _pbCoverUrlCache[path] = u; setUrl(u); } })
+            .catch(() => { });
+        return () => { alive = false; };
+    }, [path]);
+    const pos = `${Math.round((crop?.fx ?? 0.5) * 100)}% ${Math.round((crop?.fy ?? 0.5) * 100)}%`;
+    return (
+        <div className="w-14 h-10 rounded overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
+            {url ? <img src={url} alt="cover" className="w-full h-full object-cover" style={{ objectPosition: pos }} /> : null}
+        </div>
+    );
+}
 
 export default function AdminOrderList() {
     const router = useRouter();
@@ -463,23 +485,29 @@ export default function AdminOrderList() {
         try {
             const rows = [];
             for (const o of targets) {
+                const oIsPb = (o as any).productType === "photobook";
                 let zipUrl = "";
                 try {
                     const fn = httpsCallable(functions, "adminExportZipPrints");
-                    const res = await fn({ orderIds: [o.id], type: "print" });
+                    // 포토북은 PDF+order_info만(photobook_pdf), 타일은 프린트 원본(print)
+                    const res = await fn({ orderIds: [o.id], type: oIsPb ? "photobook_pdf" : "print" });
                     zipUrl = (res.data as any)?.url || "";
                 } catch { zipUrl = "Link Error"; }
 
                 const orderDateObj = (o as any).createdAtSafe || getSafeDate(o.createdAt);
                 const address = getFullAddress(o.shipping);
 
+                const oPb = (o as any).productType === "photobook";
+                const oPbData = (o as any).photobook || {};
                 rows.push({
                     "Order Number": o.orderCode,
                     "Date": orderDateObj.toLocaleDateString("en-US"),
                     "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
                     "Phone Number": o.shipping?.phone || o.customer?.phone || "",
                     "Address": address,
-                    "Photo Qty": o.itemsCount || 0,
+                    "Product": oPb ? "Photobook" : "Tile",
+                    // 포토북은 사진수+사양, 타일은 수량
+                    "Photo Qty": oPb ? `${o.itemsCount || 0} photos ${oPbData.size ?? ""} ${oPbData.cover ?? ""}`.trim() : (o.itemsCount || 0),
                     "Admin Note": (o as any).adminNote || "",
                     "Print URL": zipUrl,
                 });
@@ -726,9 +754,12 @@ export default function AdminOrderList() {
                                     </td>
                                     <td className="p-4 text-center">
                                         {isPb ? (
-                                            <div className="inline-flex flex-col items-center bg-indigo-50 px-2 py-1 rounded text-[10px] font-black text-indigo-700 border border-indigo-100 leading-tight">
-                                                <span>{pb.pageCount ?? "?"}p {pb.size || ""}</span>
-                                                <span>{pb.cover === "hard" ? "Hardcover" : "Softcover"}</span>
+                                            <div className="inline-flex items-center gap-2">
+                                                <PbCoverThumb path={pb.coverThumbPath} crop={pb.frozen?.coverPage?.crop} />
+                                                <div className="flex flex-col items-start leading-tight text-[10px] font-black text-indigo-700">
+                                                    <span>📕 สมุดภาพ / 사진첩 구매</span>
+                                                    <span className="text-indigo-400">{pb.size || ""} · {pb.cover === "hard" ? "Hardcover" : "Softcover"}</span>
+                                                </div>
                                             </div>
                                         ) : (
                                             <div className="inline-flex items-center justify-center bg-zinc-100 px-2 py-1 rounded text-xs font-black text-zinc-700">

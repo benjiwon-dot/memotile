@@ -19,10 +19,12 @@ import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradi
 import { PhotoPreviewModal } from "../../src/components/photobook/PhotoPreviewModal";
 import { ChronoRangeSlider } from "../../src/components/photobook/ChronoRangeSlider";
 import { scanBatch, getLibraryCounts, requestLibraryPermission, flushScanCache } from "../../src/services/faceScan";
-import { warmUpFace } from "../../modules/vision-face";
+import { warmUpFace, scanAsset } from "../../modules/vision-face";
+import { thumbPath } from "../../src/services/scanCache";
 import { getSubject } from "../../src/services/aiSubjects";
 import { AiSubject } from "../../src/types/aiSubject";
 import { buildAnchorSet, matchItemsBatch, AnchorSet, MatchedItem } from "../../src/services/faceMatch";
+import * as ImagePicker from "expo-image-picker";
 import { setAlbumDraft } from "../../src/services/albumDraft";
 import { groupByMonth, dedupeBursts } from "../../src/utils/photoGroups";
 import { matchConfig } from "../../src/config/matchConfig";
@@ -33,6 +35,7 @@ const GAP = 6;
 const COLS = 3;
 const CELL = Math.floor((SCREEN_W - H_PAD * 2 - GAP * (COLS - 1)) / COLS);
 const BATCH = 100; // 배치 축소 → 카운트 갱신 촘촘 + 경계 멈칫 작게
+const MIN_PHOTOS = 25; // 48p 책을 채우는 최소 사진 수(게이트). 나중에 조정 쉽게 여기서.
 
 function fmtDate(iso: string | null): string {
     if (!iso) return "";
@@ -63,7 +66,7 @@ function monthsAgo(n: number): number {
 export default function PhotobookScan() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { t } = useLanguage();
+    const { t, locale } = useLanguage();
     const c = usePhotobookTheme();
     const enabled = usePhotobookEnabled();
     const params = useLocalSearchParams<{ subjectId?: string; name?: string }>();
@@ -88,6 +91,7 @@ export default function PhotobookScan() {
     const [newIds, setNewIds] = useState<Set<string>>(new Set());
     const [hasMore, setHasMore] = useState(true);
     const [nearMissItems, setNearMissItems] = useState<MatchedItem[]>([]); // find more (b) 관대 패스 버킷
+    const [manualItems, setManualItems] = useState<MatchedItem[]>([]); // 갤러리에서 직접 추가(얼굴매칭 건너뜀)
     const [rotIdx, setRotIdx] = useState(0);
     const [preview, setPreview] = useState<{ visible: boolean; index: number }>({ visible: false, index: 0 });
     const [displayCount, setDisplayCount] = useState(0); // 부드러운 카운트업 표시값(처리 장수)
@@ -103,6 +107,8 @@ export default function PhotobookScan() {
     const seenRef = useRef<Set<string>>(new Set());
     const seenNearRef = useRef<Set<string>>(new Set()); // near-miss 중복 방지
     const scannedTotalRef = useRef(0); // perf 실측 누적
+    const maxScanRef = useRef(0);  // 표시 카운터 단조(내려감 방지)
+    const maxMatchRef = useRef(0); // 매칭 카운터 단조(dedup 병합으로 줄어들어도 안 내려가게)
     const narrowedRef = useRef(0);
     const scanStartRef = useRef(0); // 스캔 시작 시각(ETA 계산)
 
@@ -141,8 +147,10 @@ export default function PhotobookScan() {
     }, [countAnim]);
     useEffect(() => {
         const tgt = counts?.narrowed ?? 0; // 전체 대상 장수 기준
+        const capped = tgt > 0 ? Math.min(scanned, tgt) : scanned;
+        const t = Math.max(maxScanRef.current, capped); maxScanRef.current = t; // 절대 안 내려가게
         Animated.timing(countAnim, {
-            toValue: Math.min(scanned, tgt),
+            toValue: t,
             duration: 450, easing: Easing.out(Easing.quad),
             useNativeDriver: false,
         }).start();
@@ -152,9 +160,12 @@ export default function PhotobookScan() {
         const id = matchAnim.addListener(({ value }) => setDisplayMatched(Math.round(value)));
         return () => matchAnim.removeListener(id);
     }, [matchAnim]);
+    // 표시 카운트는 dedupe(연속·동일컷 묶음) 후 수 → 앨범 장수와 일치("6 검출인데 5장" 혼란 제거)
+    const dedupedCount = useMemo(() => dedupeBursts(matched, matchConfig.dedupeBurstWindowMs, matchConfig.dedupeBurstScoreEps).length, [matched]);
     useEffect(() => {
-        Animated.timing(matchAnim, { toValue: matched.length, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
-    }, [matched.length, matchAnim]);
+        const t = Math.max(maxMatchRef.current, dedupedCount); maxMatchRef.current = t; // dedup 병합으로 줄어도 안 내려가게
+        Animated.timing(matchAnim, { toValue: t, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
+    }, [dedupedCount, matchAnim]);
 
     // 마운트: 스캔 전 기간 설정용 프로필 정보만 로드(권한/스캔 X).
     useEffect(() => { prepare(); /* eslint-disable-next-line */ }, []);
@@ -214,7 +225,7 @@ export default function PhotobookScan() {
         const subject = subjectRef.current;
         const { total, narrowed } = await getLibraryCounts(sinceMs, untilMs);
         setCounts({ total, narrowed, birthDate: subject?.birthDate ?? null, coverUrl: subject?.cover?.url ?? null });
-        scannedTotalRef.current = 0; narrowedRef.current = narrowed; // perf 기준
+        scannedTotalRef.current = 0; narrowedRef.current = narrowed; maxScanRef.current = 0; maxMatchRef.current = 0; // perf 기준 + 카운터 단조 리셋
         console.log(`[perf] ▶ 스캔 시작: 대상 ${narrowed}장 (전체 라이브러리 ${total}장, 기간=${periodMode})`);
         const tAnchor = Date.now();
         if (subject) anchorRef.current = await buildAnchorSet(subject);
@@ -304,11 +315,13 @@ export default function PhotobookScan() {
         () => dedupeBursts(matched, matchConfig.dedupeBurstWindowMs, matchConfig.dedupeBurstScoreEps),
         [matched]
     );
-    // 제외된 것 뺀 "앨범 포함" 목록만 그리드에 표시
-    const includedItems = useMemo(
-        () => visibleMatched.filter((m) => !deselected.has(m.assetId)),
-        [visibleMatched, deselected]
-    );
+    // 제외된 것 뺀 "앨범 포함" 목록 + 갤러리 수동 추가(중복 assetId 제거)
+    const includedItems = useMemo(() => {
+        const base = visibleMatched.filter((m) => !deselected.has(m.assetId));
+        const ids = new Set(base.map((b) => b.assetId));
+        const extra = manualItems.filter((m) => !ids.has(m.assetId) && !deselected.has(m.assetId));
+        return [...base, ...extra];
+    }, [visibleMatched, deselected, manualItems]);
     const { sections, ordered } = useMemo(
         () => groupByMonth(includedItems, counts?.birthDate ?? null, COLS),
         [includedItems, counts]
@@ -347,6 +360,46 @@ export default function PhotobookScan() {
         const idx = ordered.findIndex((x) => x.assetId === id);
         if (idx >= 0) setPreview({ visible: true, index: idx });
     }
+
+    // (b) 갤러리에서 직접 추가 — 얼굴매칭 건너뛰고 앨범 포함. assetId 필수(주문 시 원본 resolve).
+    async function addFromGallery() {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+            Alert.alert(t.permissionDeniedTitle, t.permissionDeniedBody, [
+                { text: t.cancel, style: "cancel" },
+                { text: t.openSettings, onPress: () => Linking.openSettings() },
+            ]);
+            return;
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsMultipleSelection: true,
+            quality: 1,
+            exif: false,
+        });
+        if (res.canceled || !res.assets?.length) return;
+        // 추가 사진도 얼굴검출 실행 → 하이라이트/배치를 스캔 사진과 동일하게 판단(맞춤형)
+        const add: MatchedItem[] = [];
+        for (const a of res.assets) {
+            const id = a.assetId as string;
+            if (!id) continue; // 원본 업로드 위해 assetId 필수
+            let faces: any[] = [], w = a.width || 0, h = a.height || 0;
+            try {
+                const r: any = await scanAsset(id, 256, thumbPath(id));
+                if (r && !r.unavailable) { faces = r.faces || []; w = r.width || w; h = r.height || h; }
+            } catch { /* 검출 실패 → 얼굴 없이 */ }
+            add.push({ assetId: id, thumbUri: a.uri, width: w, height: h, faces, creationTime: (a as any).creationTime ?? Date.now(), processedAt: Date.now(), manual: true, score: 1, ageMonths: null });
+        }
+        if (add.length === 0) return;
+        setManualItems((prev) => {
+            const ids = new Set(prev.map((x) => x.assetId));
+            return [...prev, ...add.filter((x) => !ids.has(x.assetId))];
+        });
+        setDeselected((prev) => { const n = new Set(prev); add.forEach((x) => n.delete(x.assetId)); return n; }); // 다시 넣으면 제외 해제
+    }
+
+    // (c) 제외한 사진 전부 되돌리기
+    function restoreDeselected() { setDeselected(new Set()); }
 
     function makeAlbum() {
         setAlbumDraft(includedItems, name);
@@ -559,26 +612,61 @@ export default function PhotobookScan() {
                         }
                     />
 
-                    {/* sticky 하단바 */}
-                    <View style={[styles.bottomBar, { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 10 }]}>
-                        {markedCount > 0 ? (
-                            // 찍은 것 일괄 제거
-                            <Pressable onPress={removeMarked} style={[styles.findMore, { borderColor: c.coral, backgroundColor: c.surface }]}>
-                                <Feather name="trash-2" size={15} color={c.coral} />
-                                <Text style={{ color: c.coral, fontWeight: "800", fontSize: 13, marginLeft: 5 }}>{t.pbRemoveN.replace("{n}", String(markedCount))}</Text>
+                    {/* sticky 하단바 — 25장 미만이면 "채우기 유도" 게이트, 이상이면 앨범 만들기 */}
+                    {includedCount < MIN_PHOTOS ? (
+                        <View style={[styles.bottomBar, { flexDirection: "column", alignItems: "stretch", gap: 8, paddingTop: 12, backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 10 }]}>
+                            {/* 안내 + 진행(N/25) */}
+                            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                <Text style={{ flex: 1, color: c.ink, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
+                                    {locale === "TH"
+                                        ? `โฟโต้บุ๊ก 48 หน้า ต้องมีรูปอย่างน้อย ${MIN_PHOTOS} รูป`
+                                        : `A 48-page book needs at least ${MIN_PHOTOS} photos`}
+                                </Text>
+                                <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: c.surfaceAlt }}>
+                                    <Text style={{ color: c.coral, fontWeight: "900", fontSize: 13 }}>{includedCount} / {MIN_PHOTOS}</Text>
+                                </View>
+                            </View>
+                            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: -2 }}>
+                                {locale === "TH" ? `เพิ่มอีก ${MIN_PHOTOS - includedCount} รูปเพื่อไปต่อ` : `Add ${MIN_PHOTOS - includedCount} more to continue`}
+                            </Text>
+                            {/* 채우기 버튼 — 세로 스택(잘림 없음, TH/EN 안전) */}
+                            {nearMissItems.length > 0 && (
+                                <Pressable onPress={onFindMore} style={[styles.fillBtn, { borderColor: c.peach, backgroundColor: c.surface }]}>
+                                    <Feather name="plus-circle" size={16} color={c.coral} />
+                                    <Text style={styles.fillTxt} numberOfLines={1}>{t.pbFindSimilar}</Text>
+                                </Pressable>
+                            )}
+                            <Pressable onPress={addFromGallery} style={[styles.fillBtn, { borderColor: c.peach, backgroundColor: c.surface }]}>
+                                <Feather name="image" size={16} color={c.coral} />
+                                <Text style={styles.fillTxt} numberOfLines={1}>{locale === "TH" ? "เพิ่มจากคลังภาพ" : "Add from gallery"}</Text>
                             </Pressable>
-                        ) : nearMissItems.length > 0 ? (
-                            <Pressable onPress={onFindMore} style={[styles.findMore, { borderColor: c.peach }]}>
-                                <Feather name="plus-circle" size={15} color={c.coral} />
-                                <Text style={{ color: c.coral, fontWeight: "700", fontSize: 13, marginLeft: 5 }}>{t.pbFindSimilar}</Text>
+                            {deselected.size > 0 && (
+                                <Pressable onPress={restoreDeselected} style={[styles.fillBtn, { borderColor: c.peach, backgroundColor: c.surface }]}>
+                                    <Feather name="rotate-ccw" size={16} color={c.coral} />
+                                    <Text style={styles.fillTxt} numberOfLines={1}>{locale === "TH" ? `คืนรูปที่เอาออก (${deselected.size})` : `Restore removed (${deselected.size})`}</Text>
+                                </Pressable>
+                            )}
+                        </View>
+                    ) : (
+                        <View style={[styles.bottomBar, { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 10 }]}>
+                            {markedCount > 0 ? (
+                                <Pressable onPress={removeMarked} style={[styles.findMore, { borderColor: c.coral, backgroundColor: c.surface }]}>
+                                    <Feather name="trash-2" size={15} color={c.coral} />
+                                    <Text style={{ color: c.coral, fontWeight: "800", fontSize: 13, marginLeft: 5 }}>{t.pbRemoveN.replace("{n}", String(markedCount))}</Text>
+                                </Pressable>
+                            ) : nearMissItems.length > 0 ? (
+                                <Pressable onPress={onFindMore} style={[styles.findMore, { borderColor: c.peach }]}>
+                                    <Feather name="plus-circle" size={15} color={c.coral} />
+                                    <Text style={{ color: c.coral, fontWeight: "700", fontSize: 13, marginLeft: 5 }}>{t.pbFindSimilar}</Text>
+                                </Pressable>
+                            ) : null}
+                            <Pressable onPress={makeAlbum} style={{ flex: 1 }} disabled={includedCount === 0}>
+                                <PhotobookGradient colors={c.gradient} radius={pbRadius.lg} style={[styles.albumBtn, includedCount === 0 && { opacity: 0.5 }]}>
+                                    <Text style={styles.albumText} numberOfLines={1}>{t.pbAlbumCta.replace("{n}", String(includedCount))}</Text>
+                                </PhotobookGradient>
                             </Pressable>
-                        ) : null}
-                        <Pressable onPress={makeAlbum} style={{ flex: 1 }} disabled={includedCount === 0}>
-                            <PhotobookGradient colors={c.gradient} radius={pbRadius.lg} style={[styles.albumBtn, includedCount === 0 && { opacity: 0.5 }]}>
-                                <Text style={styles.albumText} numberOfLines={1}>{t.pbAlbumCta.replace("{n}", String(includedCount))}</Text>
-                            </PhotobookGradient>
-                        </Pressable>
-                    </View>
+                        </View>
+                    )}
                 </>
             )}
 
@@ -645,6 +733,8 @@ const styles = StyleSheet.create({
 
     bottomBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: H_PAD, paddingTop: 10, borderTopWidth: 1 },
     findMore: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, height: 48, borderRadius: 14, borderWidth: 1.5 },
+    fillBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 12, height: 48, borderRadius: 12, borderWidth: 1.5 },
+    fillTxt: { color: "#FF7E66", fontWeight: "800", fontSize: 14 },
     albumBtn: { height: 52, alignItems: "center", justifyContent: "center" },
     albumText: { color: "#fff", fontWeight: "800", fontSize: 16 },
 

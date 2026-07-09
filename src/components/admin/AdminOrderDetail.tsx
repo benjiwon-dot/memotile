@@ -20,6 +20,7 @@ import {
     Trash2,
     Clock,
     Link as LinkIcon,
+    FileSpreadsheet,
 } from "lucide-react";
 
 import { getFirestore, doc, deleteDoc, getDoc, updateDoc } from "firebase/firestore";
@@ -129,6 +130,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     // 🆕 포토북: 표지 썸네일 URL(인라인 표시용)
     const [pbCoverUrl, setPbCoverUrl] = useState<string | null>(null);
+    const [pbPdfUrl, setPbPdfUrl] = useState<string | null>(null);
 
     const storage = useMemo(() => getStorage(app), []);
     const db = useMemo(() => getFirestore(app), []);
@@ -270,12 +272,24 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         refetch();
     }, [orderId]);
 
-    // 🆕 포토북 표지 썸네일 URL 해석(인라인 표시)
+    // 🆕 포토북 표지 썸네일 — 서버가 렌더한 '크롭된 가로 표지'(coverRenderPath) 우선, 없으면 원본 썸네일 폴백
     useEffect(() => {
-        const p = (order as any)?.photobook?.coverThumbPath;
+        const pb = (order as any)?.photobook;
+        const p = pb?.coverRenderPath || pb?.coverThumbPath;
         if (!isWeb || !p) { setPbCoverUrl(null); return; }
         let alive = true;
         getDownloadURL(ref(storage, p)).then((u) => { if (alive) setPbCoverUrl(u); }).catch(() => { if (alive) setPbCoverUrl(null); });
+        return () => { alive = false; };
+    }, [order, storage]);
+
+    // 🆕 포토북 PDF 미리보기 URL 해석(ready일 때만)
+    useEffect(() => {
+        const pb = (order as any)?.photobook;
+        const p = pb?.pdfPath;
+        const ready = (pb?.pdfStatus === "ready" || (!pb?.pdfStatus && p));
+        if (!isWeb || !p || !ready) { setPbPdfUrl(null); return; }
+        let alive = true;
+        getDownloadURL(ref(storage, p)).then((u) => { if (alive) setPbPdfUrl(u); }).catch(() => { if (alive) setPbPdfUrl(null); });
         return () => { alive = false; };
     }, [order, storage]);
 
@@ -290,6 +304,22 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             else alert("Failed to generate originals ZIP.");
         } catch (e: any) {
             alertCallableError("Photobook ZIP error:", e);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // 🔴 인쇄용(IQLab 전달) 다운로드 — cover.pdf + 속지 페이지별 PDF + order_info(spec 포함) ZIP.
+    const handleDownloadPhotobookPrint = async () => {
+        setBusy(true);
+        try {
+            const fn = httpsCallable(functions, "adminExportZipPrints");
+            const res = await fn({ orderIds: [orderId], type: "photobook_pdf" });
+            const { url } = res.data as any;
+            if (url) { window.open(url, "_blank", "noreferrer"); }
+            else alert("Failed to generate print ZIP.");
+        } catch (e: any) {
+            alertCallableError("Photobook print ZIP error:", e);
         } finally {
             setBusy(false);
         }
@@ -315,6 +345,20 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
+    // 📕 PDF 재생성 — pdfStatus를 pending으로 되돌리면 generatePhotobookPdf 트리거가 재실행.
+    const handleRetryPhotobookPdf = async () => {
+        if (!order) return;
+        setBusy(true);
+        try {
+            await updateDoc(doc(db, "orders", orderId), { "photobook.pdfStatus": "pending", "photobook.pdfError": null });
+            setOrder({ ...order, photobook: { ...(order.photobook as any), pdfStatus: "pending", pdfError: null } } as any);
+        } catch (e: any) {
+            alert("PDF 재생성 요청 실패: " + (e?.message || e));
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleExportCleanJson = async () => {
         if (!isWeb || !order) return;
 
@@ -334,6 +378,36 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         const blob = new Blob([jsonString], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         browserDownloadUrl(url, `Order_${order.orderCode}.json`);
+        URL.revokeObjectURL(url);
+    };
+
+    // 🆕 포토북 주문 CSV (주소 기반, 인쇄소 전달용). PDF 없이도 스펙+배송지 한 줄.
+    const handleExportPhotobookCsv = () => {
+        if (!isWeb || !order) return;
+        const pb = order.photobook || {};
+        const s = order.shipping || ({} as any);
+        const addr = `${s.address1 || ""} ${s.address2 || ""} ${s.city || ""} ${s.state || ""} ${s.postalCode || ""} ${s.country || ""}`.replace(/\s+/g, " ").trim();
+        const row: Record<string, string> = {
+            "Order Number": order.orderCode,
+            "Date": new Date(order.createdAt).toLocaleString(),
+            "Name": s.fullName || order.customer?.fullName || "Guest",
+            "Phone": s.phone || order.customer?.phone || "-",
+            "Address": addr,
+            "Product": "Photobook",
+            "Spec": `${pb.size ?? "-"} ${pb.cover ?? "-"}`,
+            "Photos": String(order.itemsCount || pb.layout?.order?.length || 0),
+            "Pages (IQLab)": String(pb.pageCount ?? "-"), // 인쇄소 IQLab 주문용 내지 페이지수
+            "Density": pb.density || "-",
+            "Title": pb.title || "-",
+            "Originals": `${order.storageBasePath || ""}/originals/`,
+            "Admin Note": savedNote || "",
+        };
+        const headers = Object.keys(row);
+        const esc = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+        const csv = "﻿" + headers.join(",") + "\n" + headers.map((h) => esc(row[h])).join(",");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        browserDownloadUrl(url, `Photobook_${order.orderCode}.csv`);
         URL.revokeObjectURL(url);
     };
 
@@ -749,23 +823,32 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     <div className="flex items-center gap-2 text-sm font-black text-indigo-700 uppercase tracking-wider">📕 Photobook</div>
                     <div className="flex gap-5 flex-col md:flex-row">
                         <div className="w-full md:w-56 shrink-0">
+                            {/* 표지 — A4 가로 비율 박스에 표지 crop대로 가로 크롭(object-position) */}
                             {pbCoverUrl ? (
-                                <img src={pbCoverUrl} className="w-full rounded-lg border border-zinc-200 object-cover" alt="cover" />
+                                <div className="w-full rounded-lg border border-zinc-200 overflow-hidden bg-zinc-100" style={{ aspectRatio: "27.9 / 21.5" }}>
+                                    <img
+                                        src={pbCoverUrl}
+                                        className="w-full h-full object-cover"
+                                        style={{ objectPosition: `${Math.round(((order.photobook as any)?.frozen?.coverPage?.crop?.fx ?? 0.5) * 100)}% ${Math.round(((order.photobook as any)?.frozen?.coverPage?.crop?.fy ?? 0.5) * 100)}%` }}
+                                        alt="cover"
+                                    />
+                                </div>
                             ) : (
-                                <div className="w-full aspect-[4/3] bg-zinc-100 rounded-lg border border-zinc-100 flex items-center justify-center text-zinc-300"><ImageIcon size={28} /></div>
+                                <div className="w-full bg-zinc-100 rounded-lg border border-zinc-100 flex items-center justify-center text-zinc-300" style={{ aspectRatio: "27.9 / 21.5" }}><ImageIcon size={28} /></div>
                             )}
+                            <div className="text-[10px] text-zinc-400 mt-1 text-center">표지 (미리보기)</div>
                         </div>
                         <div className="flex-1 flex flex-col gap-3 min-w-0">
                             <div className="text-2xl font-black">
-                                {order.photobook?.pageCount ?? "?"}p · {order.photobook?.size ?? "?"} · {order.photobook?.cover === "hard" ? "Hardcover" : "Softcover"}
+                                {order.itemsCount || order.photobook?.layout?.order?.length || "?"} photos · {order.photobook?.size ?? "?"} · {order.photobook?.cover === "hard" ? "Hardcover" : "Softcover"}
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                                 {[
-                                    ["Pages", `${order.photobook?.pageCount ?? "-"}`],
+                                    ["Photos", `${order.itemsCount || order.photobook?.layout?.order?.length || "-"}`],
+                                    ["Pages (IQLab)", `${order.photobook?.pageCount ?? "-"}`],
                                     ["Size", order.photobook?.size ?? "-"],
                                     ["Cover", order.photobook?.cover ?? "-"],
                                     ["Density", order.photobook?.density ?? "-"],
-                                    ["Photos", `${order.itemsCount || order.photobook?.layout?.order?.length || "-"}`],
                                     ["Title", order.photobook?.title || "-"],
                                 ].map(([k, v]) => (
                                     <div key={k} className="bg-zinc-50 rounded-lg px-3 py-2 border border-zinc-100">
@@ -774,22 +857,53 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                                     </div>
                                 ))}
                             </div>
-                            <div className="flex flex-wrap gap-2 mt-1">
-                                {order.photobook?.pdfPath ? (
-                                    <button onClick={() => openStoragePath(order.photobook?.pdfPath || undefined)} className="admin-btn admin-btn-primary">
-                                        <Download size={16} /> Download PDF
-                                    </button>
-                                ) : (
-                                    <button disabled className="admin-btn admin-btn-secondary opacity-60 cursor-not-allowed">
-                                        <Clock size={16} /> PDF 준비 중 (서버 생성 대기)
-                                    </button>
-                                )}
-                                <button onClick={handleDownloadPhotobookZip} disabled={busy} className="admin-btn admin-btn-secondary">
-                                    {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} 원본 전체 ZIP (조판용)
+                            {/* 메인: PDF(조판 완성본) + CSV(인쇄소 전달용) */}
+                            {(() => {
+                                const pb = order.photobook as any;
+                                // 업로드 중(원본 아직) → uploading. 그 외: pdfStatus / pdfPath(ready) / frozen(pending) / 없으면 legacy
+                                const st: string = (pb?.uploadStatus === "uploading" && !pb?.frozen)
+                                    ? "uploading"
+                                    : (pb?.pdfStatus || (pb?.pdfPath ? "ready" : (pb?.frozen ? "pending" : "legacy")));
+                                return (
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                        {st === "ready" && (pb?.coverPdfPath || pb?.pdfPath) ? (
+                                            <button onClick={handleDownloadPhotobookPrint} disabled={busy} className="admin-btn admin-btn-primary">
+                                                {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} 인쇄용 PDF (표지+페이지) ZIP
+                                            </button>
+                                        ) : st === "uploading" ? (
+                                            <button disabled className="admin-btn admin-btn-secondary opacity-60 cursor-not-allowed">
+                                                <Loader2 size={16} className="animate-spin" /> 원본 업로드 중… (완료 후 PDF 생성)
+                                            </button>
+                                        ) : st === "processing" ? (
+                                            <button disabled className="admin-btn admin-btn-secondary opacity-60 cursor-not-allowed">
+                                                <Loader2 size={16} className="animate-spin" /> PDF 생성 중…
+                                            </button>
+                                        ) : st === "failed" ? (
+                                            <button onClick={handleRetryPhotobookPdf} disabled={busy} className="admin-btn admin-btn-primary" style={{ background: "#dc2626" }} title={pb?.pdfError || ""}>
+                                                {busy ? <Loader2 size={16} className="animate-spin" /> : <AlertCircle size={16} />} PDF 생성 실패 — 재시도
+                                            </button>
+                                        ) : st === "pending" ? (
+                                            <button onClick={handleRetryPhotobookPdf} disabled={busy} className="admin-btn admin-btn-secondary" title="생성이 지연되면 눌러 재시도">
+                                                {busy ? <Loader2 size={16} className="animate-spin" /> : <Clock size={16} />} PDF 생성 대기 중 (재시도)
+                                            </button>
+                                        ) : (
+                                            <span className="text-xs text-zinc-400 self-center">이 주문은 자동 PDF 대상이 아님(구주문) — 아래 원본·레이아웃 ZIP로 수동 조판</span>
+                                        )}
+                                        <button onClick={handleExportPhotobookCsv} className="admin-btn admin-btn-secondary">
+                                            <FileSpreadsheet size={16} /> Export CSV (주소·스펙)
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+                            {/* 부가 자료 (원할 때만) — 원본/레이아웃/표지 원본 */}
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                                <span className="text-[10px] font-black text-zinc-300 uppercase">부가 자료 (원할 때만)</span>
+                                <button onClick={handleDownloadPhotobookZip} disabled={busy} className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 inline-flex items-center gap-1">
+                                    {busy ? <Loader2 size={12} className="animate-spin" /> : <FileJson size={12} />} 원본·레이아웃 ZIP
                                 </button>
                                 {order.photobook?.coverThumbPath && (
-                                    <button onClick={() => openStoragePath(order.photobook?.coverThumbPath || undefined)} className="admin-btn admin-btn-secondary">
-                                        <ExternalLink size={16} /> 표지 원본
+                                    <button onClick={() => openStoragePath(order.photobook?.coverThumbPath || undefined)} className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 inline-flex items-center gap-1">
+                                        <ExternalLink size={12} /> 표지 원본
                                     </button>
                                 )}
                             </div>
@@ -798,6 +912,13 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             </div>
                         </div>
                     </div>
+                    {/* 사진첩 미리보기 — 완성 PDF 임베드(ready일 때만) */}
+                    {pbPdfUrl && (
+                        <div className="mt-2">
+                            <div className="text-[10px] font-black text-zinc-400 uppercase mb-1">📖 사진첩 미리보기 (PDF)</div>
+                            <iframe src={pbPdfUrl} title="photobook preview" className="w-full rounded-lg border border-zinc-200 bg-zinc-50" style={{ height: 560 }} />
+                        </div>
+                    )}
                 </div>
             ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">

@@ -27,10 +27,14 @@ export function photoAspect(p: ScanItem): number {
 }
 function isLandscape(p: ScanItem) { return photoAspect(p) >= 1.15; }
 
-// 얼굴 크기(=강한 컷 지표). 얼굴 없으면 약하게.
+// 강도(베스트컷 지표) = 얼굴크기(bbox) × 정면성(quality) × 선명도(sharpness). 얼굴 없으면 약하게.
 function strengthOf(p: ScanItem): number {
     const f = p.faces?.length ? p.faces.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b)) : null;
-    return f ? f.width * f.height : 0.01;
+    if (!f) return 0.01;
+    const area = f.width * f.height;
+    const q = 0.5 + (f.quality ?? 0.5) * 0.5;                 // 정면성 0~1 → 0.5~1.0 가중
+    const s = f.sharpness != null ? Math.min(1.4, 0.6 + f.sharpness / 400) : 1; // 선명도(있을 때만)
+    return area * q * s;
 }
 
 // ── 템플릿(정규화 칸). 가장자리 여백 ~1cm 유지하되 안쪽은 타이트하게(사진 크게). 히어로만 풀블리드 ──
@@ -39,10 +43,27 @@ const MX = 0.038, MY = 0.05, G = 0.026;
 const IX = MX, IY = MY, IW = 1 - 2 * MX, IH = 1 - 2 * MY; // 안쪽 영역
 
 const HERO: Slot[] = [{ x: 0, y: 0, w: 1, h: 1 }];
-const DUO_LR: Slot[] = (() => { const w = (IW - G) / 2; return [{ x: IX, y: IY, w, h: IH }, { x: IX + w + G, y: IY, w, h: IH }]; })();
-const DUO_STACK: Slot[] = (() => { const h = (IH - G) / 2; return [{ x: IX, y: IY, w: IW, h }, { x: IX, y: IY + h + G, w: IW, h }]; })();
-const GRID3: Slot[] = (() => { const wL = (IW - G) * 0.6, wR = (IW - G) * 0.4, hR = (IH - G) / 2; return [{ x: IX, y: IY, w: wL, h: IH }, { x: IX + wL + G, y: IY, w: wR, h: hR }, { x: IX + wL + G, y: IY + hR + G, w: wR, h: hR }]; })();
-const GRID4: Slot[] = (() => { const w = (IW - G) / 2, h = (IH - G) / 2; return [{ x: IX, y: IY, w, h }, { x: IX + w + G, y: IY, w, h }, { x: IX, y: IY + h + G, w, h }, { x: IX + w + G, y: IY + h + G, w, h }]; })();
+
+// ── 리드 슬롯 템플릿(세로 사진 위주). 대부분 사진이 세로라 "세로 칸(컬럼)" 중심으로 설계.
+// 가로 사진은 히어로(풀블리드)로 별도 승격. 각 배열 cells[0] = 리드(그 페이지 베스트컷).
+const _duoLR = (() => { const w = (IW - G) / 2; return [{ x: IX, y: IY, w, h: IH }, { x: IX + w + G, y: IY, w, h: IH }]; })();                                    // 세로 2단
+const _duoLeadL = (() => { const wB = (IW - G) * 0.6, wS = (IW - G) * 0.4; return [{ x: IX, y: IY, w: wB, h: IH }, { x: IX + wB + G, y: IY, w: wS, h: IH }]; })();     // 리드-좌 + 세로 우
+const _trioLR = (() => { const w = (IW - 2 * G) / 3; return [0, 1, 2].map((k) => ({ x: IX + k * (w + G), y: IY, w, h: IH })); })();                                    // 세로 3단
+const _trioLeadL = (() => { const wL = (IW - G) * 0.5, wR = (IW - G) * 0.5, hR = (IH - G) / 2; return [{ x: IX, y: IY, w: wL, h: IH }, { x: IX + wL + G, y: IY, w: wR, h: hR }, { x: IX + wL + G, y: IY + hR + G, w: wR, h: hR }]; })(); // 리드-좌 + 2단-우
+const _quadGrid = (() => { const w = (IW - G) / 2, h = (IH - G) / 2; return [{ x: IX, y: IY, w, h }, { x: IX + w + G, y: IY, w, h }, { x: IX, y: IY + h + G, w, h }, { x: IX + w + G, y: IY + h + G, w, h }]; })(); // 2×2
+const _quadLeadTop = (() => { const hT = (IH - G) * 0.55, hB = (IH - G) * 0.45, w3 = (IW - 2 * G) / 3; return [{ x: IX, y: IY, w: IW, h: hT }, ...[0, 1, 2].map((k) => ({ x: IX + k * (w3 + G), y: IY + hT + G, w: w3, h: hB }))]; })(); // 리드-상 + 3열
+const _quadLeadL = (() => { const wB = (IW - G) * 0.55, wS = (IW - G) * 0.45, h3 = (IH - 2 * G) / 3; return [{ x: IX, y: IY, w: wB, h: IH }, ...[0, 1, 2].map((k) => ({ x: IX + wB + G, y: IY + k * (h3 + G), w: wS, h: h3 }))]; })(); // 리드-좌 + 3단-우
+const _pentaLead = (() => { const wB = (IW - G) * 0.5, wS = (IW - G) * 0.5, x0 = IX + wB + G, wc = (wS - G) / 2, hc = (IH - G) / 2; return [{ x: IX, y: IY, w: wB, h: IH }, { x: x0, y: IY, w: wc, h: hc }, { x: x0 + wc + G, y: IY, w: wc, h: hc }, { x: x0, y: IY + hc + G, w: wc, h: hc }, { x: x0 + wc + G, y: IY + hc + G, w: wc, h: hc }]; })(); // 리드 + 2×2
+const _hexa = (() => { const w = (IW - 2 * G) / 3, h = (IH - G) / 2; const out: Slot[] = []; for (let r = 0; r < 2; r++) for (let k = 0; k < 3; k++) out.push({ x: IX + k * (w + G), y: IY + r * (h + G), w, h }); return out; })(); // 모자이크 6(3×2)
+
+// 장수별 템플릿 풀 (cells[0]=리드). 세로 위주 10종. 시퀀서가 rng+리듬으로 골라 다양화.
+const TEMPLATES: Record<number, { key: string; cells: Slot[] }[]> = {
+    2: [{ key: "duoLR", cells: _duoLR }, { key: "duoLeadL", cells: _duoLeadL }],
+    3: [{ key: "trioLR", cells: _trioLR }, { key: "trioLeadL", cells: _trioLeadL }],
+    4: [{ key: "quadGrid", cells: _quadGrid }, { key: "quadLeadTop", cells: _quadLeadTop }, { key: "quadLeadL", cells: _quadLeadL }],
+    5: [{ key: "pentaLead", cells: _pentaLead }],
+    6: [{ key: "hexa", cells: _hexa }],
+};
 
 // 각 페이지 상단에 흰 밴드(날짜가 실제 인쇄되는 영역) 확보. 사진 칸을 밴드 아래로 압축.
 export const PAGE_TOP_BAND = 0.12; // 페이지 높이의 12% (~2.5cm on A4)
@@ -61,7 +82,8 @@ function minimalCell(a: number, ratio: number): Slot {
 }
 
 // 1장 페이지 빈도 축소 (강한 컷 히어로는 별도로 승격). 애매한 1장씩 연속 방지는 시퀀서에서.
-const POOLS: Record<Density, number[]> = { relaxed: [1, 2, 2, 3], balanced: [2, 2, 3, 3], rich: [2, 3, 3, 4] };
+// 6장(모자이크)은 풀에 안 넣음 → 아래 시퀀서에서 "간격 규칙"으로 가끔(~8쪽에 1번)만, 연속 없이.
+const POOLS: Record<Density, number[]> = { relaxed: [2, 3], balanced: [3, 3, 4], rich: [4, 5] };
 const FRACTION: Record<Density, number> = { relaxed: 0.4, balanced: 0.72, rich: 1.0 };
 
 /** 선택 사진을 디자인된 템플릿 페이지 배열로. ratio=페이지 가로/세로, density=밀도 프리셋 */
@@ -69,12 +91,14 @@ export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, densi
     let photos = [...items]; // items 순서 그대로 사용(드래그 스왑 유지). 호출부에서 시간순 정렬해 전달.
     if (photos.length === 0) return [];
 
-    // 밀도 프리셋: 여유롭게일수록 강한 컷만 큐레이션(시간순 유지)
+    // 밀도 프리셋: 여유롭게일수록 강한 컷만 큐레이션(시간순 유지). 단 사용자가 직접 추가한(manual) 사진은 항상 유지.
     const frac = FRACTION[density];
     if (frac < 1 && photos.length > 8) {
-        const keep = Math.max(6, Math.round(photos.length * frac));
-        const strong = new Set([...photos].sort((a, b) => strengthOf(b) - strengthOf(a)).slice(0, keep).map((p) => p.assetId));
-        photos = photos.filter((p) => strong.has(p.assetId));
+        const auto = photos.filter((p) => !p.manual);
+        const manualCount = photos.length - auto.length;
+        const keep = Math.max(6, Math.round(photos.length * frac) - manualCount);
+        const strong = new Set([...auto].sort((a, b) => strengthOf(b) - strengthOf(a)).slice(0, keep).map((p) => p.assetId));
+        photos = photos.filter((p) => p.manual || strong.has(p.assetId));
     }
 
     // 히어로 승격 임계 = 강도 상위 30%
@@ -87,12 +111,18 @@ export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, densi
     const isStrongCut = (idx: number, prevBig: boolean) => (isLandscape(photos[idx]) || strengthOf(photos[idx]) >= strongTh) && !prevBig;
 
     const pages: LayoutPage[] = [];
-    let i = 0, prevBig = false, prevGrid = false, prevSingle = false;
+    let i = 0, prevBig = false, prevGrid = false, prevSingle = false, lastTmplKey = "";
+    let since6 = 3; // 마지막 6장 페이지 이후 페이지 수(간격 제어)
 
     while (i < photos.length) {
         const remaining = photos.length - i;
         let count = Math.min(pool[Math.floor(rng() * pool.length)], remaining);
-        if (count >= 3 && prevGrid) count = Math.min(2, remaining);                       // 연속 그리드 금지
+        let force6 = false;
+        // 가로로 찍은 사진은 히어로 1장(풀블리드가 딱 맞음). 세로 위주라 가로는 귀함 → 크게.
+        if (isLandscape(photos[i]) && !prevBig) count = 1;
+        // 6장(위3/아래3 모자이크)은 "가끔"만 — 최소 7페이지 간격 뒤 확률적으로(연속 방지). ~8쪽에 1번.
+        else if (remaining >= 6 && since6 >= 7 && rng() < 0.4) { count = 6; force6 = true; }
+        if (!force6 && count >= 3 && prevGrid) count = Math.min(2, remaining);              // 연속 그리드 금지
         if (count === 1 && prevSingle && !isStrongCut(i, prevBig)) count = Math.min(2, remaining); // 애매한 1장 연속 금지
         if (count <= 0) count = 1;
         const group = photos.slice(i, i + count);
@@ -102,14 +132,29 @@ export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, densi
             const p = group[0], a = photoAspect(p);
             if (isStrongCut(i, prevBig)) { cells = HERO; kind = "hero"; }
             else { cells = [minimalCell(a, ratio)]; kind = "minimal"; }
-        } else if (count === 2) {
-            cells = group.every(isLandscape) ? DUO_STACK : DUO_LR; kind = "duo";
-        } else if (count === 3) { cells = GRID3; kind = "grid"; }
-        else { cells = GRID4; kind = "grid"; }
+        } else {
+            // 그룹 내 베스트컷을 맨 앞으로 → 리드 슬롯(cells[0], 가장 큰 칸)에 크게
+            let li = 0; for (let k = 1; k < group.length; k++) if (strengthOf(group[k]) > strengthOf(group[li])) li = k;
+            if (li !== 0) { const [best] = group.splice(li, 1); group.unshift(best); }
+            // 템플릿 선택 — 같은 장수의 여러 버전 중 rng, 직전과 같은 키는 회피(리듬)
+            const variants = TEMPLATES[count] || TEMPLATES[4];
+            let idx = Math.floor(rng() * variants.length);
+            if (variants.length > 1 && variants[idx].key === lastTmplKey) idx = (idx + 1) % variants.length;
+            lastTmplKey = variants[idx].key;
+            cells = variants[idx].cells;
+            kind = count >= 3 ? "grid" : "duo";
+        }
 
-        pages.push({ index: pages.length, kind, cells: withTopBand(cells), photos: group });
+        // 히어로(강한 컷·가로 사진)는 풀블리드로 화면 꽉 차게 → 상단 밴드 미적용
+        pages.push({ index: pages.length, kind, cells: kind === "hero" ? cells : withTopBand(cells), photos: group });
         prevBig = kind === "hero"; prevGrid = kind === "grid"; prevSingle = count === 1;
+        since6 = count === 6 ? 0 : since6 + 1; // 6장 간격 추적
         i += count;
     }
     return pages;
+}
+
+/** 실제 내지 페이지 수(커버·뒷표지 제외). buildPages가 만든 낱장 수 = 고객에게 보여줄 진짜 페이지수. */
+export function countPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): number {
+    return buildPages(items, ratio, density).length;
 }
