@@ -485,11 +485,12 @@ export default function AdminOrderList() {
         try {
             const rows = [];
             for (const o of targets) {
-                const oIsPb = (o as any).productType === "photobook";
+                // productType 또는 photobook 필드로 포토북 판별(둘 중 하나만 있어도)
+                const oIsPb = (o as any).productType === "photobook" || !!(o as any).photobook;
                 let zipUrl = "";
                 try {
                     const fn = httpsCallable(functions, "adminExportZipPrints");
-                    // 포토북은 PDF+order_info만(photobook_pdf), 타일은 프린트 원본(print)
+                    // 포토북 = 인쇄용 PDF ZIP(cover.pdf+pages+photobook.pdf+order_info+spec). 타일 = 프린트 원본.
                     const res = await fn({ orderIds: [o.id], type: oIsPb ? "photobook_pdf" : "print" });
                     zipUrl = (res.data as any)?.url || "";
                 } catch { zipUrl = "Link Error"; }
