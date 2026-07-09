@@ -156,13 +156,11 @@ export default function OrderDetailScreen() {
         };
     }, [id, user, isAuthLoading]);
 
-    // 📕 포토북 표지 URL 해석 — 디테일은 화질 조금 좋게: 표지 사진의 미드해상도 preview 우선, 없으면 썸네일 폴백
+    // 📕 포토북 표지 URL — 가벼운 캐시본 우선(빠른 로딩): 서버 렌더 크롭표지(600px) → 원본 썸네일 폴백. 큰 원본은 로드 안 함.
     useEffect(() => {
         const pb = (order as any)?.photobook;
         if (!pb) { setPbCoverUrl(null); return; }
-        const coverIdx = pb?.frozen?.coverPage?.idx;
-        const previewBase = pb?.previewBasePath;
-        const primary = (previewBase != null && coverIdx != null && coverIdx >= 0) ? `${previewBase}/${coverIdx}.jpg` : pb?.coverThumbPath;
+        const primary = pb?.coverRenderPath || pb?.coverThumbPath;
         if (!primary) { setPbCoverUrl(null); return; }
         let alive = true;
         getDownloadURL(ref(storage, primary))

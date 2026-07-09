@@ -913,22 +913,21 @@ export const adminExportZipPrints = onCall(
 
                     // (B) 인쇄용 PDF 딜리버리(기본) — CSV/photobook_pdf/print 등 그 외 모든 경우.
                     //     ZIP 내용물: cover.pdf + pages/*.pdf + order_info.txt(위에서 추가) + photobook_spec.txt. 원본/cover.jpg/json 없음.
-                    let anyPdf = false;
                     if (pbDoc?.coverPdfPath) {
                         const cf = bucket.file(pbDoc.coverPdfPath);
                         const [ce] = await cf.exists();
-                        if (ce) { archive.append(cf.createReadStream(), { name: `${baseFolder}/cover.pdf` }); anyPdf = true; addedCount++; }
+                        if (ce) { archive.append(cf.createReadStream(), { name: `${baseFolder}/cover.pdf` }); addedCount++; }
                     }
                     if (pbDoc?.pagesBasePath) {
                         const [pageFiles] = await bucket.getFiles({ prefix: `${pbDoc.pagesBasePath}/` });
                         for (const f of pageFiles) {
                             const nm = String(f.name).split("/").pop() || "page.pdf";
                             archive.append(f.createReadStream(), { name: `${baseFolder}/pages/${nm}` });
-                            anyPdf = true; addedCount++;
+                            addedCount++;
                         }
                     }
-                    // 폴백(PDF 미생성 구주문): 통합 PDF라도
-                    if (!anyPdf && pbDoc?.pdfPath) {
+                    // 통합 photobook.pdf(전체 한 파일) — 대표님 전체 확인용 + IQLab가 통합본 원하면 사용. cover/pages와 함께 항상 포함.
+                    if (pbDoc?.pdfPath) {
                         const pf = bucket.file(pbDoc.pdfPath);
                         const [pe] = await pf.exists();
                         if (pe) { archive.append(pf.createReadStream(), { name: `${baseFolder}/photobook.pdf` }); addedCount++; }

@@ -182,7 +182,11 @@ async function drawFrontCoverInto(doc: any, cp: FCover, originals: Map<number, B
         const contentH = (hasT ? titleFs * 1.1 : 0) + (hasT && hasD ? gap : 0) + (hasD ? dateFs * 1.1 : 0);
         const bandH = contentH + padV * 2;
         const bandY = trimH - bandH;
-        doc.save().fillColor("#14100E").fillOpacity(0.34).rect(bx, by + bandY, trimW, bandH).fill().restore();
+        // 밴드는 바깥 bleed(우/하, 그리고 combined는 좌까지)와 하단 페이지 끝까지 확장 → 재단 후 가장자리에 깔끔히 붙음.
+        const bandTop = by + bandY;
+        const bandLeft = bx - (sides.left ? bleed : 0);
+        const bandRight = bx + trimW + (sides.right ? bleed : 0);
+        doc.save().fillColor("#14100E").fillOpacity(0.34).rect(bandLeft, bandTop, bandRight - bandLeft, pageH - bandTop).fill().restore();
         let ty = bandY + padV;
         if (hasT) { drawText(title, { x: padH, y: ty, w: trimW - 2 * padH, size: titleFs, color: "#FFFFFF", font: SANS_B }); ty += titleFs * 1.1 + gap; }
         if (hasD) { drawText(dateLabel, { x: padH, y: ty, w: trimW - 2 * padH, size: dateFs, color: "#F0EAE2", font: SANS, ls: 1.5 }); }
@@ -348,7 +352,8 @@ export async function generateAndStorePhotobookPdf(orderData: any): Promise<{ pd
     const cBufR = cIdxR != null && cIdxR >= 0 ? originals.get(cIdxR) : undefined;
     if (cBufR) {
         try {
-            const tw = 1000, th = Math.max(1, Math.round(1000 / (frozen.ratio || 27.9 / 21.5)));
+            // 작게(장변 600px) — 어드민·마이오더에서 즉시 로딩. 크롭은 정확히 반영.
+            const tw = 600, th = Math.max(1, Math.round(600 / (frozen.ratio || 27.9 / 21.5)));
             const jpg = await renderCellJpeg(cBufR, frozen.coverPage.crop, tw, th);
             coverRenderPath = `${base}/cover_render.jpg`;
             await bucket.file(coverRenderPath).save(jpg, {
