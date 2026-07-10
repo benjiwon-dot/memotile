@@ -24,6 +24,7 @@ import { CoverCrop } from "../../src/components/photobook/CoverCrop";
 import { PhotobookCropEditor } from "../../src/components/photobook/PhotobookCropEditor";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { albumPrice, pagesForPhotos, isSparse, AlbumSize, CoverType } from "../../src/config/photobookPricing";
+import { countPages } from "../../src/services/photoLayout";
 
 const SCREEN_W = Dimensions.get("window").width;
 const CARD_W = Math.round(SCREEN_W * 0.64);      // 표지 슬라이드 한 칸(양옆 peek)
@@ -110,7 +111,9 @@ export default function PhotobookAlbum() {
     const coverItem = coverPhotoId ? items.find((i) => i.assetId === coverPhotoId) : items[0];
     const coverAspect = coverItem && coverItem.height ? coverItem.width / coverItem.height : 1;
     const dateLabel = useMemo(() => dateRangeLabel(items), [items]);
-    const { price } = albumPrice(size, cover, items.length);
+    // 가격은 실제 buildPages 페이지 수 기준(사진 수 아님). 밀도는 preview에서 정하므로 여기선 기본 balanced로 추정.
+    const albumActualPages = useMemo(() => countPages(items, 27.9 / 21.5, "balanced"), [items]);
+    const { price } = albumPrice(size, cover, albumActualPages);
 
     if (!enabled) return null;
 

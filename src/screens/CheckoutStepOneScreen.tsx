@@ -26,6 +26,7 @@ import * as ImagePicker from "expo-image-picker";
 // 🆕 포토북(additive): 결제1 진입 시 params.productType==="photobook"이면 albumDraft로 분기
 import { getAlbumOptions, getAlbumDraft } from "../services/albumDraft";
 import { albumPrice } from "../config/photobookPricing";
+import { countPages } from "../services/photoLayout";
 import { PhotobookViewer } from "../components/photobook/PhotobookViewer";
 
 import { usePhoto } from "../context/PhotoContext";
@@ -80,7 +81,8 @@ export default function CheckoutStepOneScreen() {
     const bookPhotoCount = bookItems.length;
     const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
     const bookCoverUri = bookCoverPhoto?.thumbUri || null;
-    const book = albumPrice(albumOpts.size, albumOpts.cover, bookPhotoCount); // { pages, price }
+    const bookPages = countPages(bookItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 실제 내지 페이지수
+    const book = albumPrice(albumOpts.size, albumOpts.cover, bookPages); // 가격은 실제 페이지 티어(사진 수 아님)
     // 고객 표시는 사진 수 중심(페이지 표현 X — IQLab 최소 48p 값은 유지하되 오해 방지)
     const bookSpec = locale === "TH"
         ? `${bookPhotoCount} รูป · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`

@@ -9,6 +9,32 @@
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
 import { getStorage } from "firebase-admin/storage";
+import * as path from "path";
+import * as fsMod from "fs";
+
+// memotile 로고(뒤표지/뒤페이지용). functions/assets/ 에 번들되어 배포됨. (aspect 1.5)
+const LOGO_PATH = path.join(__dirname, "..", "assets", "logo_horizontal.png");
+const LOGO_ASPECT = 1.5;
+let LOGO_OK = false;
+try { LOGO_OK = fsMod.existsSync(LOGO_PATH); } catch { LOGO_OK = false; }
+
+// 뒤표지/뒤페이지: memotile 로고(있으면) 중앙, 없으면 텍스트 폴백. 트림 원점(bleed,bleed) 기준 trimW×trimH 영역 중앙.
+function drawBackPageInto(doc: any, g: Geom) {
+    const { trimW, trimH, bleed } = g;
+    if (LOGO_OK) {
+        try {
+            const lw = trimW * 0.42, lh = lw / LOGO_ASPECT;
+            doc.image(LOGO_PATH, bleed + (trimW - lw) / 2, bleed + (trimH - lh) / 2, { width: lw, height: lh });
+            return;
+        } catch (e) { /* 폴백 */ }
+    }
+    try {
+        doc.font("Helvetica-Bold").fillColor(PB_SPEC.ink).fontSize(trimH * 0.055)
+            .text("memotile", bleed, bleed + trimH * 0.45, { width: trimW, align: "center", lineBreak: false });
+        doc.font("Helvetica").fillColor("#9A8E82").fontSize(trimH * 0.02)
+            .text("PHOTO BOOK", bleed, bleed + trimH * 0.53, { width: trimW, align: "center", lineBreak: false, characterSpacing: 3 });
+    } catch { /* noop */ }
+}
 
 // ── IQLab 인쇄 규격 상수 (P3에서 여기만 조정) ──
 // ⚠️ IQLab 규격 — 아래 값만 바꾸면 전체 PDF에 반영(코드 수정 불필요).
@@ -208,8 +234,8 @@ async function drawInteriorPageInto(doc: any, pg: FPage, originals: Map<number, 
         try {
             const fs = clamp(Math.round(trimH * 0.04), 8, 36);
             const minX = pg.cells.length ? Math.min(...pg.cells.map((c) => c.x)) : 0.055;
-            const dateX = bleed + trimW * minX;
-            const dateY = Math.max(bleed + 2, bleed + trimH * topBand - fs * 1.2);
+            const dateX = bleed + trimW * minX;                                  // 사진 왼쪽 끝에 정렬
+            const dateY = Math.max(bleed + 2, bleed + trimH * topBand - fs * 1.0); // 사진 시작 바로 위(맞닿게)에
             doc.font(PB_SPEC.serifFont).fillColor(PB_SPEC.accent).fontSize(fs)
                 .text(pg.dateLabel, dateX, dateY, { lineBreak: false, characterSpacing: 1 });
         } catch { /* noop */ }
@@ -229,7 +255,7 @@ export async function renderPhotobookPdfBuffer(frozen: FrozenLayout, originals: 
 
     if (PB_SPEC.coverAsFirstPage) { newPage(); await drawFrontCoverInto(doc, frozen.coverPage, originals, g, g.bleed, { left: true, right: true }, titleFont); }
     for (const pg of frozen.pages) { newPage(); await drawInteriorPageInto(doc, pg, originals, g, frozen.topBand); }
-    if (PB_SPEC.backPage) newPage();
+    if (PB_SPEC.backPage) { newPage(); drawBackPageInto(doc, g); }
 
     doc.end();
     return done;
@@ -253,14 +279,9 @@ export async function renderCoverPdf(frozen: FrozenLayout, originals: Map<number
     const spineX = g.bleed + g.trimW;
     const frontTrimX = spineX + spine;
 
-    // 뒤표지: 흰 바탕 + memotile 브랜딩(중앙). 좌·상·하 bleed 포함.
+    // 뒤표지: 흰 바탕 + memotile 로고(중앙). 좌·상·하 bleed 포함.
     doc.save().rect(0, 0, spineX, pageH).fill(PB_SPEC.surface).restore();
-    try {
-        doc.font("Helvetica-Bold").fillColor(PB_SPEC.ink).fontSize(g.trimH * 0.05)
-            .text("memotile", g.bleed, g.bleed + g.trimH * 0.46, { width: g.trimW, align: "center", lineBreak: false });
-        doc.font("Helvetica").fillColor("#9A8E82").fontSize(g.trimH * 0.02)
-            .text("PHOTO BOOK", g.bleed, g.bleed + g.trimH * 0.53, { width: g.trimW, align: "center", lineBreak: false, characterSpacing: 3 });
-    } catch { /* noop */ }
+    drawBackPageInto(doc, g);
 
     // 책등(spine): surface 띠 — IQLab이 미세조정.
     doc.save().rect(spineX, 0, spine, pageH).fill(PB_SPEC.surface).restore();

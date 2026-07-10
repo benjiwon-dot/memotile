@@ -72,8 +72,8 @@ export default function CheckoutStepTwoScreen() {
     const albumOpts = getAlbumOptions();
     const bookItems = getAlbumDraft().items;
     const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
-    const book = albumPrice(albumOpts.size, albumOpts.cover, bookItems.length); // { pages, price(THB) }
-    const bookPages = countPages(bookItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 내부 내지 페이지수(주문 payload/PDF용, 표지 제외)
+    const bookPages = countPages(bookItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 실제 내지 페이지수(표지 제외)
+    const book = albumPrice(albumOpts.size, albumOpts.cover, bookPages); // 가격은 실제 페이지 티어 기준(사진 수 아님). { pages: 과금티어, price }
     // 고객 표시는 사진 수 중심(페이지 표현 X)
     const bookSpec = (locale || "EN") === "TH"
         ? `${bookItems.length} รูป · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`

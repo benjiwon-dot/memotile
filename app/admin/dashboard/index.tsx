@@ -39,7 +39,14 @@ export default function DashboardPage() {
         iosUsers: 0,
         androidUsers: 0,
         repurchaseRate: 0,
-        cancelRate: 0
+        cancelRate: 0,
+        // 🆕 운영 KPI
+        todayRevenueTHB: 0,      // 오늘 매출(전역, 필터 무관)
+        weekRevenueTHB: 0,       // 이번주 매출(전역)
+        queueProcessing: 0,      // 처리 대기 = PAID + PROCESSING (전역 백로그)
+        queuePrinted: 0,         // 배송 대기 = PRINTED (전역 백로그)
+        tileOrders: 0,           // 제품별 건수(필터 기간) — 타일
+        photobookOrders: 0,      // 제품별 건수(필터 기간) — 포토북
     });
 
     const [chartData, setChartData] = useState([]);
@@ -153,6 +160,10 @@ export default function DashboardPage() {
                 let tempPendingOrders = 0;
                 let tempCancelledOrders = 0;
                 let totalFilteredOrders = 0;
+                // 🆕 운영 KPI accumulator
+                let tempTodayTHB = 0, tempWeekTHB = 0;         // 전역 오늘/이번주 매출
+                let tempQueueProcessing = 0, tempQueuePrinted = 0; // 전역 백로그(처리/배송 대기)
+                let tempTile = 0, tempPhotobook = 0;           // 필터 기간 제품별 건수
 
                 const dailyRevenue: Record<string, number> = {};
                 const recentList: any[] = [];
@@ -162,9 +173,28 @@ export default function DashboardPage() {
                 const now = new Date();
                 const currentMonth = now.getMonth();
                 const currentYear = now.getFullYear();
+                // 이번주 시작(월요일 00:00)
+                const weekStart = new Date(now);
+                weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+                weekStart.setHours(0, 0, 0, 0);
 
                 allOrdersList.forEach((order: any) => {
                     const orderDate = order.orderDateSafe;
+
+                    // 🆕 전역(필터 무관) 운영 KPI — 오늘/이번주 매출 + 백로그 큐
+                    const gStatus = String(order.status || "").toLowerCase();
+                    if (gStatus !== "deleted") {
+                        const gAmount = order.totalAmount !== undefined ? order.totalAmount : (order.total !== undefined ? order.total : 0);
+                        const gCurrency = (order.currency || 'THB').toUpperCase();
+                        const gPaid = ["paid", "completed", "printing", "processing", "printed", "shipping", "delivered"].includes(gStatus);
+                        if (gPaid && gCurrency !== 'USD') {
+                            if (orderDate.toDateString() === now.toDateString()) tempTodayTHB += gAmount;
+                            if (orderDate >= weekStart) tempWeekTHB += gAmount;
+                        }
+                        if (gStatus === "paid" || gStatus === "processing") tempQueueProcessing++;
+                        if (gStatus === "printed") tempQueuePrinted++;
+                    }
+
                     let isIncluded = false;
 
                     if (timeFilter === 'all') {
@@ -187,6 +217,10 @@ export default function DashboardPage() {
                     if (order.status === "deleted") return;
 
                     totalFilteredOrders++;
+
+                    // 🆕 제품별 건수(필터 기간)
+                    if (order.productType === "photobook") tempPhotobook++;
+                    else tempTile++;
 
                     if (recentList.length < 5) {
                         recentList.push(order);
@@ -275,7 +309,13 @@ export default function DashboardPage() {
                     iosUsers: iosCount,
                     androidUsers: androidCount,
                     repurchaseRate,
-                    cancelRate
+                    cancelRate,
+                    todayRevenueTHB: tempTodayTHB,
+                    weekRevenueTHB: tempWeekTHB,
+                    queueProcessing: tempQueueProcessing,
+                    queuePrinted: tempQueuePrinted,
+                    tileOrders: tempTile,
+                    photobookOrders: tempPhotobook,
                 });
 
                 setChartData(formattedChartData as any);
@@ -345,6 +385,39 @@ export default function DashboardPage() {
                     <RefreshCw size={16} className={loading ? "animate-spin text-blue-500" : ""} />
                     데이터 동기화
                 </button>
+            </div>
+
+            {/* 🆕 운영 KPI — 오늘/이번주 매출 · 대기 큐 · 제품별 (한눈에) */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2 text-emerald-600"><DollarSign size={18} /><span className="text-xs font-bold text-zinc-400">오늘 매출</span></div>
+                    <p className="text-2xl font-black text-zinc-900">฿{stats.todayRevenueTHB.toLocaleString()}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2 text-blue-600"><Calendar size={18} /><span className="text-xs font-bold text-zinc-400">이번주 매출</span></div>
+                    <p className="text-2xl font-black text-zinc-900">฿{stats.weekRevenueTHB.toLocaleString()}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2 text-indigo-600"><CreditCard size={18} /><span className="text-xs font-bold text-zinc-400">신규 주문</span></div>
+                    <p className="text-2xl font-black text-zinc-900">{stats.orders}<span className="text-base font-bold text-zinc-400">건</span></p>
+                </div>
+                <div className="bg-amber-50 p-5 rounded-2xl shadow-sm border border-amber-100">
+                    <div className="flex items-center gap-2 mb-2 text-amber-700"><Activity size={18} /><span className="text-xs font-bold text-amber-500">처리 대기</span></div>
+                    <p className="text-2xl font-black text-amber-700">{stats.queueProcessing}<span className="text-base font-bold text-amber-400">건</span></p>
+                    <p className="text-[10px] text-amber-500 font-bold mt-0.5">PAID + PROCESSING</p>
+                </div>
+                <div className="bg-purple-50 p-5 rounded-2xl shadow-sm border border-purple-100">
+                    <div className="flex items-center gap-2 mb-2 text-purple-700"><TrendingUp size={18} /><span className="text-xs font-bold text-purple-500">배송 대기</span></div>
+                    <p className="text-2xl font-black text-purple-700">{stats.queuePrinted}<span className="text-base font-bold text-purple-400">건</span></p>
+                    <p className="text-[10px] text-purple-500 font-bold mt-0.5">PRINTED</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2 text-zinc-500"><Tag size={18} /><span className="text-xs font-bold text-zinc-400">제품별</span></div>
+                    <div className="flex items-center gap-3">
+                        <p className="text-xl font-black text-zinc-800">🖼️ {stats.tileOrders}</p>
+                        <p className="text-xl font-black text-indigo-700 border-l border-zinc-200 pl-3">📕 {stats.photobookOrders}</p>
+                    </div>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
