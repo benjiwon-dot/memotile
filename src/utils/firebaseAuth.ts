@@ -110,10 +110,11 @@ export const useGoogleAuthRequest = () => {
             });
         }
 
-        // 💡 핵심 수술 1: 아이폰은 구글 규격 주소로, 갤럭시는 앱 고유 패키지명으로 분리
+        // iOS·안드로이드 모두 "역순 클라이언트 ID" 스킴이어야 구글이 허용(설치앱 클라이언트 규칙).
+        // 패키지명 스킴(com.memotile.android)은 invalid_request 유발 → 안드로이드도 역순-ID로.
         const scheme = Platform.OS === 'ios'
             ? `com.googleusercontent.apps.${googleIosClientId.split(".")[0]}`
-            : "com.memotile.android";
+            : `com.googleusercontent.apps.${googleAndroidClientId.split(".")[0]}`;
 
         return makeRedirectUri({
             native: isExpoGo ? undefined : `${scheme}:/oauthredirect`,
