@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- ML Kit 얼굴검출 모델을 Play 설치 시 미리 다운로드(번들 모델이라 사실상 no-op이지만 권장 설정) -->
+  <application>
+    <meta-data
+      android:name="com.google.mlkit.vision.DEPENDENCIES"
+      android:value="face" />
+  </application>
+</manifest>

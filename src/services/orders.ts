@@ -184,7 +184,10 @@ export async function createOrder(params: {
                     if (i >= bookPhotos.length) return;
 
                     const p = bookPhotos[i];
-                    const rawSrc = p?.originalUri || p?.uri || (p?.assetId ? `ph://${p.assetId}` : p?.thumbUri);
+                    // ph://는 iOS PhotoKit 전용 스킴 → 안드로이드에선 무효(manipulateAsync 실패).
+                    // 안드로이드는 ph:// 폴백을 건너뛰고 thumbUri로. (originalUri는 상단에서 이미 resolve됨)
+                    const phFallback = p?.assetId && Platform.OS === "ios" ? `ph://${p.assetId}` : undefined;
+                    const rawSrc = p?.originalUri || p?.uri || phFallback || p?.thumbUri;
                     if (!rawSrc) { doneCount++; if (onProgress) onProgress(doneCount, bookPhotos.length); continue; }
 
                     // 업로드 전 다운스케일(장변 ≤ MAX_EDGE) + 0.85 재압축 → 업로드 용량 대폭↓·속도↑.
