@@ -86,6 +86,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "459952418126-de8a2a1g87tr2o9hmtkgissdksto41m5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.memotile.android",
+            "certificate_hash": "901f84bbe7485cbe493732979e93d043ff0424a6"
+          }
+        },
+        {
           "client_id": "459952418126-tdgvbf25v41314h0gcpgik3shp1ul3jc.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

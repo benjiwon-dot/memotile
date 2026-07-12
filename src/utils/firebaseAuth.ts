@@ -92,7 +92,9 @@ export const useGoogleAuthRequest = () => {
     // =========================================================================
     const googleWebClientId = "459952418126-4bnko4k5cu9k6gf3h7rhcl0hst82npdh.apps.googleusercontent.com";
     const googleIosClientId = "459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm.apps.googleusercontent.com";
-    const googleAndroidClientId = "459952418126-tdgvbf25v41314h0gcpgik3shp1ul3jc.apps.googleusercontent.com";
+    // 안드로이드 클라이언트는 서명 SHA-1에 묶임. EAS 키스토어 SHA-1(901f84bb…)에 맞는 클라이언트로.
+    // (기존 tdgvbf25=SHA-1 bf3fb7b2는 다른 키스토어 → EAS 빌드에서 거부됨)
+    const googleAndroidClientId = "459952418126-de8a2a1g87tr2o9hmtkgissdksto41m5.apps.googleusercontent.com";
     // =========================================================================
 
     if (!googleWebClientId) console.warn("[GoogleAuth] Missing Google Web Client ID");
