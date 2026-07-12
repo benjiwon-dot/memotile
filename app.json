@@ -14,7 +14,10 @@
     "assetBundlePatterns": [
       "**/*"
     ],
-    "scheme": "memotile",
+    "scheme": [
+      "memotile",
+      "com.memotile.android"
+    ],
     "plugins": [
       "expo-router",
       [
