@@ -100,7 +100,7 @@
       "package": "com.memotile.android",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/icon-foreground.png",
         "backgroundColor": "#ffffff"
       },
       "splash": {
