@@ -131,7 +131,7 @@ export default function OrderSuccessScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#111" />
+                    <ActivityIndicator size="large" color="#FF7E66" />
                     <Text style={styles.processingTitle}>
                         {(t as any).processingOrder || (isThai ? "กำลังประมวลผลคำสั่งซื้อ..." : "Processing your order...")}
                     </Text>
@@ -232,29 +232,29 @@ export default function OrderSuccessScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#fff" },
+    container: { flex: 1, backgroundColor: "#FFF8F4" },
     scrollContent: { flexGrow: 1, justifyContent: "center" },
     content: { alignItems: "center", paddingHorizontal: 30, paddingVertical: 40 },
     center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 30 },
-    processingTitle: { marginTop: 14, fontSize: 18, fontWeight: "900", color: "#111", textAlign: "center" },
-    processingDesc: { marginTop: 10, fontSize: 14, color: "#6B7280", textAlign: "center", lineHeight: 20, maxWidth: 320 },
-    failTitle: { fontSize: 18, fontWeight: "900", color: "#111", textAlign: "center" },
-    failDesc: { marginTop: 10, fontSize: 14, color: "#6B7280", textAlign: "center", lineHeight: 20, maxWidth: 340 },
+    processingTitle: { marginTop: 14, fontSize: 18, fontWeight: "900", color: "#3D2B26", textAlign: "center" },
+    processingDesc: { marginTop: 10, fontSize: 14, color: "#8C7B73", textAlign: "center", lineHeight: 20, maxWidth: 320 },
+    failTitle: { fontSize: 18, fontWeight: "900", color: "#3D2B26", textAlign: "center" },
+    failDesc: { marginTop: 10, fontSize: 14, color: "#8C7B73", textAlign: "center", lineHeight: 20, maxWidth: 340 },
     iconWrapper: { marginBottom: 32 },
     textCenter: { alignItems: "center" },
-    title: { fontSize: 32, fontWeight: "900", marginBottom: 16, color: "#111", textAlign: "center" },
-    message: { fontSize: 16, color: "#6B7280", marginBottom: 40, lineHeight: 24, textAlign: "center" },
+    title: { fontSize: 32, fontWeight: "900", marginBottom: 16, color: "#3D2B26", textAlign: "center" },
+    message: { fontSize: 16, color: "#8C7B73", marginBottom: 40, lineHeight: 24, textAlign: "center" },
     stripContainer: { width: "100%", marginBottom: 32 },
-    orderInfo: { backgroundColor: "#F9FAFB", padding: 24, borderRadius: 24, borderWidth: 1, borderColor: "#F3F4F6", width: "100%" },
+    orderInfo: { backgroundColor: "#FFF0E8", padding: 24, borderRadius: 24, borderWidth: 1, borderColor: "#F2E5DC", width: "100%" },
     infoRow: { alignItems: "center", marginBottom: 12 },
-    label: { fontSize: 11, color: "#9CA3AF", textTransform: "uppercase", fontWeight: "800", letterSpacing: 1.5, marginBottom: 6 },
-    value: { fontSize: 18, fontWeight: "700", fontFamily: "Courier", color: "#111" },
+    label: { fontSize: 11, color: "#B8A79E", textTransform: "uppercase", fontWeight: "800", letterSpacing: 1.5, marginBottom: 6 },
+    value: { fontSize: 18, fontWeight: "700", fontFamily: "Courier", color: "#3D2B26" },
     estimate: { fontSize: 14, color: "#10B981", fontWeight: "700" },
     actions: { paddingHorizontal: 30, paddingBottom: 40, gap: 16 },
-    primaryBtn: { backgroundColor: "#000", height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, paddingHorizontal: 18 },
+    primaryBtn: { backgroundColor: "#FF7E66", height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center", shadowColor: "#FF7E66", shadowOpacity: 0.25, shadowRadius: 10, elevation: 5, paddingHorizontal: 18 },
     primaryBtnText: { color: "#fff", fontSize: 17, fontWeight: "700" },
-    secondaryBtn: { height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, backgroundColor: "#F3F4F6" },
-    secondaryBtnText: { color: "#111", fontSize: 15, fontWeight: "800" },
+    secondaryBtn: { height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, backgroundColor: "#FFF0E8" },
+    secondaryBtnText: { color: "#3D2B26", fontSize: 15, fontWeight: "800" },
     linkBtn: { marginTop: 6, paddingVertical: 10, paddingHorizontal: 10 },
-    linkBtnText: { color: "#6B7280", fontSize: 14, fontWeight: "700" },
+    linkBtnText: { color: "#8C7B73", fontSize: 14, fontWeight: "700" },
 });

@@ -334,7 +334,8 @@ export default function PhotobookPreview() {
             // 추가 사진도 얼굴검출 실행 → 하이라이트/배치를 스캔 사진과 동일하게 AI 판단(맞춤형)
             const add: ScanItem[] = [];
             for (const a of res.assets) {
-                const id = a.assetId as string;
+                // 안드로이드 ImagePicker는 assetId=null(포토피커 프라이버시) → uri를 식별자로. iOS는 assetId 유지.
+                const id = (a.assetId as string) || a.uri;
                 if (!id || existing.has(id)) continue;
                 let faces: any[] = [], w = a.width || 0, h = a.height || 0;
                 try {

@@ -539,7 +539,7 @@ export default function CheckoutStepTwoScreen() {
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Ionicons name="chevron-back" size={24} color="black" /></TouchableOpacity>
                 <Text style={styles.headerTitle}>{(t as any)?.["checkoutTitle"] || "Checkout"}</Text>
-                <View style={{ width: 40 }}>{isLoadingAddress && <ActivityIndicator size="small" color={colors?.ink || "#000"} />}</View>
+                <View style={{ width: 40 }}>{isLoadingAddress && <ActivityIndicator size="small" color={"#FF7E66"} />}</View>
             </View>
 
             <ScrollView ref={scrollViewRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true} onScrollBeginDrag={() => Keyboard.dismiss()}>
@@ -567,7 +567,7 @@ export default function CheckoutStepTwoScreen() {
                                         textInputContainer: { width: '100%', backgroundColor: 'transparent' },
                                         textInput: [styles.input, { marginBottom: 0 }, errors.addressLine1 && styles.inputError],
                                         listView: { position: 'absolute', top: 55, width: '100%', backgroundColor: 'white', borderRadius: 12, elevation: 5, zIndex: 9999, borderWidth: 1, borderColor: '#E5E7EB' },
-                                        row: { padding: 13, height: 48, flexDirection: 'row' }, separator: { height: 0.5, backgroundColor: '#E5E7EB' },
+                                        row: { padding: 13, height: 48, flexDirection: 'row' }, separator: { height: 0.5, backgroundColor: '#F2E5DC' },
                                     }}
                                     enablePoweredByContainer={false} fields={['address_components', 'formatted_address', 'geometry']}
                                 />
@@ -583,7 +583,7 @@ export default function CheckoutStepTwoScreen() {
 
                         <View style={styles.row}>
                             <TextInput placeholder={`${(t as any)?.["zipCode"] || "Zip Code"} *`} style={[styles.input, { flex: 1, marginRight: 8 }, errors.postalCode && styles.inputError]} value={formData.postalCode} keyboardType="numeric" onChangeText={(v) => handleInputChange("postalCode", v)} />
-                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}><Text style={{ color: "#666" }}>{(t as any)?.["thailand"] || "Thailand"}</Text></View>
+                            <View style={[styles.input, styles.readOnlyInput, { flex: 1 }]}><Text style={{ color: "#8C7B73" }}>{(t as any)?.["thailand"] || "Thailand"}</Text></View>
                         </View>
 
                         <TextInput placeholder={`${(t as any)?.["phoneNumber"] || "Phone"} *`} style={[styles.input, errors.phone && styles.inputError]} value={formData.phone} keyboardType="phone-pad" onChangeText={(v) => handleInputChange("phone", v)} />
@@ -627,7 +627,7 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     ) : !priceLoaded ? (
                         <View style={[styles.summarySection, { alignItems: "center", minHeight: 90, justifyContent: "center" }]}>
-                            <ActivityIndicator color={colors?.ink || "#000"} />
+                            <ActivityIndicator color={"#FF7E66"} />
                         </View>
                     ) : (
                         <View style={styles.summarySection}>
@@ -765,7 +765,7 @@ export default function CheckoutStepTwoScreen() {
             <Modal visible={isCreatingOrder} transparent animationType="fade">
                 <View style={styles.loadingOverlay}>
                     <View style={styles.progressBox}>
-                        <ActivityIndicator size="large" color={colors?.ink || "#111"} />
+                        <ActivityIndicator size="large" color={"#FF7E66"} />
                         <Text style={styles.progressTitle}>{getProgressTitle()}</Text>
                         <Text style={styles.progressSubtitle}>{getProgressSubtitle()}</Text>
                         {!isVerifyingPayment && (
@@ -782,25 +782,25 @@ export default function CheckoutStepTwoScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#fff" },
+    container: { flex: 1, backgroundColor: "#FFF8F4" },
     header: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
     backBtn: { padding: 4 },
     headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
     content: { padding: 20, flexGrow: 1 },
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
     formSection: { marginBottom: 32 },
-    sectionTitle: { fontSize: 13, color: "#999", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
+    sectionTitle: { fontSize: 13, color: "#B8A79E", fontWeight: "700", marginBottom: 15, textTransform: "uppercase" },
     errorBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEE2E2", padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: "#FCA5A5" },
     errorBoxText: { color: "#B91C1C", fontSize: 13, fontWeight: "600", marginLeft: 8, flex: 1 },
-    input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
+    input: { width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#F2E5DC", paddingHorizontal: 16, marginBottom: 12, fontSize: 15, backgroundColor: "#fff" },
     inputError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2", borderWidth: 1.5 },
-    instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff", overflow: "hidden" },
+    instagramInputContainer: { flexDirection: "row", alignItems: "center", width: "100%", height: 50, borderRadius: 12, borderWidth: 1, borderColor: "#F2E5DC", backgroundColor: "#fff", overflow: "hidden" },
     instagramIconBox: { paddingLeft: 14, paddingRight: 8, height: "100%", justifyContent: "center" },
-    readOnlyInput: { backgroundColor: "#f9fafb", justifyContent: "center" },
+    readOnlyInput: { backgroundColor: "#FFF0E8", justifyContent: "center" },
     row: { flexDirection: "row" },
     promoSection: { marginBottom: 24 },
     promoInputRow: { flexDirection: "row", alignItems: "center" },
-    promoApplyBtn: { height: 50, backgroundColor: "#000", borderRadius: 12, marginLeft: 8, paddingHorizontal: 20, justifyContent: "center" },
+    promoApplyBtn: { height: 50, backgroundColor: "#FF7E66", borderRadius: 12, marginLeft: 8, paddingHorizontal: 20, justifyContent: "center" },
     promoApplyText: { color: "#fff", fontWeight: "700" },
     promoSuccessText: { color: colors?.primary || "#E4405F", fontSize: 13, marginTop: 8, fontWeight: "600" },
 
@@ -810,38 +810,38 @@ const styles = StyleSheet.create({
     addMoreBtn: { marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 10, backgroundColor: "#fff", borderWidth: 1, borderColor: "#BBEBD7" },
     addMoreBtnText: { fontSize: 12.5, fontWeight: "700", color: "#047857" },
 
-    summarySection: { marginBottom: 16, padding: 16, backgroundColor: "#f9fafb", borderRadius: 16 },
+    summarySection: { marginBottom: 16, padding: 16, backgroundColor: "#FFF0E8", borderRadius: 16 },
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-    summaryLabel: { color: "#666", fontSize: 14 },
+    summaryLabel: { color: "#8C7B73", fontSize: 14 },
     summaryValue: { fontWeight: "600", fontSize: 14 },
     totalLabel: { fontWeight: "700", fontSize: 16 },
     totalValue: { fontWeight: "800", fontSize: 18 },
-    exchangeRateNotice: { fontSize: 11, color: "#9CA3AF", textAlign: "right", marginTop: 6 },
+    exchangeRateNotice: { fontSize: 11, color: "#B8A79E", textAlign: "right", marginTop: 6 },
     authBlockContainer: { marginBottom: 32 },
     loggedInBox: { backgroundColor: "#D9ECFF", padding: 16, borderRadius: 14, alignItems: "center" },
     loggedInText: { fontSize: 15, fontWeight: "600", color: "#003a70" },
     loggedOutBox: { backgroundColor: "#FFF3CD", padding: 16, borderRadius: 14, alignItems: "center" },
     loggedOutText: { fontSize: 14, color: "#856404", opacity: 0.8, marginBottom: 12 },
-    signInBtn: { backgroundColor: "#111", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
+    signInBtn: { backgroundColor: "#FF7E66", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
     signInBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
     paymentSection: { marginBottom: 32 },
     agreementContainer: { marginBottom: 20, paddingHorizontal: 4 },
     agreementRow: { flexDirection: "row", alignItems: "flex-start", paddingRight: 10 },
     checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: "#D1D5DB", alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 2, backgroundColor: "#fff" },
-    checkboxChecked: { backgroundColor: "#111", borderColor: "#111" },
+    checkboxChecked: { backgroundColor: "#FF7E66", borderColor: "#FF7E66" },
     checkboxError: { borderColor: "#EF4444", backgroundColor: "#FEF2F2" },
-    agreementText: { fontSize: 13, color: "#4B5563", lineHeight: 20, flex: 1 },
+    agreementText: { fontSize: 13, color: "#8C7B73", lineHeight: 20, flex: 1 },
     paymentItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1.5, marginBottom: 12, ...(shadows?.sm || {}) },
     paymentItemLeft: { flexDirection: "row", alignItems: "center" },
     paymentLogo: { width: 42, height: 42, marginRight: 12 },
-    paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12, backgroundColor: '#f3f4f6' },
-    paymentItemText: { fontSize: 16, fontWeight: "600", color: "#111" },
+    paymentIconBase: { width: 42, height: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 12, backgroundColor: '#FFF0E8' },
+    paymentItemText: { fontSize: 16, fontWeight: "600", color: "#3D2B26" },
     loadingOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: 24 },
     progressBox: { width: "100%", maxWidth: 340, backgroundColor: "#fff", borderRadius: 24, padding: 32, alignItems: "center", elevation: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20 },
-    progressTitle: { marginTop: 20, fontSize: 18, fontWeight: "800", color: "#111", textAlign: "center" },
-    progressSubtitle: { marginTop: 8, fontSize: 13, color: "#666", textAlign: "center", lineHeight: 20, marginBottom: 24 },
-    progressPill: { backgroundColor: "#F3F4F6", paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 16 },
-    progressPillText: { fontSize: 14, fontWeight: "800", color: "#111", letterSpacing: 0.5 },
-    progressBarBg: { width: "100%", height: 8, backgroundColor: "#F3F4F6", borderRadius: 4, overflow: "hidden" },
-    progressBarFill: { height: "100%", backgroundColor: colors?.ink || "#111", borderRadius: 4 },
+    progressTitle: { marginTop: 20, fontSize: 18, fontWeight: "800", color: "#3D2B26", textAlign: "center" },
+    progressSubtitle: { marginTop: 8, fontSize: 13, color: "#8C7B73", textAlign: "center", lineHeight: 20, marginBottom: 24 },
+    progressPill: { backgroundColor: "#FFF0E8", paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 16 },
+    progressPillText: { fontSize: 14, fontWeight: "800", color: "#3D2B26", letterSpacing: 0.5 },
+    progressBarBg: { width: "100%", height: 8, backgroundColor: "#FFF0E8", borderRadius: 4, overflow: "hidden" },
+    progressBarFill: { height: "100%", backgroundColor: "#FF7E66", borderRadius: 4 },
 });

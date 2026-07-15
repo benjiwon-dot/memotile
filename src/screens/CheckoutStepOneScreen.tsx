@@ -31,7 +31,6 @@ import { PhotobookViewer } from "../components/photobook/PhotobookViewer";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
-import { colors } from "../theme/colors";
 
 import { auth } from "../lib/firebase";
 import { User, GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
@@ -341,7 +340,7 @@ export default function CheckoutStepOneScreen() {
                                 <Text style={styles.bookTitle} numberOfLines={1}>{albumOpts.title || (locale === "TH" ? "โฟโต้บุ๊ก" : "Photobook")}</Text>
                                 <Text style={styles.bookSpec}>{bookSpec}</Text>
                                 <View style={styles.bookHintRow}>
-                                    <Ionicons name="hand-left-outline" size={13} color="#9CA3AF" />
+                                    <Ionicons name="hand-left-outline" size={13} color="#B8A79E" />
                                     <Text style={styles.bookHintText}>{locale === "TH" ? "แตะที่ปกเพื่อดู/แก้ไข" : "Tap cover to preview & edit"}</Text>
                                 </View>
                             </View>
@@ -375,8 +374,8 @@ export default function CheckoutStepOneScreen() {
                         </View>
                     ) : !priceLoaded ? (
                         <View style={[styles.summaryBlock, { alignItems: "center", justifyContent: "center", minHeight: 130 }]}>
-                            <ActivityIndicator color={colors.ink || "#000"} />
-                            <Text style={{ marginTop: 10, color: "#9CA3AF", fontSize: 13 }}>{(t as any)["loadingPrice"] || "Loading price…"}</Text>
+                            <ActivityIndicator color={"#FF7E66"} />
+                            <Text style={{ marginTop: 10, color: "#B8A79E", fontSize: 13 }}>{(t as any)["loadingPrice"] || "Loading price…"}</Text>
                         </View>
                     ) : (
                         <View style={styles.summaryBlock}>
@@ -393,8 +392,8 @@ export default function CheckoutStepOneScreen() {
                             )}
 
                             <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: pricing.isFreeShipping ? "#10B981" : "#333" }]}>{(t as any)["shipping"] || "Shipping"}</Text>
-                                <Text style={[styles.summaryValue, { color: pricing.isFreeShipping ? "#10B981" : "#333" }]}>
+                                <Text style={[styles.summaryLabel, { color: pricing.isFreeShipping ? "#10B981" : "#3D2B26" }]}>{(t as any)["shipping"] || "Shipping"}</Text>
+                                <Text style={[styles.summaryValue, { color: pricing.isFreeShipping ? "#10B981" : "#3D2B26" }]}>
                                     {pricing.isFreeShipping ? ((t as any)["free"] || "Free") : `${CURRENCY_SYMBOL}${pricing.shippingFee.toFixed(2)}`}
                                 </Text>
                             </View>
@@ -422,7 +421,7 @@ export default function CheckoutStepOneScreen() {
                                     <LoginButton
                                         text={(t as any)["auth.signinApple"] || "Continue with Apple"}
                                         onPress={handleAppleLogin}
-                                        style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
+                                        style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#F2E5DC" }}
                                         disabled={isAppleLoggingIn}
                                         icon={isAppleLoggingIn ? <ActivityIndicator size="small" color="#000" /> : <Ionicons name="logo-apple" size={20} color="#000" />}
                                     />
@@ -431,7 +430,7 @@ export default function CheckoutStepOneScreen() {
                                 <LoginButton
                                     text={(t as any)["signUpGoogle"] || "Sign up with Google"}
                                     onPress={handleGoogleLogin}
-                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
+                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#F2E5DC" }}
                                     disabled={isWebLoggingIn || (!isReady && Platform.OS !== 'web') || isSigningIn}
                                     icon={(isWebLoggingIn || isSigningIn) ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
@@ -439,8 +438,8 @@ export default function CheckoutStepOneScreen() {
                                 <LoginButton
                                     text={(t as any)["auth.continueEmail"] || "Continue with email"}
                                     onPress={() => router.push("/auth/email")}
-                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }}
-                                    icon={<Ionicons name="mail" size={20} color="#333" />}
+                                    style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#F2E5DC" }}
+                                    icon={<Ionicons name="mail" size={20} color="#3D2B26" />}
                                 />
                             </>
                         ) : (
@@ -487,7 +486,7 @@ export default function CheckoutStepOneScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#fff" },
+    container: { flex: 1, backgroundColor: "#FFF8F4" },
     header: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
     backBtn: { padding: 4 },
     headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
@@ -495,18 +494,18 @@ const styles = StyleSheet.create({
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
 
     imageScroll: { marginBottom: 16 },
-    previewImage: { width: 100, height: 100, borderRadius: 8, backgroundColor: "#eee", resizeMode: "cover" },
+    previewImage: { width: 100, height: 100, borderRadius: 8, backgroundColor: "#F2E5DC", resizeMode: "cover" },
 
     // 🆕 포토북 표지+스펙 카드
-    bookCard: { flexDirection: "row", gap: 14, alignItems: "center", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#f0f0f0", backgroundColor: "#fff", marginBottom: 16 },
+    bookCard: { flexDirection: "row", gap: 14, alignItems: "center", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#F2E5DC", backgroundColor: "#fff", marginBottom: 16 },
     bookStack: { width: 117, height: 87 }, // 표지 112×84 + 종이 단면 여백
     pageEdge: { position: "absolute", width: 112, height: 84, borderRadius: 3, backgroundColor: "#F1E9DD", borderWidth: 0.5, borderColor: "rgba(0,0,0,0.08)" }, // 책 종이 단면
-    bookCover: { position: "absolute", left: 0, top: 0, width: 112, height: 84, borderRadius: 3, backgroundColor: "#eee", resizeMode: "cover" }, // 가로 표지, 라운드 축소(8→3)
+    bookCover: { position: "absolute", left: 0, top: 0, width: 112, height: 84, borderRadius: 3, backgroundColor: "#F2E5DC", resizeMode: "cover" }, // 가로 표지, 라운드 축소(8→3)
     bookCoverEmpty: { alignItems: "center", justifyContent: "center" },
-    bookTitle: { fontSize: 17, fontWeight: "800", color: "#111" },
-    bookSpec: { fontSize: 13, color: "#6B7280", marginTop: 4 },
+    bookTitle: { fontSize: 17, fontWeight: "800", color: "#3D2B26" },
+    bookSpec: { fontSize: 13, color: "#8C7B73", marginTop: 4 },
     bookHintRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
-    bookHintText: { fontSize: 12, color: "#9CA3AF", fontWeight: "600" },
+    bookHintText: { fontSize: 12, color: "#B8A79E", fontWeight: "600" },
 
     // 🆕 안내 카드 — 작고 덜 튀게 (가격 밑)
     promoCard: { borderWidth: 1, borderColor: "#D7F0E4", backgroundColor: "#F6FCF9", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 24 },
@@ -515,29 +514,29 @@ const styles = StyleSheet.create({
     addMoreBtnText: { fontSize: 12.5, fontWeight: "700", color: "#047857" },
 
     summaryBlock: {
-        backgroundColor: "#fff", borderRadius: 20, padding: 20, borderWidth: 1, borderColor: "#f0f0f0", marginBottom: 16,
+        backgroundColor: "#fff", borderRadius: 20, padding: 20, borderWidth: 1, borderColor: "#F2E5DC", marginBottom: 16,
         shadowColor: "#000", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8, elevation: 2,
     },
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
-    summaryLabel: { fontSize: 15, color: "#333" },
+    summaryLabel: { fontSize: 15, color: "#3D2B26" },
     summaryValue: { fontSize: 15, fontWeight: "600" },
 
-    divider: { height: 1, backgroundColor: "#eee", marginVertical: 15 },
+    divider: { height: 1, backgroundColor: "#F2E5DC", marginVertical: 15 },
     totalRow: { flexDirection: "row", justifyContent: "space-between" },
     totalLabel: { fontSize: 18, fontWeight: "700" },
     totalValue: { fontSize: 18, fontWeight: "700" },
 
     authSection: { gap: 10, marginBottom: 20 },
     loginBtn: { height: 50, borderRadius: 25, alignItems: "center", justifyContent: "center" },
-    loginBtnText: { fontWeight: "600", fontSize: 15, color: "#333" },
+    loginBtnText: { fontWeight: "600", fontSize: 15, color: "#3D2B26" },
 
     loggedInInfo: { padding: 15, backgroundColor: "#e0f2fe", borderRadius: 12, alignItems: "center" },
     loggedInText: { color: "#0284c7", fontWeight: "600" },
-    signOutText: { color: "#666", fontSize: 13, marginTop: 4, textDecorationLine: "underline" },
+    signOutText: { color: "#8C7B73", fontSize: 13, marginTop: 4, textDecorationLine: "underline" },
     signInToContinueContainer: { marginBottom: 12, alignItems: "center" },
-    signInToContinueText: { fontSize: 14, color: "#666", opacity: 0.8 },
+    signInToContinueText: { fontSize: 14, color: "#8C7B73", opacity: 0.8 },
 
-    nextBtn: { height: 56, borderRadius: 28, backgroundColor: colors.ink || "#000", alignItems: "center", justifyContent: "center", marginTop: 10 },
+    nextBtn: { height: 56, borderRadius: 28, backgroundColor: "#FF7E66", alignItems: "center", justifyContent: "center", marginTop: 10 },
     disabledBtn: { backgroundColor: "#ccc" },
     nextBtnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 

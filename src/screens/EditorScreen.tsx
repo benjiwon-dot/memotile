@@ -598,7 +598,7 @@ const styles = StyleSheet.create({
 
   filmStrip: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4, gap: 8 },
   filmThumbWrap: { width: 52, height: 52, borderRadius: 8, borderWidth: 2, borderColor: "transparent", overflow: "hidden", marginRight: 8 },
-  filmThumbWrapActive: { borderColor: colors.ink || "#111" },
+  filmThumbWrapActive: { borderColor: colors.ink || "#3D2B26" },
   filmThumb: { width: "100%", height: "100%", resizeMode: "cover", backgroundColor: "#eee" },
   filmNumBadge: { position: "absolute", top: 2, left: 2, backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 8, minWidth: 16, height: 16, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
   filmNumText: { color: "#fff", fontSize: 10, fontWeight: "700" },
@@ -607,5 +607,5 @@ const styles = StyleSheet.create({
   primaryBtn: { width: "100%", maxWidth: 340, height: 52, backgroundColor: colors.ink, borderRadius: 26, alignItems: "center", justifyContent: "center", elevation: 6 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   fullLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.8)", zIndex: 9999, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 15, fontWeight: "700", color: "#111" },
+  loadingText: { marginTop: 15, fontWeight: "700", color: "#3D2B26" },
 });

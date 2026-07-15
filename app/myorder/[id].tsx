@@ -187,7 +187,7 @@ export default function OrderDetailScreen() {
         () => (
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.replace("/(tabs)/myorder")} style={styles.backBtn}>
-                    <Ionicons name="chevron-back" size={24} color="#111" />
+                    <Ionicons name="chevron-back" size={24} color="#FF7E66" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>
                     {t.orderDetailTitle || (locale === 'TH' ? "รายละเอียดคำสั่งซื้อ" : "Order Details")}
@@ -215,7 +215,7 @@ export default function OrderDetailScreen() {
             <SafeAreaView style={styles.container}>
                 {renderHeader()}
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#111" />
+                    <ActivityIndicator size="large" color="#FF7E66" />
                 </View>
             </SafeAreaView>
         );
@@ -232,7 +232,7 @@ export default function OrderDetailScreen() {
                         style={{ marginTop: 16, alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 }}
                         onPress={() => router.replace("/auth/email")}
                     >
-                        <Text style={{ color: "#111", fontWeight: "800" }}>{locale === 'TH' ? "ไปหน้าเข้าสู่ระบบ" : "Go to Login"}</Text>
+                        <Text style={{ color: "#3D2B26", fontWeight: "800" }}>{locale === 'TH' ? "ไปหน้าเข้าสู่ระบบ" : "Go to Login"}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -244,8 +244,8 @@ export default function OrderDetailScreen() {
             <SafeAreaView style={styles.container}>
                 {renderHeader()}
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#111" />
-                    <Text style={{ marginTop: 12, color: "#666", fontWeight: "600" }}>
+                    <ActivityIndicator size="large" color="#FF7E66" />
+                    <Text style={{ marginTop: 12, color: "#8C7B73", fontWeight: "600" }}>
                         {t.processingOrder || (locale === 'TH' ? "กำลังโหลดข้อมูล..." : "Processing your order...")}
                     </Text>
                 </View>
@@ -268,7 +268,7 @@ export default function OrderDetailScreen() {
                             router.replace({ pathname: "/myorder/[id]" as any, params: { id: id as string } } as any);
                         }}
                     >
-                        <Text style={{ color: "#111", fontWeight: "800" }}>{t.retry || (locale === 'TH' ? "ลองใหม่" : "Retry")}</Text>
+                        <Text style={{ color: "#3D2B26", fontWeight: "800" }}>{t.retry || (locale === 'TH' ? "ลองใหม่" : "Retry")}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -280,7 +280,7 @@ export default function OrderDetailScreen() {
             <SafeAreaView style={styles.container}>
                 {renderHeader()}
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#111" />
+                    <ActivityIndicator size="large" color="#FF7E66" />
                 </View>
             </SafeAreaView>
         );
@@ -479,39 +479,39 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#F7F7F8" },
+    container: { flex: 1, backgroundColor: "#FFF8F4" },
     content: { padding: 20 },
-    header: { height: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
+    header: { height: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#F2E5DC" },
     backBtn: { padding: 4, width: 44 },
-    headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", color: "#111", textAlign: "center" },
+    headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", color: "#3D2B26", textAlign: "center" },
     scrollContent: { padding: 20, paddingBottom: 60 },
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
     section: { marginBottom: 24 },
-    sectionTitle: { fontSize: 13, fontWeight: "800", marginBottom: 12, color: "#999", textTransform: "uppercase" },
+    sectionTitle: { fontSize: 13, fontWeight: "800", marginBottom: 12, color: "#B8A79E", textTransform: "uppercase" },
     orderSummary: { backgroundColor: "#fff", padding: 20, borderRadius: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 15, elevation: 2 },
     summaryRowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
     summaryRowBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
     orderMeta: { gap: 4 },
-    orderMetaLabel: { fontSize: 11, textTransform: "uppercase", color: "#999", fontWeight: "800" },
-    orderMetaValue: { fontSize: 14, fontFamily: "Courier", color: "#111", fontWeight: "700" },
-    orderDate: { fontSize: 14, color: "#666", fontWeight: "600" },
-    orderTotal: { fontSize: 22, fontWeight: "800", color: "#111" },
+    orderMetaLabel: { fontSize: 11, textTransform: "uppercase", color: "#B8A79E", fontWeight: "800" },
+    orderMetaValue: { fontSize: 14, fontFamily: "Courier", color: "#3D2B26", fontWeight: "700" },
+    orderDate: { fontSize: 14, color: "#8C7B73", fontWeight: "600" },
+    orderTotal: { fontSize: 22, fontWeight: "800", color: "#3D2B26" },
     itemGrid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_SPACING },
-    pbCoverCard: { width: "100%", aspectRatio: 27.9 / 21.5, borderRadius: 14, overflow: "hidden", backgroundColor: "#faf7f2", borderWidth: 1, borderColor: "#eee" },
+    pbCoverCard: { width: "100%", aspectRatio: 27.9 / 21.5, borderRadius: 14, overflow: "hidden", backgroundColor: "#faf7f2", borderWidth: 1, borderColor: "#F2E5DC" },
     pbCoverImg: { width: "100%", height: "100%" },
     pbCoverOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, backgroundColor: "rgba(20,16,14,0.42)" },
     pbCoverOverlayText: { color: "#fff", fontWeight: "800", fontSize: 14 },
-    itemCard: { width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: 12, overflow: "hidden", backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee" },
+    itemCard: { width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: 12, overflow: "hidden", backgroundColor: "#fff", borderWidth: 1, borderColor: "#F2E5DC" },
     itemImg: { width: "100%", height: "100%" },
-    detailsCard: { backgroundColor: "#fff", padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "#eee" },
+    detailsCard: { backgroundColor: "#fff", padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "#F2E5DC" },
     detailRow: { marginBottom: 12 },
-    detailLabel: { fontSize: 11, fontWeight: "700", color: "#999", textTransform: "uppercase", marginBottom: 2 },
-    detailValue: { fontSize: 15, color: "#111", fontWeight: "600" },
-    paymentText: { fontSize: 16, fontWeight: "700", color: "#111" },
+    detailLabel: { fontSize: 11, fontWeight: "700", color: "#B8A79E", textTransform: "uppercase", marginBottom: 2 },
+    detailValue: { fontSize: 15, color: "#3D2B26", fontWeight: "600" },
+    paymentText: { fontSize: 16, fontWeight: "700", color: "#3D2B26" },
     promoLabel: { flexDirection: "row", alignItems: "center", marginTop: 8 },
     promoText: { color: "#10B981", fontWeight: "700", fontSize: 14 },
     notFoundTitle: { fontSize: 20, fontWeight: "800", marginBottom: 8, textAlign: "center", marginTop: 40 },
-    notFoundDesc: { fontSize: 14, color: "#666", textAlign: "center" },
+    notFoundDesc: { fontSize: 14, color: "#8C7B73", textAlign: "center" },
     shippingBanner: { backgroundColor: "#10B981", borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20, shadowColor: "#10B981", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
     shippingBannerTitle: { color: "#fff", fontSize: 16, fontWeight: "800", marginBottom: 2 },
     shippingBannerText: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "600", fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },

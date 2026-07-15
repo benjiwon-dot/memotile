@@ -18,9 +18,16 @@ async function resolveMidRes(assetId: string): Promise<string | null> {
     if (inflight.has(assetId)) return inflight.get(assetId)!;
     const p = (async () => {
         try {
-            // 보이는 윈도우(적은 수)만이므로 iCloud 원본도 다운로드 허용 → 선명. (전체가 아니라 감당됨)
-            const info = await MediaLibrary.getAssetInfoAsync(assetId, { shouldDownloadFromNetwork: true });
-            const src = (info as any)?.localUri || (info as any)?.uri;
+            let src: string | null = null;
+            // 안드로이드 수동추가 사진은 assetId가 URI(file://·content://·경로) → getAssetInfoAsync 불가.
+            // 그 경우 원본 URI를 직접 2048px 소스로 사용(=선명). iOS/스캔 사진은 실제 assetId → 기존 경로.
+            if (assetId.startsWith("file://") || assetId.startsWith("content://") || assetId.startsWith("/")) {
+                src = assetId;
+            } else {
+                // 보이는 윈도우(적은 수)만이므로 iCloud 원본도 다운로드 허용 → 선명. (전체가 아니라 감당됨)
+                const info = await MediaLibrary.getAssetInfoAsync(assetId, { shouldDownloadFromNetwork: true });
+                src = (info as any)?.localUri || (info as any)?.uri;
+            }
             if (!src) return null; // 그래도 없으면 썸네일 유지
             const out = await manipulateAsync(src, [{ resize: { width: MID_WIDTH } }], { compress: 0.9, format: SaveFormat.JPEG });
             midCache.set(assetId, out.uri);

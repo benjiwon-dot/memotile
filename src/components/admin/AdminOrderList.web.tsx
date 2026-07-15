@@ -521,6 +521,40 @@ export default function AdminOrderList() {
         }
     };
 
+    // 포토북 인쇄용 JPG 링크 엑셀: 서버가 PDF→300dpi JPG 래스터(1회) + 파일별 서명URL(30일)
+    // → 파일당 1행(cover.jpg, page_01.jpg …) CSV(BOM, 엑셀용) 다운로드. JPG를 원하는 프린팅 업체 전달용.
+    const handleExportJpgExcel = async () => {
+        const targets = (selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders)
+            .filter((o) => (o as any).productType === "photobook" || !!(o as any).photobook);
+        if (targets.length === 0) { alert("포토북 주문이 없습니다. (JPG 내보내기는 포토북 전용)"); return; }
+        setBulkLoading(true);
+        try {
+            const fn = httpsCallable(functions, "adminExportJpgLinks");
+            const res = await fn({ orderIds: targets.map((o) => o.id) });
+            const { rows = [], errors = [] } = (res.data as any) || {};
+            if (rows.length === 0) { alert("생성된 JPG가 없습니다. (PDF가 먼저 생성돼야 합니다)"); return; }
+
+            const byId = new Map(targets.map((o) => [o.id, o]));
+            const excelRows = rows.map((r: any) => {
+                const o: any = byId.get(r.orderId) || {};
+                const pbData = o.photobook || {};
+                return {
+                    "Order Number": r.orderCode,
+                    "Name": o.shipping?.fullName || o.customer?.fullName || "Guest",
+                    "Product": `Photobook ${pbData.size ?? ""} ${pbData.cover ?? ""}`.trim(),
+                    "File": r.file,
+                    "JPG URL": r.url,
+                };
+            });
+            downloadTextFile(`Photobook_JPG_Links_${new Date().toISOString().slice(0, 10)}.csv`, "\uFEFF" + toCsv(excelRows));
+            if (errors.length > 0) alert(`⚠️ 일부 주문 실패 (${errors.length}건):\n` + errors.map((e: any) => `${e.orderId.slice(0, 8)}: ${e.error}`).join("\n"));
+        } catch (e: any) {
+            alertCallableError("JPG Export failed:", e);
+        } finally {
+            setBulkLoading(false);
+        }
+    };
+
     const handleExportInstaInfo = async () => {
         const targets = selectedIds.size > 0 ? visibleOrders.filter((o) => selectedIds.has(o.id)) : visibleOrders;
         if (targets.length === 0) {
@@ -643,6 +677,10 @@ export default function AdminOrderList() {
 
                         <button onClick={handleExportCleanCSV} disabled={bulkLoading} className="bg-zinc-700 text-white hover:bg-zinc-600 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
                             {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} Export CSV
+                        </button>
+
+                        <button onClick={handleExportJpgExcel} disabled={bulkLoading} title="포토북 인쇄용 300dpi JPG 링크 엑셀 (JPG 요구 프린팅 업체용)" className="bg-amber-600 text-white hover:bg-amber-500 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2">
+                            {bulkLoading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} JPG Links
                         </button>
 
                         <button onClick={handleExportInstaInfo} disabled={bulkLoading} className="bg-pink-600 text-white hover:bg-pink-700 px-3 py-2 rounded text-xs font-black inline-flex items-center gap-2 shadow-sm">

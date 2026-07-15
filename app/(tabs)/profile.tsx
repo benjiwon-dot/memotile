@@ -235,8 +235,8 @@ export default function Profile() {
                         <View style={[styles.card, pbOn && { backgroundColor: c.surface }]}>
                             {group.items.map((item: any, iIdx: number) => {
                                 const isLast = iIdx === group.items.length - 1;
-                                const textColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#111");
-                                const iconColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#111");
+                                const textColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#3D2B26");
+                                const iconColor = item.isDestructive ? colors.danger : (pbOn ? c.ink : "#3D2B26");
 
                                 return (
                                     <Pressable
@@ -306,7 +306,7 @@ export default function Profile() {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: "#F7F7F8", paddingBottom: 60 },
     headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    header: { fontSize: 28, fontWeight: "800", marginBottom: 24, color: "#111", paddingHorizontal: 20, marginTop: 20 },
+    header: { fontSize: 28, fontWeight: "800", marginBottom: 24, color: "#3D2B26", paddingHorizontal: 20, marginTop: 20 },
     scrollContent: { paddingHorizontal: 20 },
     section: { marginBottom: 28 },
     sectionTitle: { fontSize: 13, fontWeight: "600", color: "#8E8E93", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8, marginLeft: 4 },
@@ -326,7 +326,7 @@ const styles = StyleSheet.create({
         flexShrink: 1,
         marginRight: 10
     },
-    rowTitle: { fontSize: 16, fontWeight: "500", color: "#111" },
+    rowTitle: { fontSize: 16, fontWeight: "500", color: "#3D2B26" },
     rowRight: {
         flexDirection: "row",
         alignItems: "center",
@@ -346,9 +346,9 @@ const styles = StyleSheet.create({
         padding: 24, paddingBottom: 50, alignItems: "center", ...shadows.lg,
     },
     sheetHandle: { width: 40, height: 5, backgroundColor: "#E5E7EB", borderRadius: 10, marginBottom: 20 },
-    sheetTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 20 },
+    sheetTitle: { fontSize: 18, fontWeight: "700", color: "#3D2B26", marginBottom: 20 },
     sheetCard: { width: '100%', backgroundColor: "#F8F9FA", padding: 18, borderRadius: 16, marginBottom: 24 },
     sheetContent: { fontSize: 15, lineHeight: 22, color: "#4B5563" },
-    confirmButton: { width: '100%', height: 54, backgroundColor: "#111", borderRadius: 12, justifyContent: "center", alignItems: "center" },
+    confirmButton: { width: '100%', height: 54, backgroundColor: "#FF7E66", borderRadius: 12, justifyContent: "center", alignItems: "center" },
     confirmButtonText: { color: "white", fontSize: 16, fontWeight: "600" }
 });

@@ -104,6 +104,7 @@ export default function PhotobookScan() {
     const untilRef = useRef<number | undefined>(undefined);
     const hasMoreRef = useRef(true);
     const loadingRef = useRef(false);
+    const scanningRef = useRef(false); // startScan 재진입 방지(더블탭/Pressable 더블파이어 → 앵커 중복임베딩 방지)
     const seenRef = useRef<Set<string>>(new Set());
     const seenNearRef = useRef<Set<string>>(new Set()); // near-miss 중복 방지
     const scannedTotalRef = useRef(0); // perf 실측 누적
@@ -206,6 +207,9 @@ export default function PhotobookScan() {
     }
 
     async function startScan() {
+        if (scanningRef.current) return; // 이미 스캔 중이면 중복 실행 차단(앵커 중복임베딩·자원경쟁 방지)
+        scanningRef.current = true;
+        try {
         const perm = await requestLibraryPermission();
         if (!perm.granted) {
             setPhase("denied");
@@ -240,6 +244,9 @@ export default function PhotobookScan() {
         }
         await flushScanCache(); // 남은 캐시 저장
         setPhase("ready");
+        } finally {
+            scanningRef.current = false;
+        }
     }
 
     async function loadBatch(markNew: boolean): Promise<number> {
@@ -378,24 +385,42 @@ export default function PhotobookScan() {
             exif: false,
         });
         if (res.canceled || !res.assets?.length) return;
-        // 추가 사진도 얼굴검출 실행 → 하이라이트/배치를 스캔 사진과 동일하게 판단(맞춤형)
-        const add: MatchedItem[] = [];
-        for (const a of res.assets) {
-            const id = a.assetId as string;
-            if (!id) continue; // 원본 업로드 위해 assetId 필수
-            let faces: any[] = [], w = a.width || 0, h = a.height || 0;
-            try {
-                const r: any = await scanAsset(id, 256, thumbPath(id));
-                if (r && !r.unavailable) { faces = r.faces || []; w = r.width || w; h = r.height || h; }
-            } catch { /* 검출 실패 → 얼굴 없이 */ }
-            add.push({ assetId: id, thumbUri: a.uri, width: w, height: h, faces, creationTime: (a as any).creationTime ?? Date.now(), processedAt: Date.now(), manual: true, score: 1, ageMonths: null });
-        }
-        if (add.length === 0) return;
+
+        // 안드로이드 ImagePicker는 assetId=null(포토피커 프라이버시) → uri를 식별자로. iOS는 assetId 유지.
+        const picked = res.assets
+            .map((a) => ({ a, id: (a.assetId as string) || a.uri }))
+            .filter((x) => !!x.id);
+        if (picked.length === 0) return;
+
+        // 1) 낙관적 추가: 얼굴검출을 기다리지 않고 즉시 보기열에 표시 → 체감 대기 0(3초 멈춤·이탈 제거).
+        const initial: MatchedItem[] = picked.map(({ a, id }) => ({
+            assetId: id, thumbUri: a.uri, width: a.width || 0, height: a.height || 0,
+            faces: [], creationTime: (a as any).creationTime ?? Date.now(), processedAt: Date.now(),
+            manual: true, score: 1, ageMonths: null,
+        }));
         setManualItems((prev) => {
             const ids = new Set(prev.map((x) => x.assetId));
-            return [...prev, ...add.filter((x) => !ids.has(x.assetId))];
+            return [...prev, ...initial.filter((x) => !ids.has(x.assetId))];
         });
-        setDeselected((prev) => { const n = new Set(prev); add.forEach((x) => n.delete(x.assetId)); return n; }); // 다시 넣으면 제외 해제
+        setDeselected((prev) => { const n = new Set(prev); initial.forEach((x) => n.delete(x.assetId)); return n; }); // 다시 넣으면 제외 해제
+
+        // 2) 얼굴검출은 백그라운드 병렬(동시 4)로 → 완료되는 대로 해당 항목 faces/크기 갱신(크롭 센터링용).
+        //    이미 화면엔 떠 있으므로 사용자는 기다리지 않음.
+        (async () => {
+            const CONC = 4;
+            for (let i = 0; i < picked.length; i += CONC) {
+                await Promise.all(picked.slice(i, i + CONC).map(async ({ id }) => {
+                    try {
+                        const r: any = await scanAsset(id, 256, thumbPath(id));
+                        if (r && !r.unavailable) {
+                            setManualItems((prev) => prev.map((x) =>
+                                x.assetId === id ? { ...x, faces: r.faces || [], width: r.width || x.width, height: r.height || x.height } : x
+                            ));
+                        }
+                    } catch { /* 검출 실패 → 얼굴 없이 유지 */ }
+                }));
+            }
+        })();
     }
 
     // (c) 제외한 사진 전부 되돌리기

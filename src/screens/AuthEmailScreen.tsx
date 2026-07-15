@@ -412,7 +412,7 @@ export default function AuthEmailScreen() {
             <Modal visible={isSigningIn || loading || isAppleLoggingIn} transparent animationType="fade">
                 <View style={styles.overlayContainer}>
                     <View style={styles.loadingBox}>
-                        <ActivityIndicator size="large" color="#111" />
+                        <ActivityIndicator size="large" color="#FF7E66" />
                         <Text style={styles.loadingText}>Processing...</Text>
                     </View>
                 </View>
@@ -431,17 +431,17 @@ const styles = StyleSheet.create({
     tabContainer: { flexDirection: 'row', marginBottom: 24, backgroundColor: '#f3f4f6', borderRadius: 12, padding: 4 },
     tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
     activeTab: { backgroundColor: '#fff', elevation: 2 },
-    tabText: { fontWeight: '600', color: '#666', fontSize: 14 },
-    activeTabText: { color: '#000' },
+    tabText: { fontWeight: '600', color: '#8C7B73', fontSize: 14 },
+    activeTabText: { color: '#FF7E66' },
     inputs: { gap: 16, marginBottom: 24 },
     inputGroup: { gap: 8 },
-    label: { fontSize: 14, fontWeight: '600', color: '#333' },
+    label: { fontSize: 14, fontWeight: '600', color: '#3D2B26' },
     input: { height: 50, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: '#f9fafb' },
-    mainBtn: { height: 52, backgroundColor: '#111', borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+    mainBtn: { height: 52, backgroundColor: '#FF7E66', borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
     disabledBtn: { opacity: 0.7 },
     mainBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     extraActions: { marginTop: 20, alignItems: 'center', gap: 16 },
-    secondaryBtnText: { color: '#666', fontSize: 14 },
+    secondaryBtnText: { color: '#8C7B73', fontSize: 14 },
     signupRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
     signupLinkText: { color: '#FF6F91', fontSize: 14, fontWeight: '700' },
     refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -452,8 +452,8 @@ const styles = StyleSheet.create({
     socialBtn: { height: 52, borderRadius: 26, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
     socialBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     socialIcon: { width: 18, height: 18 },
-    socialBtnText: { color: '#333', fontSize: 16, fontWeight: '600' },
+    socialBtnText: { color: '#3D2B26', fontSize: 16, fontWeight: '600' },
     overlayContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
     loadingBox: { backgroundColor: '#fff', padding: 24, borderRadius: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4 },
-    loadingText: { marginTop: 12, fontSize: 15, fontWeight: '600', color: '#333' }
+    loadingText: { marginTop: 12, fontSize: 15, fontWeight: '600', color: '#3D2B26' }
 });

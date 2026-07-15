@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
     content: { flex: 1 },
     topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
     date: { fontSize: 13, color: '#8E8E93', fontWeight: '500' },
-    orderId: { fontSize: 13, color: '#111', fontWeight: '600', fontFamily: 'Courier' },
+    orderId: { fontSize: 13, color: '#3D2B26', fontWeight: '600', fontFamily: 'Courier' },
     imageStrip: { flexDirection: 'row', gap: 6, marginBottom: 16, alignItems: 'center' },
     stripItem: { width: 44, height: 44, borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: '#f0f0f0' },
     stripImg: { width: '100%', height: '100%' },
@@ -158,5 +158,5 @@ const styles = StyleSheet.create({
     pbBadgeText: { fontSize: 12, fontWeight: '800', color: '#4f46e5' },
     bottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     itemCount: { fontSize: 14, color: '#666' },
-    totalPrice: { fontSize: 16, fontWeight: '700', color: '#111' }
+    totalPrice: { fontSize: 16, fontWeight: '700', color: '#3D2B26' }
 });

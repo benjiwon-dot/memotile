@@ -24,7 +24,7 @@ const AuthRedirectHandler = () => {
 
     return (
         <View style={styles.container}>
-            <ActivityIndicator size="large" color="#000" />
+            <ActivityIndicator size="large" color="#FF7E66" />
             <Text style={styles.text}>Authenticating...</Text>
         </View>
     );
@@ -42,6 +42,6 @@ const styles = StyleSheet.create({
     text: {
         marginTop: 20,
         fontSize: 16,
-        color: "#666",
+        color: "#8C7B73",
     },
 });

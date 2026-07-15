@@ -71,7 +71,7 @@ export default function Orders() {
     if (loading) {
         return (
             <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-                <ActivityIndicator size="large" color="#000" />
+                <ActivityIndicator size="large" color="#FF7E66" />
             </View>
         );
     }
@@ -114,14 +114,14 @@ export default function Orders() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.surface || '#F7F7F8',
+        backgroundColor: colors.surface || '#FFF8F4',
     },
     header: {
         fontSize: 32,
         fontWeight: "700",
         paddingHorizontal: 20,
         marginBottom: 20,
-        color: "#111",
+        color: "#3D2B26",
     },
     list: {
         paddingHorizontal: 20,
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontWeight: "600",
         fontSize: 18,
-        color: "#999",
+        color: "#B8A79E",
     },
     center: {
         flex: 1,
@@ -148,12 +148,12 @@ const styles = StyleSheet.create({
     },
     authMessage: {
         fontSize: 16,
-        color: "#666",
+        color: "#8C7B73",
         textAlign: "center",
         marginBottom: 20,
     },
     loginBtn: {
-        backgroundColor: "#000",
+        backgroundColor: "#FF7E66",
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: 20,

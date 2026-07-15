@@ -16,6 +16,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 // ✅ External Libraries
 import sharp from "sharp";
 import { generateAndStorePhotobookPdf } from "./photobookPdf";
+import { ensureOrderJpgs } from "./photobookJpg";
 const crypto = require("crypto");
 const archiver = require("archiver");
 const axios = require("axios");
@@ -1259,3 +1260,47 @@ export const payletterReturn = onRequest({ region: "us-central1" }, async (req, 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1"><title>Payment Processed</title><style>body { text-align: center; padding-top: 60px; font-family: -apple-system, sans-serif; background: #fff; color: #111; } h2 { color: #111; font-size: 24px; margin-bottom: 12px; } p { color: #6B7280; font-size: 15px; margin-bottom: 30px; line-height: 1.5; padding: 0 20px; } .btn { display: inline-block; padding: 14px 28px; background: #111; color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; }</style></head><body><h2>Payment Processed</h2><p>If the app doesn't open automatically, please tap <b>"Return to App"</b>.</p><a href="${targetScheme}" class="btn">Return to App</a><script>setTimeout(() => { window.location.href = "${targetScheme}"; }, 500);</script></body></html>`;
     res.status(200).send(html);
 });
+// ─────────────────────────────────────────────────────────────
+// 어드민: 포토북 인쇄용 JPG 링크 (JPG를 요구하는 프린팅 업체용)
+// 기존 인쇄용 PDF(cover.pdf + pages/*.pdf)를 300dpi JPG로 래스터(1회, 이후 재사용)
+// → 파일별 서명URL(30일) 반환. 어드민 리스트가 엑셀(CSV)로 만들어 다운로드.
+// 기존 PDF/ZIP 경로는 무변경(추가 산출물).
+// ─────────────────────────────────────────────────────────────
+export const adminExportJpgLinks = onCall(
+    { region: "us-central1", cors: true, memory: "4GiB", timeoutSeconds: 540 },
+    async (req) => {
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) throw new HttpsError("permission-denied", "Admin only.");
+        const { orderIds } = (req.data || {}) as any;
+        if (!Array.isArray(orderIds) || orderIds.length === 0) throw new HttpsError("invalid-argument", "orderIds required.");
+
+        const db = getFirestore();
+        const bucket = getStorage().bucket();
+        const rows: { orderId: string; orderCode: string; file: string; url: string }[] = [];
+        const errors: { orderId: string; error: string }[] = [];
+
+        for (const rawOrderId of orderIds) {
+            const orderId = String(rawOrderId);
+            try {
+                const snap = await db.collection("orders").doc(orderId).get();
+                if (!snap.exists) { errors.push({ orderId, error: "not found" }); continue; }
+                const orderData: any = snap.data() || {};
+                const orderCode = orderData.orderCode || orderId.slice(0, 8);
+
+                const files = await ensureOrderJpgs(orderData);
+                for (const f of files) {
+                    const [url] = await bucket.file(f.path).getSignedUrl({
+                        action: "read",
+                        expires: Date.now() + 1000 * 60 * 60 * 24 * 30, // 30일(프린팅 업체 전달용)
+                        responseDisposition: `attachment; filename="${orderCode}_${f.name}"`,
+                        responseType: "image/jpeg",
+                    });
+                    rows.push({ orderId, orderCode, file: f.name, url });
+                }
+            } catch (e: any) {
+                console.error("[adminExportJpgLinks]", orderId, e);
+                errors.push({ orderId, error: e?.message || String(e) });
+            }
+        }
+        return { ok: true, rows, errors };
+    }
+);

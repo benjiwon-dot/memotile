@@ -70,7 +70,14 @@ class VisionFaceModule : Module() {
   private val ortSession: OrtSession by lazy {
     val ctx = appContext.reactContext!!
     val bytes = ctx.assets.open("sface.onnx").use { it.readBytes() }
-    ortEnv.createSession(bytes, OrtSession.SessionOptions())
+    val opts = OrtSession.SessionOptions().apply {
+      setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+      setIntraOpNumThreads(4) // 멀티코어 활용(iOS ANE 대비 CPU 병렬)
+      // XNNPACK(모바일 CPU SIMD 가속) — 소형 MobileFaceNet에 NNAPI보다 안정적으로 빠름.
+      // AAR에 미포함이면 예외 → 기본 CPU로 폴백(스레드/최적화는 유지).
+      try { addXnnpack(mapOf("intra_op_num_threads" to "4")) } catch (t: Throwable) { /* 폴백 */ }
+    }
+    ortEnv.createSession(bytes, opts)
   }
 
   // ArcFace 112 template 기준점 (iOS refLeftEye/refRightEye와 동일값).
@@ -131,9 +138,16 @@ class VisionFaceModule : Module() {
       }
     }
 
-    // ── 모델 워밍: SFace ORT 세션 프리로드 + 더미 추론 → 첫 스캔 스파이크 억제. iOS warmUpFace 대응. ──
+    // ── 모델 워밍: SFace ORT + ML Kit 검출기(2종) 프리로드 → 첫 앵커의 모델 로드 지연 제거. iOS warmUpFace 대응. ──
     AsyncFunction("warmUpFace") { promise: Promise ->
       try { runSFace(FloatArray(3 * 112 * 112)) } catch (e: Exception) { /* noop */ }
+      try {
+        val dummy = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+        val img = InputImage.fromBitmap(dummy, 0)
+        Tasks.await(fastDetector.process(img))      // ML Kit 검출기 로드
+        Tasks.await(landmarkDetector.process(img))  // ML Kit 랜드마크 검출기 로드
+        dummy.recycle()
+      } catch (e: Exception) { /* noop */ }
       promise.resolve(true)
     }
 

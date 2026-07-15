@@ -18,6 +18,7 @@
         "firebase-admin": "^13.7.0",
         "firebase-functions": "^7.2.3",
         "jszip": "^3.10.1",
+        "pdf-to-png-converter": "^3.18.0",
         "pdfkit": "^0.15.2",
         "sharp": "^0.33.5"
     },
