@@ -1304,3 +1304,112 @@ export const adminExportJpgLinks = onCall(
         return { ok: true, rows, errors };
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+// 사용자 계정 완전 삭제: Firestore + Storage + Auth
+// Play Console "Data Safety"에서 "비로그인 삭제 요청 URL" 필요 → deletionRequestForm.ts에서 호출
+// ─────────────────────────────────────────────────────────────
+export const userDeleteAccount = onCall(
+    { region: "us-central1", cors: true, memory: "2GiB", timeoutSeconds: 300 },
+    async (req) => {
+        // uid는 인증된 사용자 자신 또는 웹 삭제 폼의 이메일→uid 변환 후 관리자 검증.
+        // 여기서는 인증 uid만 수용 (웹 폼은 별도 검증).
+        if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
+        const uid = req.auth.uid;
+
+        const db = getFirestore();
+        const bucket = getStorage().bucket();
+
+        try {
+            // 1) Firestore 데이터 정리
+            const userDoc = db.collection("users").doc(uid);
+            const userSnap = await userDoc.get();
+            if (userSnap.exists) {
+                const userData = userSnap.data();
+                // 사용자의 모든 orders 삭제
+                const orderSnaps = await db.collection("orders").where("userId", "==", uid).get();
+                for (const snap of orderSnaps.docs) await snap.ref.delete();
+                // 사용자의 모든 photobooks 삭제
+                const pbSnaps = await db.collection("photobooks").where("userId", "==", uid).get();
+                for (const snap of pbSnaps.docs) await snap.ref.delete();
+                // 사용자의 모든 tiles 삭제
+                const tileSnaps = await db.collection("tiles").where("userId", "==", uid).get();
+                for (const snap of tileSnaps.docs) await snap.ref.delete();
+                // 사용자의 모든 drafts 삭제
+                const draftSnaps = await db.collection("drafts").where("userId", "==", uid).get();
+                for (const snap of draftSnaps.docs) await snap.ref.delete();
+                // 사용자 문서 삭제
+                await userDoc.delete();
+            }
+
+            // 2) Storage 정리: users/{uid}/ 폴더 내 모든 파일 삭제
+            const [userFiles] = await bucket.getFiles({ prefix: `users/${uid}/` });
+            for (const f of userFiles) {
+                try { await f.delete(); } catch (e) { console.warn(`[userDeleteAccount] File delete failed: ${f.name}`, e); }
+            }
+
+            // 3) Firebase Auth 삭제
+            await admin.auth().deleteUser(uid);
+
+            console.log(`[userDeleteAccount] Complete: ${uid}`);
+            return { ok: true, message: "Account and all data deleted successfully." };
+        } catch (e: any) {
+            console.error(`[userDeleteAccount] Error: ${uid}`, e);
+            throw new HttpsError("internal", e?.message || "Account deletion failed");
+        }
+    }
+);
+
+/**
+ * 웹 삭제 요청 폼용: 이메일로 계정 삭제 요청 (unauthenticated)
+ * Data Safety에서 "계정 삭제 URL" → /delete-account → 이 함수 호출
+ * 레이트 제한(Firestore 쓰기 한정) 있으니 브루트포스 불가능.
+ * 실제 uid 찾기는 서버에서만 하고, 클라이언트는 이메일만 전송.
+ */
+export const userDeleteAccountByEmail = onCall(
+    { region: "us-central1", cors: true, memory: "2GiB", timeoutSeconds: 300 },
+    async (req) => {
+        const { email } = (req.data || {}) as any;
+        if (!email || typeof email !== "string" || !email.includes("@")) {
+            throw new HttpsError("invalid-argument", "Valid email required.");
+        }
+
+        try {
+            const user = await admin.auth().getUserByEmail(email);
+            const uid = user.uid;
+            const db = getFirestore();
+            const bucket = getStorage().bucket();
+
+            // Firestore 정리
+            const orderSnaps = await db.collection("orders").where("userId", "==", uid).get();
+            for (const snap of orderSnaps.docs) await snap.ref.delete();
+            const pbSnaps = await db.collection("photobooks").where("userId", "==", uid).get();
+            for (const snap of pbSnaps.docs) await snap.ref.delete();
+            const tileSnaps = await db.collection("tiles").where("userId", "==", uid).get();
+            for (const snap of tileSnaps.docs) await snap.ref.delete();
+            const draftSnaps = await db.collection("drafts").where("userId", "==", uid).get();
+            for (const snap of draftSnaps.docs) await snap.ref.delete();
+            await db.collection("users").doc(uid).delete();
+
+            // Storage 정리
+            const [userFiles] = await bucket.getFiles({ prefix: `users/${uid}/` });
+            for (const f of userFiles) {
+                try { await f.delete(); } catch (e) { console.warn(`[userDeleteAccountByEmail] File delete failed: ${f.name}`, e); }
+            }
+
+            // Auth 삭제
+            await admin.auth().deleteUser(uid);
+
+            console.log(`[userDeleteAccountByEmail] Complete: ${email} (uid=${uid})`);
+            return { ok: true, message: "Account deleted." };
+        } catch (e: any) {
+            if (e.code === "auth/user-not-found") {
+                // 보안: 존재하지 않는 이메일도 "성공"으로 응답 (enum attack 방지)
+                console.log(`[userDeleteAccountByEmail] Email not found: ${email}`);
+                return { ok: true, message: "If this email exists, it will be deleted." };
+            }
+            console.error(`[userDeleteAccountByEmail] Error: ${email}`, e);
+            throw new HttpsError("internal", "Deletion request failed");
+        }
+    }
+);

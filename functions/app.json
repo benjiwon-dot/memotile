@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "a953bcdf-7c4a-4d6f-9fd6-7901f8bd4df8"
+      }
+    },
+    "android": {
+      "package": "com.benjiwon.functions"
+    }
+  }
+}

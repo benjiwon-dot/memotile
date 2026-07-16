@@ -15,6 +15,7 @@ import TermsOfService from './pages/TermsOfService';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
 import AdminPromos from './pages/AdminPromos';
+import DeleteAccountRequest from './pages/DeleteAccountRequest';
 import SplashScreen from './components/common/SplashScreen';
 
 function Layout() {
@@ -28,7 +29,8 @@ function Layout() {
     location.pathname === "/privacy" ||
     location.pathname === "/terms" ||
     location.pathname === "/faq" ||
-    location.pathname === "/contact";
+    location.pathname === "/contact" ||
+    location.pathname === "/delete-account";
 
   return (
     <>
@@ -44,6 +46,7 @@ function Layout() {
         <Route path="/terms" element={<TermsOfService />} />
         <Route path="/faq" element={<FAQ />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/delete-account" element={<DeleteAccountRequest />} />
 
         {/* Creation Flow (Outside Tabs) */}
         <Route path="/create/select" element={<PhotoSelect />} />

@@ -16,6 +16,8 @@ import { shadows } from "../../src/theme/shadows";
 import { auth, db } from "../../src/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import { deleteUser } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../src/lib/firebase";
 
 export default function Profile() {
     const { t, locale } = useLanguage();
@@ -94,7 +96,7 @@ export default function Profile() {
         );
     };
 
-    // 회원 탈퇴 로직
+    // 회원 탈퇴 로직 (Cloud Function: Firestore+Storage 정리 + Auth 삭제)
     const handleDeleteAccount = () => {
         Alert.alert(
             (t as any).deleteAccountTitle || (locale === 'TH' ? "ลบบัญชี" : "Delete Account"),
@@ -106,20 +108,17 @@ export default function Profile() {
                     style: "destructive",
                     onPress: async () => {
                         if (user) {
+                            setIsLoading(true);
                             try {
-                                await deleteUser(user);
+                                const fn = httpsCallable(functions, "userDeleteAccount");
+                                await fn();
                                 if (clearDraft) await clearDraft();
                                 if (clearPhotos) clearPhotos();
+                                await auth.signOut();
                                 router.replace("/");
                             } catch (error: any) {
-                                if (error.code === 'auth/requires-recent-login') {
-                                    Alert.alert(
-                                        locale === 'TH' ? "จำเป็นต้องยืนยันตัวตน" : "Authentication Required",
-                                        locale === 'TH' ? "โปรดออกจากระบบและเข้าสู่ระบบอีกครั้งเพื่อลบบัญชีของคุณ" : "Please sign out and sign in again to delete your account."
-                                    );
-                                } else {
-                                    Alert.alert(locale === 'TH' ? "ข้อผิดพลาด" : "Error", error.message);
-                                }
+                                setIsLoading(false);
+                                Alert.alert(locale === 'TH' ? "ข้อผิดพลาด" : "Error", error?.message || "Account deletion failed");
                             }
                         }
                     }
