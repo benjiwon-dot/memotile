@@ -108,6 +108,11 @@ export default function Index() {
         });
     };
 
+    // 이어하기 배너 통합용 파생 상태 (배너는 항상 1개만 뜬다)
+    const tileResumable = hasDraft && !!user && !isGhost;
+    const pbResumable = photobookEnabled && pbDraft;
+    const bothResumable = tileResumable && pbResumable;
+
     const handleResume = async () => {
         const loaded = await loadDraft();
         if (loaded) {
@@ -230,33 +235,40 @@ export default function Index() {
 
     return (
         <View style={[styles.container, photobookEnabled && { backgroundColor: c.bg }]}>
-            {hasDraft && user && !isGhost && (
+            {/* 이어하기 배너 — 타일/포토북을 하나로 통합(둘 다 있어도 배너는 1개, 칩으로 선택) */}
+            {(tileResumable || pbResumable) && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }, photobookEnabled && { backgroundColor: c.surface, borderColor: c.border }]}>
                     <View style={styles.resumeContent}>
-                        <View>
-                            <Text style={[styles.resumeTitle, photobookEnabled && { color: c.ink }]}>{t.resumeTitle}</Text>
-                            <Text style={[styles.resumeSubtitle, photobookEnabled && { color: c.textSecondary }]}>{t.resumeSubtitle}</Text>
+                        <View style={{ flex: 1, marginRight: 10 }}>
+                            <Text style={[styles.resumeTitle, photobookEnabled && { color: c.ink }]} numberOfLines={1}>
+                                {bothResumable ? t.resumeBothTitle : pbResumable ? t.resumePbTitle : t.resumeTitle}
+                            </Text>
+                            <Text style={[styles.resumeSubtitle, photobookEnabled && { color: c.textSecondary }]} numberOfLines={1}>
+                                {bothResumable ? t.resumeBothSubtitle : pbResumable ? t.resumePbSubtitle : t.resumeSubtitle}
+                            </Text>
                         </View>
-                        <Pressable style={[styles.resumeBtn, photobookEnabled && { backgroundColor: c.coral }]} onPress={handleResume}>
-                            <Text style={styles.resumeBtnText}>{t.resumeCta}</Text>
-                            <Feather name="arrow-right" size={16} color="#fff" />
-                        </Pressable>
-                    </View>
-                </View>
-            )}
 
-            {/* 포토북 "이어서 하기" 배너 (타일 배너와 겹치면 위로 띄움) */}
-            {photobookEnabled && pbDraft && (
-                <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 + (hasDraft && user && !isGhost ? 78 : 0), backgroundColor: c.surface, borderColor: c.border }]}>
-                    <View style={styles.resumeContent}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.resumeTitle, { color: c.ink }]}>{locale === "TH" ? "โฟโต้บุ๊กที่ค้างไว้" : "Your photobook in progress"}</Text>
-                            <Text style={[styles.resumeSubtitle, { color: c.textSecondary }]} numberOfLines={1}>{locale === "TH" ? "ทำต่อจากที่ค้างไว้" : "Continue where you left off"}</Text>
-                        </View>
-                        <Pressable style={[styles.resumeBtn, { backgroundColor: c.coral }]} onPress={handleResumePhotobook}>
-                            <Feather name="book-open" size={15} color="#fff" style={{ marginRight: 5 }} />
-                            <Text style={styles.resumeBtnText}>{t.resumeCta}</Text>
-                        </Pressable>
+                        {bothResumable ? (
+                            // 둘 다 있을 때: 한 배너 안에서 무엇을 이어할지 칩으로 선택
+                            <View style={styles.resumeChips}>
+                                <Pressable style={[styles.resumeChip, photobookEnabled && { backgroundColor: c.coral }]} onPress={handleResumePhotobook}>
+                                    <Feather name="book-open" size={13} color="#fff" style={{ marginRight: 4 }} />
+                                    <Text style={styles.resumeChipText}>{t.resumeChipPhotobook}</Text>
+                                </Pressable>
+                                <Pressable style={[styles.resumeChip, styles.resumeChipAlt, photobookEnabled && { borderColor: c.coral }]} onPress={handleResume}>
+                                    <Feather name="image" size={13} color={photobookEnabled ? c.coral : colors.ink} style={{ marginRight: 4 }} />
+                                    <Text style={[styles.resumeChipText, { color: photobookEnabled ? c.coral : colors.ink }]}>{t.resumeChipTile}</Text>
+                                </Pressable>
+                            </View>
+                        ) : (
+                            <Pressable
+                                style={[styles.resumeBtn, photobookEnabled && { backgroundColor: c.coral }]}
+                                onPress={pbResumable ? handleResumePhotobook : handleResume}
+                            >
+                                <Feather name={pbResumable ? "book-open" : "arrow-right"} size={15} color="#fff" style={{ marginRight: 5 }} />
+                                <Text style={styles.resumeBtnText}>{t.resumeCta}</Text>
+                            </Pressable>
+                        )}
                     </View>
                 </View>
             )}
@@ -681,4 +693,9 @@ const styles = StyleSheet.create({
     resumeSubtitle: { fontSize: 12, color: colors.textMuted },
     resumeBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.ink, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, gap: 6 },
     resumeBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    // 타일·포토북 draft가 둘 다 있을 때 한 배너 안에서 고르는 칩
+    resumeChips: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    resumeChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.ink, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 20, borderWidth: 1, borderColor: 'transparent' },
+    resumeChipAlt: { backgroundColor: 'transparent', borderColor: colors.ink },
+    resumeChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 });

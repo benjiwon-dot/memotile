@@ -24,6 +24,13 @@ export const STRINGS = {
         resumeTitle: "Continue Editing",
         resumeSubtitle: "Resume your previous selection",
         resumeCta: "Continue",
+        // 이어하기 배너 통합(타일/포토북 하나로) — 둘 다 있으면 칩 2개
+        resumePbTitle: "Your photobook in progress",
+        resumePbSubtitle: "Continue where you left off",
+        resumeBothTitle: "Continue where you left off",
+        resumeBothSubtitle: "Photobook & tile in progress",
+        resumeChipPhotobook: "Photobook",
+        resumeChipTile: "Tile",
         noPhotosSelected: "No photos selected. Please select photos again.",
 
         heroSupporting: "memories in your space",
@@ -34,6 +41,7 @@ export const STRINGS = {
         photobookCardTitle: "AI Photobook",
         photobookCardDesc: "Let AI pick your child's best photos",
         // --- 홈 AI 카드 ---
+        aiCardBadge: "AI Photobook",
         aiCardTitle: "Make their photobook",
         aiCardDesc: "AI finds the best photos of your little one",
         aiCardCta: "Get started",
@@ -603,6 +611,13 @@ export const STRINGS = {
         resumeTitle: "แก้ไขต่อ",
         resumeSubtitle: "ดำเนินการต่อจากที่ทำค้างไว้",
         resumeCta: "ทำต่อ",
+        // 이어하기 배너 통합(타일/포토북 하나로) — 둘 다 있으면 칩 2개
+        resumePbTitle: "โฟโต้บุ๊กที่ค้างไว้",
+        resumePbSubtitle: "ทำต่อจากที่ค้างไว้",
+        resumeBothTitle: "ทำต่อจากที่ค้างไว้",
+        resumeBothSubtitle: "มีโฟโต้บุ๊กและไทล์ที่ค้างไว้",
+        resumeChipPhotobook: "โฟโต้บุ๊ก",
+        resumeChipTile: "ไทล์",
         noPhotosSelected: "ไม่ได้เลือกรูปภาพ กรุณาเลือกใหม่",
 
         // Progress UI (Checkout)
@@ -620,6 +635,7 @@ export const STRINGS = {
         photobookCardTitle: "โฟโต้บุ๊ก AI",
         photobookCardDesc: "ให้ AI คัดรูปลูกน้อยให้อัตโนมัติ",
         // --- 홈 AI 카드 ---
+        aiCardBadge: "โฟโต้บุ๊ก AI",
         aiCardTitle: "ทำโฟโต้บุ๊กของลูกน้อย",
         aiCardDesc: "ให้ AI ค้นหารูปลูกน้อยที่ดีที่สุด",
         aiCardCta: "เริ่มเลย",

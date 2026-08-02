@@ -71,7 +71,7 @@ export function AiPhotobookCard() {
                     <View style={{ flex: 1 }}>
                         <View style={[styles.eyebrow, { backgroundColor: c.surface }]}>
                             <Feather name={"star" as any} size={11} color={c.coral} style={{ marginRight: 4 }} />
-                            <Text style={[styles.eyebrowText, { color: c.coral }]}>AI</Text>
+                            <Text style={[styles.eyebrowText, { color: c.coral }]}>{t.aiCardBadge}</Text>
                         </View>
                         <Text style={[styles.title, { color: c.ink }]}>{t.aiCardTitle}</Text>
                         <Text style={[styles.desc, { color: c.textSecondary }]}>{t.aiCardDesc}</Text>
@@ -97,7 +97,7 @@ export function AiPhotobookCard() {
                 <Text style={[styles.kicker, { color: c.textSecondary }]}>{t.aiCardYourKids}</Text>
                 <View style={[styles.eyebrow, { backgroundColor: c.surface }]}>
                     <Feather name={"star" as any} size={11} color={c.coral} style={{ marginRight: 4 }} />
-                    <Text style={[styles.eyebrowText, { color: c.coral }]}>AI</Text>
+                    <Text style={[styles.eyebrowText, { color: c.coral }]}>{t.aiCardBadge}</Text>
                 </View>
             </View>
 

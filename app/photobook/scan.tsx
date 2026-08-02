@@ -564,11 +564,24 @@ export default function PhotobookScan() {
                         {rotMsgs[rotIdx % rotMsgs.length]}
                     </Animated.Text>
 
-                    {/* 메인: 큰 카운트 (0 → 전체 완료까지) */}
-                    <Text style={styles.bigCount}>
-                        <Text style={{ color: c.coral }}>{displayCount.toLocaleString()}</Text>
-                        <Text style={{ color: c.textMuted }}> / {target.toLocaleString()}</Text>
-                    </Text>
+                    {/* 메인: 큰 카운트 (0 → 전체 완료까지). 자릿수가 많으면(수만 장) 폭을 넘겨
+                        두 줄로 깨지므로 → 글자 수 기반 동적 크기 + 항상 한 줄(numberOfLines/adjustsFontSizeToFit). */}
+                    {(() => {
+                        const combo = `${displayCount.toLocaleString()} / ${target.toLocaleString()}`;
+                        const len = combo.length;
+                        const dynSize = len <= 9 ? 40 : len <= 12 ? 34 : len <= 15 ? 29 : 25;
+                        return (
+                            <Text
+                                style={[styles.bigCount, { fontSize: dynSize }]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                                minimumFontScale={0.6}
+                            >
+                                <Text style={{ color: c.coral }}>{displayCount.toLocaleString()}</Text>
+                                <Text style={{ color: c.textMuted }}> / {target.toLocaleString()}</Text>
+                            </Text>
+                        );
+                    })()}
                     <Text style={[styles.matchLine, { color: c.textSecondary }]}>
                         {displayMatched.toLocaleString()} {t.pbMatched}
                     </Text>
@@ -737,7 +750,8 @@ const styles = StyleSheet.create({
     heart: { position: "absolute", right: -6, bottom: -2 },
     nameAge: { fontSize: 18, fontWeight: "800", marginTop: 16 },
     rotMsg: { fontSize: 15, fontWeight: "600", marginTop: 10, marginBottom: 18, textAlign: "center" },
-    bigCount: { fontSize: 40, fontWeight: "900", letterSpacing: 0.5, marginTop: 6 },
+    // alignSelf stretch + textAlign center → 한 줄 폭 제약을 줘서 adjustsFontSizeToFit이 폭 기준으로 축소.
+    bigCount: { fontSize: 40, fontWeight: "900", letterSpacing: 0.5, marginTop: 6, alignSelf: "stretch", textAlign: "center", paddingHorizontal: 4 },
     matchLine: { fontSize: 14, fontWeight: "700", marginTop: 6, marginBottom: 18 },
     barTrack: { width: "72%", height: 8, borderRadius: 999, overflow: "hidden" },
     pctText: { fontSize: 13, fontWeight: "800", marginTop: 8 },
