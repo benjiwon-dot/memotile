@@ -10,6 +10,7 @@ import * as ScreenOrientation from "expo-screen-orientation";
 
 import { LanguageProvider } from "../src/context/LanguageContext";
 import { PhotoProvider } from "../src/context/PhotoContext";
+import { loadPhotobookPricing } from "../src/services/photobookPriceConfig";
 
 export default function RootLayout() {
     const isWeb = Platform.OS === 'web';
@@ -20,6 +21,9 @@ export default function RootLayout() {
             ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => { });
         }
     }, []);
+
+    // 포토북 판매가를 config/prices에서 선반영(실패해도 앱 기본값으로 계속 동작).
+    useEffect(() => { loadPhotobookPricing(); }, []);
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>

@@ -6,6 +6,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { useLanguage } from "../../context/LanguageContext";
 import { usePhotobookTheme } from "../../config/photobookTheme";
 import { albumMinPrice, AlbumSize } from "../../config/photobookPricing";
+import { usePhotobookPricing } from "../../services/photobookPriceConfig";
 
 type Row = { size: AlbumSize; th: string; en: string; popular?: boolean };
 const ROWS: Row[] = [
@@ -17,6 +18,7 @@ const ROWS: Row[] = [
 export function PhotobookPriceTable() {
     const { locale } = useLanguage();
     const c = usePhotobookTheme();
+    usePhotobookPricing(); // 원격 가격이 늦게 도착해도 표가 최신가로 갱신되도록 구독
 
     const isTH = locale === "TH";
     const fromLabel = (price: number) => {

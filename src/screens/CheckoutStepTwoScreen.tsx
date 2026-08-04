@@ -17,7 +17,7 @@ import * as MediaLibrary from "expo-media-library";
 
 // 🆕 포토북(additive): productType==="photobook"이면 albumDraft로 분기, 가격은 albumPrice
 import { getAlbumOptions, getAlbumDraft, getAllCrops } from "../services/albumDraft";
-import { albumPrice } from "../config/photobookPricing";
+import { albumPrice, applyPhotobookPricing } from "../config/photobookPricing";
 import { countPages } from "../services/photoLayout";
 import { buildFrozenLayout } from "../services/photobookFreeze";
 
@@ -125,6 +125,9 @@ export default function CheckoutStepTwoScreen() {
                 const docSnap = await getDoc(doc(firestoreDb, "config", "prices"));
                 if (docSnap.exists()) {
                     const data = docSnap.data();
+                    // 포토북 판매가도 같은 문서에서 반영(추가 조회 없음). 아래 setPriceLoaded가
+                    // 항상 리렌더를 일으키므로 book(albumPrice)이 최신가로 다시 계산된다.
+                    applyPhotobookPricing(data.photobook);
                     if (alive) {
                         setPricePerTile(safeLocale === "TH" ? data.price_thb : data.price_usd);
                         setBasePriceUSD(data.price_usd || 5.71);

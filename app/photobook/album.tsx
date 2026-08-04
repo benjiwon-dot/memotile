@@ -24,6 +24,7 @@ import { CoverCrop } from "../../src/components/photobook/CoverCrop";
 import { PhotobookCropEditor } from "../../src/components/photobook/PhotobookCropEditor";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { albumPrice, pagesForPhotos, isSparse, AlbumSize, CoverType } from "../../src/config/photobookPricing";
+import { usePhotobookPricing } from "../../src/services/photobookPriceConfig";
 import { countPages } from "../../src/services/photoLayout";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -70,6 +71,7 @@ export default function PhotobookAlbum() {
     const { t } = useLanguage();
     const c = usePhotobookTheme();
     const enabled = usePhotobookEnabled();
+    usePhotobookPricing(); // 원격 가격 반영 시 표시가 재계산되도록 구독
 
     const draft = getAlbumDraft();
     const opts0 = getAlbumOptions(); // 이어서 하기 복귀 시 이전 옵션 복원(신규 흐름이면 기본값)
