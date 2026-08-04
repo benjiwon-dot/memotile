@@ -24,14 +24,15 @@
         "expo-build-properties",
         {
           "android": {
-            "targetSdkVersion": 35,
-            "compileSdkVersion": 35,
+            "targetSdkVersion": 36,
+            "compileSdkVersion": 36,
             "ndkVersion": "27.1.12297006",
             "packagingOptions": {
               "useLegacyPackaging": false
             },
             "gradleProperties": {
-              "android.use16KPageAlignment": "true"
+              "android.use16KPageAlignment": "true",
+              "android.suppressUnsupportedCompileSdk": "36"
             }
           },
           "ios": {
