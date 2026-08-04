@@ -73,6 +73,11 @@ const isNonNegative = (v: unknown): v is number =>
  * 반환: 실제로 반영된 항목 수(0이면 전부 기본값 유지).
  */
 export function applyPhotobookPricing(raw: unknown): number {
+    // 콘솔에서 중첩 map을 만드는 건 필드가 24개라 실수하기 쉬움 →
+    // JSON 문자열 한 덩어리로 넣는 것도 허용(권장). 파싱 실패는 조용히 무시.
+    if (typeof raw === "string") {
+        try { raw = JSON.parse(raw); } catch { return 0; }
+    }
     if (!raw || typeof raw !== "object") return 0;
     const d = raw as Record<string, any>;
     let applied = 0;
