@@ -74,13 +74,30 @@ const isNonNegative = (v: unknown): v is number =>
  */
 export function applyPhotobookPricing(raw: unknown): number {
     // 콘솔에서 중첩 map을 만드는 건 필드가 24개라 실수하기 쉬움 →
-    // JSON 문자열 한 덩어리로 넣는 것도 허용(권장). 파싱 실패는 조용히 무시.
+    // JSON 문자열 한 덩어리로 넣는 것도 허용. 파싱 실패는 조용히 무시.
     if (typeof raw === "string") {
         try { raw = JSON.parse(raw); } catch { return 0; }
     }
     if (!raw || typeof raw !== "object") return 0;
     const d = raw as Record<string, any>;
     let applied = 0;
+
+    // ── 평면 키(콘솔에서 가장 쉬운 방식) ──
+    // config/prices 문서 루트에 숫자 필드로 바로 넣는다. 바꿀 것만 넣으면 됨.
+    //   pb_A5_48 / pb_A5_80 / pb_A5_112  → 소프트커버 판매가(그 사이즈는 3개 다 필요)
+    //   pb_A5_hard                        → 하드커버 추가액
+    //   pb_A5_unit                        → 중간 페이지 보간 단가(원가)
+    for (const size of SIZES) {
+        const flat = ANCHOR_TIERS.map((t) => d[`pb_${size}_${t}`]);
+        if (flat.every(isPositive)) {
+            ANCHOR_TIERS.forEach((t, i) => { softAnchor[size][t] = flat[i] as number; });
+            applied++;
+        }
+        const fh = d[`pb_${size}_hard`];
+        if (isNonNegative(fh)) { hardAdd[size] = fh; applied++; }
+        const fu = d[`pb_${size}_unit`];
+        if (isNonNegative(fu)) { addUnit[size] = fu; applied++; }
+    }
 
     for (const size of SIZES) {
         // 앵커: 48/80/112 셋 다 양수여야 그 사이즈를 교체(부분 적용 금지 — 보간이 깨짐)

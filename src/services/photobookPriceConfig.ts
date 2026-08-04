@@ -33,7 +33,13 @@ export async function loadPhotobookPricing(): Promise<void> {
     inFlight = (async () => {
         try {
             const snap = await getDoc(doc(db, "config", "prices"));
-            if (snap.exists()) applyPhotobookPricing(snap.data()?.photobook);
+            if (snap.exists()) {
+                const d = snap.data() || {};
+                // 평면 키(pb_A5_48 등)는 문서 루트, 묶음 설정은 photobook 필드.
+                // 둘 다 지원 → 콘솔에서 편한 쪽으로 넣으면 된다(평면 키가 우선 적용되지 않고, 뒤에 적용되는 photobook이 덮어씀).
+                applyPhotobookPricing(d);
+                if (d.photobook != null) applyPhotobookPricing(d.photobook);
+            }
         } catch {
             /* 네트워크/권한 실패 → 앱 기본값 사용 */
         } finally {
