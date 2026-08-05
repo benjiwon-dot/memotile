@@ -40,6 +40,9 @@ export const STRINGS = {
         photobookCardBadge: "NEW",
         photobookCardTitle: "AI Photobook",
         photobookCardDesc: "Let AI pick your child's best photos",
+        // 사진이 최대 페이지를 넘겨 일부만 담길 때 안내 ({used}/{total})
+        pbTrimmedTitle: "Too many photos for one book",
+        pbTrimmedBody: "AI kept the best {used} of {total}. Your book is at the maximum {max} pages.",
         // --- 홈 AI 카드 ---
         aiCardBadge: "AI Photobook",
         aiCardTitle: "Make their photobook",
@@ -634,6 +637,9 @@ export const STRINGS = {
         photobookCardBadge: "ใหม่",
         photobookCardTitle: "โฟโต้บุ๊ก AI",
         photobookCardDesc: "ให้ AI คัดรูปลูกน้อยให้อัตโนมัติ",
+        // 사진이 최대 페이지를 넘겨 일부만 담길 때 안내 ({used}/{total})
+        pbTrimmedTitle: "รูปเยอะเกินหนึ่งเล่ม",
+        pbTrimmedBody: "AI เลือกรูปที่ดีที่สุด {used} จาก {total} รูป เล่มนี้เต็มที่ {max} หน้าแล้ว",
         // --- 홈 AI 카드 ---
         aiCardBadge: "โฟโต้บุ๊ก AI",
         aiCardTitle: "ทำโฟโต้บุ๊กของลูกน้อย",

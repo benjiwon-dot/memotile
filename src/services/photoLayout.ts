@@ -86,8 +86,13 @@ function minimalCell(a: number, ratio: number): Slot {
 const POOLS: Record<Density, number[]> = { relaxed: [2, 3], balanced: [3, 3, 4], rich: [4, 5] };
 const FRACTION: Record<Density, number> = { relaxed: 0.4, balanced: 0.72, rich: 1.0 };
 
-/** 선택 사진을 디자인된 템플릿 페이지 배열로. ratio=페이지 가로/세로, density=밀도 프리셋 */
-export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): LayoutPage[] {
+/** 제작 가능한 최대 내지 페이지(= 최상위 과금 티어). 이걸 넘으면 인쇄 원가가 판매가를 넘어 역마진이 되고,
+ *  물리 제본 한계도 넘는다. 인쇄소가 더 두꺼운 제본을 확정해 주면 이 값과 PAGE_TIERS를 함께 올릴 것. */
+export const MAX_PAGES = 112;
+
+/** 선택 사진을 디자인된 템플릿 페이지 배열로. ratio=페이지 가로/세로, density=밀도 프리셋
+ *  (내부용 — 상한 미적용. 외부는 상한이 걸린 buildPages를 쓸 것) */
+function buildPagesRaw(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): LayoutPage[] {
     let photos = [...items]; // items 순서 그대로 사용(드래그 스왑 유지). 호출부에서 시간순 정렬해 전달.
     if (photos.length === 0) return [];
 
@@ -154,7 +159,55 @@ export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, densi
     return pages;
 }
 
+/** 사진이 너무 많아 MAX_PAGES를 넘을 때, 강한 사진 순으로 줄여 상한에 맞춘 목록을 돌려준다.
+ *  - 시간순(원래 배열 순서)은 유지 — 잘라내는 게 아니라 "솎아내기"라 책이 중간에 끊기지 않는다.
+ *  - 사용자가 직접 추가한(manual) 사진은 항상 유지.
+ *  - 상한 이내면 원본을 그대로 반환(참조 동일) → 기존 동작 무변경.
+ */
+export function fitToMaxPages(
+    items: ScanItem[],
+    ratio: number = 27.9 / 21.5,
+    density: Density = "balanced",
+): ScanItem[] {
+    if (items.length === 0) return items;
+    if (buildPagesRaw(items, ratio, density).length <= MAX_PAGES) return items;
+
+    const manual = items.filter((p) => p.manual);
+    const auto = items.filter((p) => !p.manual);
+    // 강한 순 랭킹 → 상위 k장만 남기되, 최종 배열은 원래(시간) 순서를 유지
+    const rank = new Map<string, number>();
+    [...auto].sort((a, b) => strengthOf(b) - strengthOf(a)).forEach((p, i) => rank.set(p.assetId, i));
+    const pick = (k: number) => items.filter((p) => p.manual || (rank.get(p.assetId) ?? Infinity) < k);
+
+    // k에 대한 페이지 수는 단조 증가 → 이분탐색(최대 ~10회 빌드)
+    let lo = 0, hi = auto.length, best = 0;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (buildPagesRaw(pick(mid), ratio, density).length <= MAX_PAGES) { best = mid; lo = mid + 1; }
+        else hi = mid - 1;
+    }
+    // manual 사진만으로도 상한을 넘으면 더 줄일 수단이 없다 → 그대로 두고 buildPages에서 페이지를 자른다.
+    return pick(best);
+}
+
+/** 선택 사진 → 페이지 배열. MAX_PAGES 상한 적용(역마진·제본불가 방지). */
+export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): LayoutPage[] {
+    const pages = buildPagesRaw(fitToMaxPages(items, ratio, density), ratio, density);
+    // manual 사진만으로 상한 초과한 극단 케이스의 최후 방어선
+    return pages.length > MAX_PAGES ? pages.slice(0, MAX_PAGES) : pages;
+}
+
 /** 실제 내지 페이지 수(커버·뒷표지 제외). buildPages가 만든 낱장 수 = 고객에게 보여줄 진짜 페이지수. */
 export function countPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): number {
     return buildPages(items, ratio, density).length;
+}
+
+/** 이 사진들이 책에 몇 장 실제로 담기는지(상한 적용 후). UI 안내용 —
+ *  used < total 이면 "사진이 많아 일부만 담겼다"를 알려줘야 한다. */
+export function photosUsedCount(
+    items: ScanItem[],
+    ratio: number = 27.9 / 21.5,
+    density: Density = "balanced",
+): { used: number; total: number } {
+    return { used: fitToMaxPages(items, ratio, density).length, total: items.length };
 }

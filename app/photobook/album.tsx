@@ -25,7 +25,7 @@ import { PhotobookCropEditor } from "../../src/components/photobook/PhotobookCro
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { albumPrice, pagesForPhotos, isSparse, AlbumSize, CoverType } from "../../src/config/photobookPricing";
 import { usePhotobookPricing } from "../../src/services/photobookPriceConfig";
-import { countPages } from "../../src/services/photoLayout";
+import { countPages, photosUsedCount, MAX_PAGES } from "../../src/services/photoLayout";
 
 const SCREEN_W = Dimensions.get("window").width;
 const CARD_W = Math.round(SCREEN_W * 0.64);      // 표지 슬라이드 한 칸(양옆 peek)
@@ -115,6 +115,8 @@ export default function PhotobookAlbum() {
     const dateLabel = useMemo(() => dateRangeLabel(items), [items]);
     // 가격은 실제 buildPages 페이지 수 기준(사진 수 아님). 밀도는 preview에서 정하므로 여기선 기본 balanced로 추정.
     const albumActualPages = useMemo(() => countPages(items, 27.9 / 21.5, "balanced"), [items]);
+    // 상한(MAX_PAGES) 때문에 일부 사진이 빠졌는지 — 빠졌으면 아래에서 안내
+    const photoFit = useMemo(() => photosUsedCount(items, 27.9 / 21.5, "balanced"), [items]);
     const { price } = albumPrice(size, cover, albumActualPages);
 
     if (!enabled) return null;
@@ -333,6 +335,21 @@ export default function PhotobookAlbum() {
                             <Feather name="search" size={14} color={c.coral} />
                             <Text style={{ fontSize: 12.5, color: c.coral, fontWeight: "700", marginLeft: 6 }}>{t.pbFewNudge}</Text>
                         </Pressable>
+                    )}
+                    {/* 사진이 최대 페이지를 넘겨 일부만 담긴 경우 — 모르면 "사진이 사라졌다"는 오해가 생긴다 */}
+                    {photoFit.used < photoFit.total && (
+                        <View style={[styles.nudge, { borderColor: c.peach, alignItems: "flex-start" }]}>
+                            <Feather name="layers" size={14} color={c.coral} style={{ marginTop: 1 }} />
+                            <View style={{ flex: 1, marginLeft: 6 }}>
+                                <Text style={{ fontSize: 12.5, color: c.ink, fontWeight: "800" }}>{t.pbTrimmedTitle}</Text>
+                                <Text style={{ fontSize: 11.5, color: c.textSecondary, marginTop: 2, lineHeight: 16 }}>
+                                    {t.pbTrimmedBody
+                                        .replace("{used}", String(photoFit.used))
+                                        .replace("{total}", String(photoFit.total))
+                                        .replace("{max}", String(MAX_PAGES))}
+                                </Text>
+                            </View>
+                        </View>
                     )}
                 </View>
 
