@@ -221,7 +221,7 @@ export default function CheckoutStepTwoScreen() {
     const bookAfterDiscount = Math.max(0, book.price - bookPromoDiscount);
     const bookShipWaived =
         bookAfterDiscount <= 0 && bookPromoDiscount > 0 && (promoResult as any)?.waiveShipping !== false;
-    const bookShipping = bookShipWaived ? 0 : photobookShipping();
+    const bookShipping = bookShipWaived ? 0 : photobookShipping(albumOpts.size);
     const shippingFee = isPhotobook ? bookShipping : pricing.shippingFee;
     const total = isPhotobook ? bookAfterDiscount + bookShipping : pricing.total;
 
