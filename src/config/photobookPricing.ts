@@ -41,6 +41,15 @@ const softAnchor: SizeMap<AnchorMap> = {
 const hardAdd: SizeMap<number> = { ...DEFAULT_HARD_ADD };
 const addUnit: SizeMap<number> = { ...DEFAULT_ADD_UNIT };
 
+// 포토북 배송비(฿). 기본 0 = 무료배송(기존 동작). 인쇄소 배송비가 확정되면 원격으로 올린다.
+const DEFAULT_SHIP_FEE = 0;
+let shipFee = DEFAULT_SHIP_FEE;
+
+/** 포토북 1건당 배송비. 0이면 무료배송 표기. */
+export function photobookShipping(): number {
+    return shipFee;
+}
+
 // ── 원격 반영 구독(가격 표시 화면 리렌더용) ──
 let version = 0;
 const subscribers = new Set<() => void>();
@@ -98,6 +107,10 @@ export function applyPhotobookPricing(raw: unknown): number {
         const fu = d[`pb_${size}_unit`];
         if (isNonNegative(fu)) { addUnit[size] = fu; applied++; }
     }
+    // 배송비(사이즈 무관 단일). pb_ship = 0 이면 무료배송.
+    const fs = d.pb_ship;
+    if (isNonNegative(fs)) { shipFee = fs; applied++; }
+    if (isNonNegative(d.shipping)) { shipFee = d.shipping as number; applied++; } // photobook 묶음 설정용
 
     for (const size of SIZES) {
         // 앵커: 48/80/112 셋 다 양수여야 그 사이즈를 교체(부분 적용 금지 — 보간이 깨짐)

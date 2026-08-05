@@ -17,7 +17,7 @@ import * as MediaLibrary from "expo-media-library";
 
 // 🆕 포토북(additive): productType==="photobook"이면 albumDraft로 분기, 가격은 albumPrice
 import { getAlbumOptions, getAlbumDraft, getAllCrops } from "../services/albumDraft";
-import { albumPrice, applyPhotobookPricing } from "../config/photobookPricing";
+import { albumPrice, applyPhotobookPricing, photobookShipping } from "../config/photobookPricing";
 import { countPages } from "../services/photoLayout";
 import { buildFrozenLayout } from "../services/photobookFreeze";
 
@@ -216,8 +216,14 @@ export default function CheckoutStepTwoScreen() {
     const bookPromoDiscount = isPhotobook && promoResult?.success ? Math.min(promoResult.discountAmount || 0, book.price) : 0;
     const rawSubtotal = isPhotobook ? book.price : pricing.subtotal;
     const totalDiscount = isPhotobook ? bookPromoDiscount : pricing.totalDiscount;
-    const shippingFee = isPhotobook ? 0 : pricing.shippingFee;
-    const total = isPhotobook ? Math.max(0, book.price - bookPromoDiscount) : pricing.total;
+    // 포토북 배송비: config/prices(pb_ship)에서. 기본 0 = 무료배송(기존 동작).
+    // 전액 할인 쿠폰이면 배송도 무료 — 타일(computePricing)과 동일 규칙.
+    const bookAfterDiscount = Math.max(0, book.price - bookPromoDiscount);
+    const bookShipWaived =
+        bookAfterDiscount <= 0 && bookPromoDiscount > 0 && (promoResult as any)?.waiveShipping !== false;
+    const bookShipping = bookShipWaived ? 0 : photobookShipping();
+    const shippingFee = isPhotobook ? bookShipping : pricing.shippingFee;
+    const total = isPhotobook ? bookAfterDiscount + bookShipping : pricing.total;
 
     const totalInUSD = useMemo(() => {
         const rate = pricePerTile > 0 ? basePriceUSD / pricePerTile : 0;
@@ -624,6 +630,15 @@ export default function CheckoutStepTwoScreen() {
                                     <Text style={[styles.summaryValue, { color: colors?.primary || "#E4405F" }]}>-฿{bookPromoDiscount.toLocaleString()}</Text>
                                 </View>
                             )}
+                            {/* 배송비 — config/prices(pb_ship). 0이면 "무료" 표기 */}
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryLabel}>{(t as any)?.["shippingLabel"] || (safeLocale === "TH" ? "ค่าจัดส่ง" : "Shipping")}</Text>
+                                <Text style={[styles.summaryValue, bookShipping === 0 && { color: "#16a34a" }]}>
+                                    {bookShipping === 0
+                                        ? (safeLocale === "TH" ? "ฟรี" : "Free")
+                                        : `฿${bookShipping.toLocaleString()}`}
+                                </Text>
+                            </View>
                             <View style={[styles.summaryRow, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f3f4f6", alignItems: 'center' }]}>
                                 <Text style={styles.totalLabel}>{(t as any)?.["totalLabel"] || "Total"}</Text>
                                 <Text style={styles.totalValue}>฿{total.toLocaleString()}</Text>
