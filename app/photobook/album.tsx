@@ -114,9 +114,16 @@ export default function PhotobookAlbum() {
     const coverAspect = coverItem && coverItem.height ? coverItem.width / coverItem.height : 1;
     const dateLabel = useMemo(() => dateRangeLabel(items), [items]);
     // 가격은 실제 buildPages 페이지 수 기준(사진 수 아님). 밀도는 preview에서 정하므로 여기선 기본 balanced로 추정.
-    const albumActualPages = useMemo(() => countPages(items, 27.9 / 21.5, "balanced"), [items]);
+    // 내지 = 표지로 쓴 사진 제외(freeze·체크아웃과 동일 집합이어야 가격이 어긋나지 않는다)
+    const albumInterior = useMemo(
+        () => (coverAssetId ? items.filter((i) => i.assetId !== coverAssetId) : items),
+        [items, coverAssetId],
+    );
+    const albumActualPages = useMemo(() => countPages(albumInterior, 27.9 / 21.5, "balanced"), [albumInterior]);
+    // 고객 표시용 총 페이지 = 표지 1 + 내지 + 뒷장 1
+    const albumTotalPages = albumActualPages + 2;
     // 상한(MAX_PAGES) 때문에 일부 사진이 빠졌는지 — 빠졌으면 아래에서 안내
-    const photoFit = useMemo(() => photosUsedCount(items, 27.9 / 21.5, "balanced"), [items]);
+    const photoFit = useMemo(() => photosUsedCount(albumInterior, 27.9 / 21.5, "balanced"), [albumInterior]);
     const { price } = albumPrice(size, cover, albumActualPages);
 
     if (!enabled) return null;
@@ -324,7 +331,7 @@ export default function PhotobookAlbum() {
                     <View style={[styles.priceBox, { backgroundColor: c.surfaceAlt, borderColor: c.coral }]}>
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <Text style={{ fontSize: 12.5, fontWeight: "700", color: c.coral }} numberOfLines={1}>
-                                {items.length} {t.pbPhotosUnit} · {size} {cover === "soft" ? t.pbCoverSoft : t.pbCoverHard}
+                                {items.length} {t.pbPhotosUnit} · {albumTotalPages} {t.pbPagesUnit} · {size} {cover === "soft" ? t.pbCoverSoft : t.pbCoverHard}
                             </Text>
                             <Text style={{ fontSize: 11, color: c.coral, opacity: 0.8 }} numberOfLines={1}>{t.pbInclVat}</Text>
                         </View>

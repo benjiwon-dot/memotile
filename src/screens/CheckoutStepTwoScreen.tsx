@@ -72,12 +72,19 @@ export default function CheckoutStepTwoScreen() {
     const albumOpts = getAlbumOptions();
     const bookItems = getAlbumDraft().items;
     const bookCoverPhoto = bookItems.find((it) => it.assetId === albumOpts.coverPhotoId) || bookItems[0];
-    const bookPages = countPages(bookItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 실제 내지 페이지수(표지 제외)
+    // 내지 = 표지로 쓴 사진을 뺀 나머지 — buildFrozenLayout(실제 인쇄물)과 반드시 같은 집합이어야 한다.
+    // 예전엔 전체(bookItems)로 계산해서 인쇄물보다 페이지가 부풀었고, 티어 경계에서 과다청구가 났다.
+    const bookCoverAssetId = albumOpts.coverPhotoId ?? bookCoverPhoto?.assetId ?? null;
+    const bookInteriorItems = bookCoverAssetId ? bookItems.filter((it) => it.assetId !== bookCoverAssetId) : bookItems;
+    const bookPages = countPages(bookInteriorItems, 27.9 / 21.5, (albumOpts.density as any) || "balanced"); // 실제 내지 페이지수(표지 제외)
     const book = albumPrice(albumOpts.size, albumOpts.cover, bookPages); // 가격은 실제 페이지 티어 기준(사진 수 아님). { pages: 과금티어, price }
-    // 고객 표시는 사진 수 중심(페이지 표현 X)
+    // 고객에게 보여줄 총 페이지 = 표지 1 + 내지 + 뒷장 1 (PDF 페이지 수와 일치)
+    const bookTotalPages = bookPages + 2;
+    // 고객 표시: 사진 수 + 총 페이지 수(표지·뒷장 포함 = 받아보는 책 그대로).
+    // 사진 수만 보이면 "장당 과금"으로 오해하므로 페이지를 함께 적는다.
     const bookSpec = (locale || "EN") === "TH"
-        ? `${bookItems.length} รูป · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
-        : `${bookItems.length} photos · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
+        ? `${bookItems.length} รูป · ${bookTotalPages} หน้า · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "ปกแข็ง" : "ปกอ่อน"}`
+        : `${bookItems.length} photos · ${bookTotalPages} pages · ${albumOpts.size} · ${albumOpts.cover === "hard" ? "Hardcover" : "Softcover"}`;
 
     const safePhotos = useMemo(() => {
         if (Platform.OS === 'web' && (!photos || photos.length === 0)) {
