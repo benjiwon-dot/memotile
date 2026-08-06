@@ -197,6 +197,34 @@ export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, densi
     return pages.length > MAX_PAGES ? pages.slice(0, MAX_PAGES) : pages;
 }
 
+/** 페이지 상단에 인쇄할 촬영 년월. "2025.06" / "2025.05~06" / "2025.11~2026.02" */
+export function monthRange(photos: { creationTime?: number }[]): string {
+    const ts = photos.map((p) => p.creationTime).filter((x): x is number => !!x);
+    if (!ts.length) return "";
+    const mn = new Date(Math.min(...ts)), mx = new Date(Math.max(...ts));
+    const y1 = mn.getFullYear(), m1 = mn.getMonth() + 1, y2 = mx.getFullYear(), m2 = mx.getMonth() + 1;
+    const mm = (m: number) => String(m).padStart(2, "0");
+    if (y1 === y2 && m1 === m2) return `${y1}.${mm(m1)}`;
+    if (y1 === y2) return `${y1}.${mm(m1)}~${mm(m2)}`;
+    return `${y1}.${mm(m1)}~${y2}.${mm(m2)}`;
+}
+
+/** 페이지별로 실제 인쇄할 날짜 라벨. 프리뷰와 PDF가 반드시 같은 값을 써야 하므로 여기 한 곳에서만 정한다.
+ *  규칙 — 라벨을 비우는 경우:
+ *   1) 사진 1장짜리 페이지(hero·minimal) : 전체샷의 여백을 날짜가 해치지 않게
+ *   2) 직전에 표시한 라벨과 같을 때      : "2026.02"가 연달아 반복되면 지저분함 → 바뀔 때만 표시
+ */
+export function pageDateLabels(pages: LayoutPage[]): string[] {
+    let shown = "";
+    return pages.map((pg) => {
+        if (pg.photos.length <= 1) return "";        // 전체샷/단독 사진 페이지
+        const label = monthRange(pg.photos);
+        if (!label || label === shown) return "";    // 직전과 동일 → 생략
+        shown = label;
+        return label;
+    });
+}
+
 /** 실제 내지 페이지 수(커버·뒷표지 제외). buildPages가 만든 낱장 수 = 고객에게 보여줄 진짜 페이지수. */
 export function countPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): number {
     return buildPages(items, ratio, density).length;

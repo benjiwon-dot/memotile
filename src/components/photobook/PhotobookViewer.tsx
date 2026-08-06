@@ -16,7 +16,7 @@ import { useLanguage } from "../../context/LanguageContext";
 import { getAlbumDraft, getAlbumOptions, getAllCrops } from "../../services/albumDraft";
 import { useHiResCover } from "../../services/coverImage";
 import { useMidResMap } from "../../services/midResImage";
-import { buildPages, LayoutPage, photoAspect, PAGE_TOP_BAND, Density } from "../../services/photoLayout";
+import { buildPages, LayoutPage, photoAspect, PAGE_TOP_BAND, Density, pageDateLabels } from "../../services/photoLayout";
 import { usePhotobookTheme } from "../../config/photobookTheme";
 import { CoverCrop } from "./CoverCrop";
 
@@ -69,12 +69,15 @@ export function PhotobookViewer({ visible, onClose, onEdit }: {
     // 편집 프리뷰와 동일: 시간순 정렬(드래그 순서는 albumDraft에 이미 반영돼 있음)
     const items = useMemo(() => [...draft.items].sort((a, b) => (a.creationTime ?? 0) - (b.creationTime ?? 0)), [visible]);
 
+    const pages = useMemo(() => buildPages(items, RATIO, density), [items, RATIO, density, visible]);
+    // 페이지별 날짜 라벨(단독사진 제외·연속 중복 생략) — freeze/PDF와 같은 함수라 인쇄물과 일치
+    const dateLabels = useMemo(() => pageDateLabels(pages), [pages]);
+
     const rows = useMemo<Row[]>(() => {
-        const pages = buildPages(items, RATIO, density);
         const spreads: Row[] = [];
         for (let i = 0; i < pages.length; i += 2) spreads.push({ kind: "spread", left: pages[i] ?? null, right: pages[i + 1] ?? null, n: i / 2 + 1 });
         return [{ kind: "cover" }, ...spreads, { kind: "back" }];
-    }, [items, RATIO, density, visible]);
+    }, [pages]);
 
     const [cur, setCur] = useState(0);
     const [areaH, setAreaH] = useState(340);
@@ -163,11 +166,16 @@ export function PhotobookViewer({ visible, onClose, onEdit }: {
         );
     };
 
-    const renderPage = (page: LayoutPage | null, side: "l" | "r") => (
+    const renderPage = (page: LayoutPage | null, side: "l" | "r") => {
+        // 라벨은 pageDateLabels가 결정(단독사진 제외 + 직전과 같으면 생략). freeze/PDF와 동일 규칙.
+        const label = page ? (dateLabels[page.index] ?? "") : "";
+        // 작게, 그리고 사진 바로 위에 붙여서 — 밴드 한가운데 크게 떠 있으면 지저분하다.
+        const fs = Math.max(7, Math.min(10, Math.round(pageH * 0.038)));
+        return (
         <View style={{ width: pageW, height: pageH, backgroundColor: c.surface, borderRightWidth: side === "l" ? 1 : 0, borderRightColor: "rgba(0,0,0,0.06)" }}>
-            {page && page.kind !== "hero" && monthRange(page.photos) ? (
-                <Text style={{ position: "absolute", top: pageH * PAGE_TOP_BAND * 0.3, left: pageW * 0.055, fontSize: Math.max(8, Math.min(13, Math.round(pageH * 0.055))), fontWeight: "700", letterSpacing: 0.5, color: c.coral }}>
-                    {monthRange(page.photos)}
+            {label ? (
+                <Text style={{ position: "absolute", top: Math.max(2, pageH * PAGE_TOP_BAND - fs * 1.5), left: pageW * 0.055, fontSize: fs, fontWeight: "700", letterSpacing: 0.3, color: c.coral, opacity: 0.85 }}>
+                    {label}
                 </Text>
             ) : null}
             {page?.photos.map((p, i) => {
@@ -181,7 +189,8 @@ export function PhotobookViewer({ visible, onClose, onEdit }: {
                 );
             })}
         </View>
-    );
+        );
+    };
 
     const renderRow = ({ item }: { item: Row }) => {
         let inner;

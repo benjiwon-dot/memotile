@@ -23,7 +23,7 @@ import { usePhotobookEnabled } from "../../src/config/featureFlags";
 import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
 import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
 import { getAlbumDraft, getAlbumOptions, getAllCrops, PhotoCrop, replaceCrops, setAlbumItems, setAlbumOptions } from "../../src/services/albumDraft";
-import { buildPages, LayoutPage, photoAspect, Density, PAGE_TOP_BAND } from "../../src/services/photoLayout";
+import { buildPages, LayoutPage, photoAspect, Density, PAGE_TOP_BAND, pageDateLabels } from "../../src/services/photoLayout";
 import { useHiResCover } from "../../src/services/coverImage";
 import { useMidResMap } from "../../src/services/midResImage";
 import { CoverCrop } from "../../src/components/photobook/CoverCrop";
@@ -233,16 +233,21 @@ export default function PhotobookPreview() {
         setCoverPickerOpen(false);
     };
 
-    const rows = useMemo<Row[]>(() => {
+    const pages = useMemo(() => {
         // 표지 사진은 내지에서 제외(표지 다음 첫 장 중복 방지) — freeze와 동일 규칙
         const interior = coverAssetId ? items.filter((x) => x.assetId !== coverAssetId) : items;
-        const pages = buildPages(interior, RATIO, density);
+        return buildPages(interior, RATIO, density);
+    }, [items, RATIO, density, coverAssetId]);
+    // 페이지별 날짜 라벨 — freeze/PDF와 같은 함수라 화면과 인쇄물이 일치
+    const dateLabels = useMemo(() => pageDateLabels(pages), [pages]);
+
+    const rows = useMemo<Row[]>(() => {
         const spreads: Row[] = [];
         for (let i = 0; i < pages.length; i += 2) {
             spreads.push({ kind: "spread", left: pages[i] ?? null, right: pages[i + 1] ?? null, n: i / 2 + 1 });
         }
         return [{ kind: "cover" }, ...spreads, { kind: "back" }];
-    }, [items, RATIO, density, coverAssetId]);
+    }, [pages]);
 
     // (C) 현재 펼침면 + 양옆만 중간해상도로 선명하게(나머지 셀은 썸네일). 보이는 윈도우만 로드.
     const windowAssetIds = useMemo(() => {
@@ -397,12 +402,17 @@ export default function PhotobookPreview() {
     // ⚠️ 컴포넌트(<Page/>)가 아니라 함수 호출 → setCur 등 재렌더 시 remount 안 됨(깜빡임 방지).
     const renderPage = (page: LayoutPage | null, side: "l" | "r", pageOffX: number) => (
         <View style={{ width: pageW, height: pageH, backgroundColor: c.surface, borderRightWidth: side === "l" ? 1 : 0, borderRightColor: "rgba(0,0,0,0.06)" }}>
-            {/* 상단 밴드에 실제 인쇄되는 년월 (화면 UI가 아니라 페이지의 일부) */}
-            {page && page.kind !== "hero" && monthRange(page.photos) ? (
-                <Text style={{ position: "absolute", top: pageH * PAGE_TOP_BAND * 0.3, left: pageW * 0.055, fontSize: Math.max(8, Math.min(13, Math.round(pageH * 0.055))), fontWeight: "700", letterSpacing: 0.5, color: c.coral }}>
-                    {monthRange(page.photos)}
-                </Text>
-            ) : null}
+            {/* 상단 밴드에 실제 인쇄되는 년월 (화면 UI가 아니라 페이지의 일부).
+                라벨 결정은 pageDateLabels 한 곳 — 단독사진 페이지 제외 + 직전과 같은 년월은 생략.
+                작게, 사진 바로 위에 붙여서 인쇄물이 지저분해지지 않게. */}
+            {page && (dateLabels[page.index] ?? "") ? (() => {
+                const fs = Math.max(7, Math.min(10, Math.round(pageH * 0.038)));
+                return (
+                    <Text style={{ position: "absolute", top: Math.max(2, pageH * PAGE_TOP_BAND - fs * 1.5), left: pageW * 0.055, fontSize: fs, fontWeight: "700", letterSpacing: 0.3, color: c.coral, opacity: 0.85 }}>
+                        {dateLabels[page.index]}
+                    </Text>
+                );
+            })() : null}
             {page?.photos.map((p, i) => {
                 const s = page.cells[i];
                 if (!p || !s) return null;

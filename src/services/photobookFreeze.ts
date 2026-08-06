@@ -9,7 +9,7 @@
 //    동일 로직을 미러링한 것 — 프리뷰 렌더와 100% 일치해야 하므로 둘을 함께 수정할 것.
 //    실제 크롭 렌더 수식은 src/components/photobook/CoverCrop.tsx 참고(서버가 이걸 재현).
 import { ScanItem } from "../types/scan";
-import { buildPages, photoAspect, PAGE_TOP_BAND, LayoutPage, PageKind, Density } from "./photoLayout";
+import { buildPages, photoAspect, PAGE_TOP_BAND, LayoutPage, PageKind, Density, pageDateLabels } from "./photoLayout";
 import type { PhotoCrop } from "./albumDraft";
 
 function clamp01(v: number) { return Math.max(0, Math.min(1, v)); }
@@ -112,10 +112,14 @@ export function buildFrozenLayout(opts: {
     const pages: LayoutPage[] = buildPages(interiorItems, ratio, opts.density);
     const indexOf = new Map(opts.items.map((it, i) => [it.assetId, i] as const));
 
+    // 날짜 라벨은 photoLayout.pageDateLabels 한 곳에서 결정(단독사진 제외 + 연속 중복 생략).
+    // 프리뷰(PhotobookViewer)도 같은 함수를 쓰므로 화면과 인쇄물이 반드시 일치한다.
+    const dateLabels = pageDateLabels(pages);
+
     const fpages: FrozenPage[] = pages.map((pg) => ({
         index: pg.index,
         kind: pg.kind,
-        dateLabel: pg.kind === "hero" ? "" : monthRange(pg.photos as any),
+        dateLabel: dateLabels[pg.index] ?? "",
         cells: pg.cells.map((s, k) => {
             const p = pg.photos[k];
             return {

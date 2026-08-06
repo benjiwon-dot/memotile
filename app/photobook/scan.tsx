@@ -113,6 +113,11 @@ export default function PhotobookScan() {
     const narrowedRef = useRef(0);
     const scanStartRef = useRef(0); // 스캔 시작 시각(ETA 계산)
 
+    // 결과 목록 진입 시 "아닌 사진은 탭해서 빼세요" 안내를 잠깐 띄웠다 스르륵 사라지게.
+    // 오검출이 섞이는 건 정상이라 제거 방법을 모르면 그대로 주문해버린다.
+    const tipAnim = useRef(new Animated.Value(0)).current;
+    const tipShownRef = useRef(false);
+
     const float = useRef(new Animated.Value(0)).current;
     const heart = useRef(new Animated.Value(0)).current;
     const rotAnim = useRef(new Animated.Value(1)).current;
@@ -167,6 +172,17 @@ export default function PhotobookScan() {
         const t = Math.max(maxMatchRef.current, dedupedCount); maxMatchRef.current = t; // dedup 병합으로 줄어도 안 내려가게
         Animated.timing(matchAnim, { toValue: t, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
     }, [dedupedCount, matchAnim]);
+
+    // 결과 화면에 처음 들어올 때 한 번만: 페이드 인 → 2.6초 유지 → 페이드 아웃
+    useEffect(() => {
+        if (phase !== "ready" || tipShownRef.current) return;
+        tipShownRef.current = true;
+        Animated.sequence([
+            Animated.timing(tipAnim, { toValue: 1, duration: 260, useNativeDriver: true }),
+            Animated.delay(2600),
+            Animated.timing(tipAnim, { toValue: 0, duration: 420, useNativeDriver: true }),
+        ]).start();
+    }, [phase, tipAnim]);
 
     // 마운트: 스캔 전 기간 설정용 프로필 정보만 로드(권한/스캔 X).
     useEffect(() => { prepare(); /* eslint-disable-next-line */ }, []);
@@ -599,6 +615,21 @@ export default function PhotobookScan() {
                 </View>
             ) : (
                 <>
+                    {/* 잠깐 떴다 사라지는 안내 — 오검출 사진을 탭해서 뺄 수 있다는 걸 알려준다 */}
+                    <Animated.View
+                        pointerEvents="none"
+                        style={{
+                            position: "absolute", top: 8, left: H_PAD, right: H_PAD, zIndex: 50,
+                            opacity: tipAnim,
+                            transform: [{ translateY: tipAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }],
+                            backgroundColor: "rgba(20,16,14,0.88)", borderRadius: 12,
+                            paddingVertical: 10, paddingHorizontal: 14,
+                            flexDirection: "row", alignItems: "center",
+                        }}
+                    >
+                        <Feather name="x-circle" size={14} color="#fff" style={{ marginRight: 7 }} />
+                        <Text style={{ color: "#fff", fontSize: 12.5, fontWeight: "700", flex: 1 }}>{t.pbTapToRemove}</Text>
+                    </Animated.View>
                     <SectionList
                         sections={sections}
                         keyExtractor={(row, i) => row.map((x) => x.assetId).join("_") + i}
