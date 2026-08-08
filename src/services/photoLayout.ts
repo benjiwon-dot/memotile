@@ -90,14 +90,25 @@ const FRACTION: Record<Density, number> = { relaxed: 0.4, balanced: 0.72, rich: 
  *  물리 제본 한계도 넘는다. 인쇄소가 더 두꺼운 제본을 확정해 주면 이 값과 PAGE_TIERS를 함께 올릴 것. */
 export const MAX_PAGES = 112;
 
+/** 최소 과금 구간(내지). 사진이 적어 이보다 얇게 나오면, 이미 이 구간 요금을 내므로
+ *  여백을 넉넉히 써서 이 두께에 가깝게 펼친다 — 인쇄 원가는 동일하고 체감 가치만 오른다. */
+const MIN_TIER_PAGES = 48;
+
 /** 선택 사진을 디자인된 템플릿 페이지 배열로. ratio=페이지 가로/세로, density=밀도 프리셋
- *  (내부용 — 상한 미적용. 외부는 상한이 걸린 buildPages를 쓸 것) */
-function buildPagesRaw(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): LayoutPage[] {
+ *  (내부용 — 상한 미적용. 외부는 상한이 걸린 buildPages를 쓸 것)
+ *  override: 펼침 모드에서 페이지당 장수(pool)와 큐레이션 비율(frac)을 갈아끼운다. */
+function buildPagesRaw(
+    items: ScanItem[],
+    ratio: number = 27.9 / 21.5,
+    density: Density = "balanced",
+    override?: { pool?: number[]; frac?: number; spread?: boolean },
+): LayoutPage[] {
+    const spread = override?.spread === true;
     let photos = [...items]; // items 순서 그대로 사용(드래그 스왑 유지). 호출부에서 시간순 정렬해 전달.
     if (photos.length === 0) return [];
 
     // 밀도 프리셋: 여유롭게일수록 강한 컷만 큐레이션(시간순 유지). 단 사용자가 직접 추가한(manual) 사진은 항상 유지.
-    const frac = FRACTION[density];
+    const frac = override?.frac ?? FRACTION[density];
     if (frac < 1 && photos.length > 8) {
         const auto = photos.filter((p) => !p.manual);
         const manualCount = photos.length - auto.length;
@@ -111,7 +122,7 @@ function buildPagesRaw(items: ScanItem[], ratio: number = 27.9 / 21.5, density: 
     const strongTh = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.3))] : Infinity;
 
     const rng = rngFrom(photos.length * 7 + 13);
-    const pool = POOLS[density];
+    const pool = override?.pool ?? POOLS[density];
     // photos[idx]가 히어로로 승격될 강한 컷인지(가로 or 큰 얼굴)
     const isStrongCut = (idx: number, prevBig: boolean) => (isLandscape(photos[idx]) || strengthOf(photos[idx]) >= strongTh) && !prevBig;
 
@@ -126,9 +137,11 @@ function buildPagesRaw(items: ScanItem[], ratio: number = 27.9 / 21.5, density: 
         // 가로로 찍은 사진은 히어로 1장(풀블리드가 딱 맞음). 세로 위주라 가로는 귀함 → 크게.
         if (isLandscape(photos[i]) && !prevBig) count = 1;
         // 6장(위3/아래3 모자이크)은 "가끔"만 — 최소 7페이지 간격 뒤 확률적으로(연속 방지). ~8쪽에 1번.
-        else if (remaining >= 6 && since6 >= 7 && rng() < 0.4) { count = 6; force6 = true; }
+        // 펼침 모드에선 6장 묶음이 목적(페이지 늘리기)과 정반대라 쓰지 않는다.
+        else if (!spread && remaining >= 6 && since6 >= 7 && rng() < 0.4) { count = 6; force6 = true; }
         if (!force6 && count >= 3 && prevGrid) count = Math.min(2, remaining);              // 연속 그리드 금지
-        if (count === 1 && prevSingle && !isStrongCut(i, prevBig)) count = Math.min(2, remaining); // 애매한 1장 연속 금지
+        // 애매한 1장 연속 금지 — 단 펼침 모드에선 1장씩 이어지는 게 의도된 여백감이라 허용
+        if (!spread && count === 1 && prevSingle && !isStrongCut(i, prevBig)) count = Math.min(2, remaining);
         if (count <= 0) count = 1;
         const group = photos.slice(i, i + count);
 
@@ -190,9 +203,32 @@ export function fitToMaxPages(
     return pick(best);
 }
 
-/** 선택 사진 → 페이지 배열. MAX_PAGES 상한 적용(역마진·제본불가 방지). */
+// 펼침 후보: 촘촘한 것 → 성긴 것 순. 성길수록 페이지가 늘어난다.
+const SPREAD_POOLS: number[][] = [[3, 3, 4], [2, 3], [2, 2, 3], [1, 2], [1, 1, 2], [1]];
+
+/** 사진이 적어 최소 과금 구간(48p)을 못 채울 때, 여백을 넉넉히 써서 그 두께에 최대한 가깝게 펼친다.
+ *  - 48p를 절대 넘기지 않는다(넘기면 과금 구간이 올라가 고객이 더 낸다).
+ *  - 큐레이션 없이(frac=1) 전 사진을 싣는다 — 얇은 책에서 사진을 버릴 이유가 없다.
+ *  返 더 두꺼워진 배열, 못 늘리면 null. */
+function spreadToMinTier(items: ScanItem[], ratio: number, density: Density): LayoutPage[] | null {
+    let best: LayoutPage[] | null = null;
+    for (const pool of SPREAD_POOLS) {
+        const pages = buildPagesRaw(items, ratio, density, { pool, frac: 1, spread: true });
+        if (pages.length > MIN_TIER_PAGES) break;   // 더 성기게 가면 과금 구간을 넘는다 → 중단
+        if (!best || pages.length > best.length) best = pages;
+    }
+    return best;
+}
+
+/** 선택 사진 → 페이지 배열.
+ *  - 상한: MAX_PAGES(역마진·제본불가 방지)
+ *  - 하한: 사진이 적으면 최소 과금 구간(48p)에 가깝게 펼침 — 낸 값만큼의 두께를 준다 */
 export function buildPages(items: ScanItem[], ratio: number = 27.9 / 21.5, density: Density = "balanced"): LayoutPage[] {
     const pages = buildPagesRaw(fitToMaxPages(items, ratio, density), ratio, density);
+    if (pages.length < MIN_TIER_PAGES) {
+        const spread = spreadToMinTier(items, ratio, density);
+        if (spread && spread.length > pages.length) return spread;
+    }
     // manual 사진만으로 상한 초과한 극단 케이스의 최후 방어선
     return pages.length > MAX_PAGES ? pages.slice(0, MAX_PAGES) : pages;
 }

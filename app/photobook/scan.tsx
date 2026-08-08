@@ -686,17 +686,21 @@ export default function PhotobookScan() {
                         <View style={[styles.bottomBar, { flexDirection: "column", alignItems: "stretch", gap: 8, paddingTop: 12, backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: insets.bottom + 10 }]}>
                             {/* 안내 + 진행(N/25) */}
                             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                {/* "48페이지 책엔 25장 필요"는 사실이 아니었다(25장 → 실제 20여 페이지).
+                                    주문 최소 수량임을 그대로 적고, 많을수록 두꺼워진다는 사실만 알린다. */}
                                 <Text style={{ flex: 1, color: c.ink, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
                                     {locale === "TH"
-                                        ? `โฟโต้บุ๊ก 48 หน้า ต้องมีรูปอย่างน้อย ${MIN_PHOTOS} รูป`
-                                        : `A 48-page book needs at least ${MIN_PHOTOS} photos`}
+                                        ? `สั่งทำได้ตั้งแต่ ${MIN_PHOTOS} รูปขึ้นไป`
+                                        : `Orders start from ${MIN_PHOTOS} photos`}
                                 </Text>
                                 <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: c.surfaceAlt }}>
                                     <Text style={{ color: c.coral, fontWeight: "900", fontSize: 13 }}>{includedCount} / {MIN_PHOTOS}</Text>
                                 </View>
                             </View>
                             <Text style={{ color: c.textMuted, fontSize: 12, marginTop: -2 }}>
-                                {locale === "TH" ? `เพิ่มอีก ${MIN_PHOTOS - includedCount} รูปเพื่อไปต่อ` : `Add ${MIN_PHOTOS - includedCount} more to continue`}
+                                {locale === "TH"
+                                    ? `เพิ่มอีก ${MIN_PHOTOS - includedCount} รูปเพื่อไปต่อ · ยิ่งเยอะ เล่มยิ่งหนา`
+                                    : `Add ${MIN_PHOTOS - includedCount} more to continue · more photos, thicker book`}
                             </Text>
                             {/* 채우기 버튼 — 세로 스택(잘림 없음, TH/EN 안전) */}
                             {nearMissItems.length > 0 && (
