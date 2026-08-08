@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#FDF8F4"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -107,7 +107,7 @@
       "splash": {
         "image": "./assets/splash.png",
         "resizeMode": "contain",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#FDF8F4"
       },
       "permissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
