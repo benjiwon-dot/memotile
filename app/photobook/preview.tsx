@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     View, Text, StyleSheet, Pressable, FlatList, Alert, Modal, useWindowDimensions, Animated, ScrollView, Linking,
-    NativeSyntheticEvent, NativeScrollEvent, LayoutChangeEvent,
+    NativeSyntheticEvent, NativeScrollEvent, LayoutChangeEvent, AppState,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -368,13 +368,63 @@ export default function PhotobookPreview() {
     // 사진 제거로 페이지 수가 줄면 현재 위치 보정
     useEffect(() => { if (cur > rows.length - 1) setCur(Math.max(0, rows.length - 1)); }, [rows.length]);
 
+    // 사용자가 버튼으로 가로를 고정했는지(자동 회전에 맡기지 않고). 고정 중엔 복귀 시에도 그대로 유지.
+    const [forcedLandscape, setForcedLandscape] = useState(false);
+    const forcedRef = useRef(false);
+    forcedRef.current = forcedLandscape;
+
+    // 세로 복귀 후 자동회전을 다시 푸는 예약 타이머(이탈 시 취소해야 다른 화면이 안 눕는다)
+    const unlockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 이 화면에서 회전 허용 상태를 다시 적용. 여러 곳(포커스·앱 복귀·토글)에서 호출.
+    const applyOrientation = React.useCallback(async (forced: boolean) => {
+        try {
+            if (forced) await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+            else await ScreenOrientation.unlockAsync();
+        } catch { /* 네이티브 미포함(재빌드 전) → 무시 */ }
+    }, []);
+
     // 프리뷰 포커스 동안만 가로 허용 → 이탈/블러 시 세로 복귀. useFocusEffect가 "갑자기 세로로" 스냅백에 견고.
     useFocusEffect(
         React.useCallback(() => {
-            ScreenOrientation.unlockAsync().catch(() => { /* 네이티브 미포함(재빌드 전) → 무시 */ });
-            return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => { }); };
-        }, [])
+            applyOrientation(forcedRef.current);
+            return () => {
+                // 이탈 시 무조건 세로 복귀. 대기 중인 unlock 타이머도 취소(다른 화면 가로 풀림 방지).
+                if (unlockTimer.current) { clearTimeout(unlockTimer.current); unlockTimer.current = null; }
+                ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => { });
+            };
+        }, [applyOrientation])
     );
+
+    // 🆕 앱을 나갔다 돌아오면 OS가 방향 잠금을 되돌려 가로가 안 먹는 경우가 있다.
+    //    useFocusEffect는 화면 전환에만 반응하고 백그라운드 복귀엔 안 걸리므로 AppState로 재적용.
+    useEffect(() => {
+        const sub = AppState.addEventListener("change", (s) => {
+            if (s === "active") applyOrientation(forcedRef.current);
+        });
+        return () => sub.remove();
+    }, [applyOrientation]);
+
+    // 가로↔세로 토글. 세로로 돌아올 때는 잠깐 PORTRAIT로 고정해 확실히 회전시킨 뒤 곧바로 잠금 해제
+    // (unlock만 하면 기기를 눕힌 채라 가로에 그대로 머물러 "세로로 못 돌아오는" 상태가 된다).
+    const toggleLandscape = React.useCallback(async () => {
+        const next = !forcedRef.current;
+        setForcedLandscape(next);
+        if (unlockTimer.current) { clearTimeout(unlockTimer.current); unlockTimer.current = null; }
+        try {
+            if (next) {
+                await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+            } else {
+                await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+                // 세로로 돌린 뒤 잠금 해제(다시 자동회전 허용). 화면을 떠나면 아래 cleanup이 취소 —
+                // 안 그러면 다른 화면에서 가로가 풀려버린다.
+                unlockTimer.current = setTimeout(() => {
+                    unlockTimer.current = null;
+                    ScreenOrientation.unlockAsync().catch(() => { });
+                }, 350);
+            }
+        } catch { /* 네이티브 미포함 → 무시 */ }
+    }, []);
+    useEffect(() => () => { if (unlockTimer.current) clearTimeout(unlockTimer.current); }, []);
 
     // "가로로도 볼 수 있어요" 토스트 1회
     const hintOpacity = useRef(new Animated.Value(0)).current;
@@ -566,6 +616,10 @@ export default function PhotobookPreview() {
                     <Pressable onPress={redo} disabled={!canRedo} hitSlop={10} style={styles.undoBtn}>
                         <Feather name="rotate-cw" size={19} color={canRedo ? c.coral : c.border} />
                     </Pressable>
+                    {/* 가로로 보기 — 기기 자동회전이 막혀 있어도 확실히 눕힌다. 되돌리기 옆에 조용히. */}
+                    <Pressable onPress={toggleLandscape} hitSlop={10} style={styles.undoBtn} accessibilityLabel={t.pbViewLandscape}>
+                        <Feather name="smartphone" size={18} color={c.textMuted} style={{ transform: [{ rotate: "90deg" }] }} />
+                    </Pressable>
                 </View>
             )}
 
@@ -643,6 +697,12 @@ export default function PhotobookPreview() {
                     <View style={[styles.floatBtn, { top: insets.top + 6, right: 12, width: undefined, paddingHorizontal: 12, backgroundColor: c.surface, borderColor: c.border }]}>
                         <Text style={{ fontSize: 12, fontWeight: "800", color: c.ink }}>{cur + 1} / {rows.length}</Text>
                     </View>
+                    {/* 세로로 돌아가기 — 버튼으로 가로를 고정했으면 기기를 세워도 안 돌아오므로 반드시 필요 */}
+                    <Pressable onPress={toggleLandscape} hitSlop={10}
+                        style={[styles.floatBtn, { top: insets.top + 6, right: 74, backgroundColor: c.surface, borderColor: c.border }]}
+                        accessibilityLabel={t.pbViewPortrait}>
+                        <Feather name="smartphone" size={18} color={c.textMuted} />
+                    </Pressable>
                 </>
             )}
 

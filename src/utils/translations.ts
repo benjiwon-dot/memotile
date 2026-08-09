@@ -42,6 +42,9 @@ export const STRINGS = {
         photobookCardDesc: "Let AI pick your child's best photos",
         // 스캔 결과에서 잠깐 떴다 사라지는 안내(오검출 사진 제거 유도)
         pbTapToRemove: "Tap any photo that isn't them to remove it",
+        // 프리뷰 가로/세로 토글(접근성 라벨)
+        pbViewLandscape: "View in landscape",
+        pbViewPortrait: "Back to portrait",
         // 사진이 최대 페이지를 넘겨 일부만 담길 때 안내 ({used}/{total})
         pbTrimmedTitle: "Too many photos for one book",
         pbTrimmedBody: "AI kept the best {used} of {total}. Your book is at the maximum {max} pages.",
@@ -641,6 +644,9 @@ export const STRINGS = {
         photobookCardDesc: "ให้ AI คัดรูปลูกน้อยให้อัตโนมัติ",
         // 스캔 결과에서 잠깐 떴다 사라지는 안내(오검출 사진 제거 유도)
         pbTapToRemove: "แตะรูปที่ไม่ใช่เขาเพื่อเอาออก",
+        // 프리뷰 가로/세로 토글(접근성 라벨)
+        pbViewLandscape: "ดูแบบแนวนอน",
+        pbViewPortrait: "กลับเป็นแนวตั้ง",
         // 사진이 최대 페이지를 넘겨 일부만 담길 때 안내 ({used}/{total})
         pbTrimmedTitle: "รูปเยอะเกินหนึ่งเล่ม",
         pbTrimmedBody: "AI เลือกรูปที่ดีที่สุด {used} จาก {total} รูป เล่มนี้เต็มที่ {max} หน้าแล้ว",
