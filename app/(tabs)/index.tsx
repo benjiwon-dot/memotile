@@ -283,12 +283,12 @@ export default function Index() {
             >
                 <View style={[styles.headerRow, { paddingTop: insets.top - 20 }]}>
                     <View style={styles.logoContainer}>
-                        {/* 새 로고는 여백 없이 꽉 찬 이미지라 폭 기준으로 맞춰진다.
-                            예전 로고(1536×1024, 여백 큼)는 높이 기준이라 180pt로 렌더됐는데
-                            같은 박스면 360pt(2배)가 되어 언어 토글까지 침범 → 폭을 직접 지정. */}
+                        {/* 새 로고는 여백 없이 꽉 찬 이미지라 폭 기준으로 맞춰진다(예전 로고는 여백이 커서
+                            높이 기준이었음). 폭만 360→140으로 줄이고 높이 120은 그대로 둔다 —
+                            높이까지 줄이면 박스 세로중심이 60pt→22pt로 올라가 로고가 상태바에 붙는다. */}
                         <ExpoImage
                             source={logoHorizontal}
-                            style={{ width: 140, height: 44 }}
+                            style={{ width: 140, height: 120 }}
                             contentFit="contain"
                             contentPosition="left"
                             transition={200}
