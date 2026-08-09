@@ -554,14 +554,15 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        paddingHorizontal: 20,
-        marginBottom: -20,
+        paddingHorizontal: 24,
+        marginBottom: -32,   // 히어로를 위로 — 로고 박스(120) 아래 빈 공간을 줄인다
     },
     logoContainer: {
         flex: 1,
         alignItems: 'flex-start',
         justifyContent: 'center',
-        marginLeft: -20,
+        // 예전 로고는 이미지에 여백이 있어 -20으로 당겨야 제자리였다. 새 로고는 여백이 없어
+        // 당기면 화면 왼쪽 끝에 붙는다 → headerRow의 paddingHorizontal(20)을 그대로 쓴다.
     },
 
     brandTitle: { ...typography.brand, color: colors.text },
@@ -581,12 +582,13 @@ const styles = StyleSheet.create({
     section: { padding: layout.spacing.pagePadding, paddingVertical: 28 },
     hero: { paddingTop: 0, paddingBottom: 48, alignItems: "center" },
     heroContent: { maxWidth: 480, width: "100%", alignItems: "center" },
-    headlineGroup: { marginBottom: 8, paddingHorizontal: 20, alignItems: "center" },
+    headlineGroup: { marginBottom: 0, paddingHorizontal: 20, alignItems: "center" },
     // 헤드라인 색 (메인=웜 차콜, 서브=코랄). 서브 쿨그레이 대안: "#8A8A8E"
 
     heroHeadline1: { textAlign: "center", color: "#2B2320", fontWeight: "900" },
     heroHeadline2: { marginTop: 0, textAlign: "center", color: "#2B2320", fontWeight: "900" },
-    heroSupporting: { textAlign: "center", marginTop: 6, marginBottom: 18, paddingHorizontal: 24, color: "#FF8C7C", fontWeight: "600" },
+    // 헤드라인과의 간격: 두 줄 모두 lineHeight 여유가 커서 marginTop까지 주면 뜬다 → 0으로.
+    heroSupporting: { textAlign: "center", marginTop: 0, marginBottom: 18, paddingHorizontal: 24, color: "#FF8C7C", fontWeight: "600" },
 
     heroHeadline1_TH: { fontSize: 28, lineHeight: 42 },   // TH 메인: EN보다 작게 + lineHeight 여유(답답함 해소)
     heroHeadline2_TH: { fontSize: 28, lineHeight: 42 },
