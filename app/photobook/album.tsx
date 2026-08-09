@@ -119,11 +119,14 @@ export default function PhotobookAlbum() {
         () => (coverAssetId ? items.filter((i) => i.assetId !== coverAssetId) : items),
         [items, coverAssetId],
     );
-    const albumActualPages = useMemo(() => countPages(albumInterior, 27.9 / 21.5, "balanced"), [albumInterior]);
+    // 밀도는 프리뷰에서 바꾼 값이 저장돼 있고 체크아웃도 그 값으로 과금한다.
+    // 여기서 "balanced"로 고정하면 프리뷰에서 밀도를 바꾼 뒤 이 화면 가격과 결제액이 달라진다.
+    const albumDensity = (opts0.density as any) || "balanced";
+    const albumActualPages = useMemo(() => countPages(albumInterior, 27.9 / 21.5, albumDensity), [albumInterior, albumDensity]);
     // 고객 표시용 총 페이지 = 표지 1 + 내지 + 뒷장 1
     const albumTotalPages = albumActualPages + 2;
     // 상한(MAX_PAGES) 때문에 일부 사진이 빠졌는지 — 빠졌으면 아래에서 안내
-    const photoFit = useMemo(() => photosUsedCount(albumInterior, 27.9 / 21.5, "balanced"), [albumInterior]);
+    const photoFit = useMemo(() => photosUsedCount(albumInterior, 27.9 / 21.5, albumDensity), [albumInterior, albumDensity]);
     const { price } = albumPrice(size, cover, albumActualPages);
 
     if (!enabled) return null;

@@ -24,6 +24,8 @@ import { usePhotobookTheme, pbRadius } from "../../src/config/photobookTheme";
 import { PhotobookGradient } from "../../src/components/photobook/PhotobookGradient";
 import { getAlbumDraft, getAlbumOptions, getAllCrops, PhotoCrop, replaceCrops, setAlbumItems, setAlbumOptions } from "../../src/services/albumDraft";
 import { buildPages, LayoutPage, photoAspect, Density, PAGE_TOP_BAND, pageDateLabels } from "../../src/services/photoLayout";
+import { albumPrice } from "../../src/config/photobookPricing";
+import { usePhotobookPricing } from "../../src/services/photobookPriceConfig";
 import { useHiResCover } from "../../src/services/coverImage";
 import { useMidResMap } from "../../src/services/midResImage";
 import { CoverCrop } from "../../src/components/photobook/CoverCrop";
@@ -238,8 +240,14 @@ export default function PhotobookPreview() {
         const interior = coverAssetId ? items.filter((x) => x.assetId !== coverAssetId) : items;
         return buildPages(interior, RATIO, density);
     }, [items, RATIO, density, coverAssetId]);
+    usePhotobookPricing(); // 원격 가격이 늦게 도착해도 아래 실시간 가격이 갱신되도록 구독
     // 페이지별 날짜 라벨 — freeze/PDF와 같은 함수라 화면과 인쇄물이 일치
     const dateLabels = useMemo(() => pageDateLabels(pages), [pages]);
+    // 현재 밀도 기준 실시간 가격(체크아웃과 같은 계산) — 밀도 칩 위에 표시
+    const livePrice = useMemo(
+        () => albumPrice((opts.size as any) || "A4", (opts.cover as any) || "soft", pages.length).price,
+        [opts.size, opts.cover, pages.length],
+    );
 
     const rows = useMemo<Row[]>(() => {
         const spreads: Row[] = [];
@@ -526,6 +534,14 @@ export default function PhotobookPreview() {
                 </View>
             )}
             {!landscape && <Text style={[styles.note, { color: c.textMuted }]}>{t.pbPreviewNote}</Text>}
+
+            {/* 밀도를 바꾸면 페이지 수가 달라져 과금 구간이 바뀔 수 있다.
+                여기서 가격을 안 보여주면 체크아웃에서 값이 달라진 걸 처음 알게 된다. */}
+            {!landscape && (
+                <Text style={[styles.priceLine, { color: c.coral }]}>
+                    {pages.length + 2} {t.pbPagesUnit} · ฿{livePrice.toLocaleString()}
+                </Text>
+            )}
 
             {!landscape && (
                 <View style={styles.densityRow}>
