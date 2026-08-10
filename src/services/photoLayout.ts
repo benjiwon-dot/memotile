@@ -248,19 +248,30 @@ export function monthRange(photos: { creationTime?: number }[]): string {
     return `${y1}.${mm(m1)}~${y2}.${mm(m2)}`;
 }
 
+/** 페이지 대표 년월 = 그 페이지 첫 사진의 촬영 년월("2026.01"). 시간순 정렬이라 첫 장이 그 페이지의 시작점. */
+function pageYm(photos: { creationTime?: number }[]): string {
+    const t = photos.map((p) => p.creationTime).find((x): x is number => !!x);
+    if (!t) return "";
+    const d = new Date(t);
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 /** 페이지별로 실제 인쇄할 날짜 라벨. 프리뷰와 PDF가 반드시 같은 값을 써야 하므로 여기 한 곳에서만 정한다.
- *  규칙 — 라벨을 비우는 경우:
- *   1) 사진 1장짜리 페이지(hero·minimal) : 전체샷의 여백을 날짜가 해치지 않게
- *   2) 직전에 표시한 라벨과 같을 때      : "2026.02"가 연달아 반복되면 지저분함 → 바뀔 때만 표시
+ *  "장(章) 머리말"처럼 동작한다 — 달이 바뀌는 지점에서만 한 번 찍힌다.
+ *   1) 사진 1장짜리 페이지(hero·minimal)는 비움 — 전체샷의 여백을 해치지 않게
+ *   2) 직전에 찍은 달과 같으면 비움 — 1월 사진이 10페이지면 "2026.01"은 맨 앞 한 번만
+ *   3) 범위 표기("2026.01~05")를 쓰지 않는다 — 달이 걸친 페이지에서 군더더기 라벨이 생긴다.
+ *      그 페이지는 시작 달(01)로 보므로 이미 찍힌 01과 같아 비워지고, 실제로 05가 시작되는
+ *      페이지에서 "2026.05"가 찍힌다.
  */
 export function pageDateLabels(pages: LayoutPage[]): string[] {
     let shown = "";
     return pages.map((pg) => {
-        if (pg.photos.length <= 1) return "";        // 전체샷/단독 사진 페이지
-        const label = monthRange(pg.photos);
-        if (!label || label === shown) return "";    // 직전과 동일 → 생략
-        shown = label;
-        return label;
+        if (pg.photos.length <= 1) return "";     // 전체샷/단독 사진 페이지
+        const ym = pageYm(pg.photos);
+        if (!ym || ym === shown) return "";       // 같은 달이 이어지는 중 → 생략
+        shown = ym;
+        return ym;
     });
 }
 
