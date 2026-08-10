@@ -140,8 +140,8 @@ function buildPagesRaw(
         // 펼침 모드에선 6장 묶음이 목적(페이지 늘리기)과 정반대라 쓰지 않는다.
         else if (!spread && remaining >= 6 && since6 >= 7 && rng() < 0.4) { count = 6; force6 = true; }
         if (!force6 && count >= 3 && prevGrid) count = Math.min(2, remaining);              // 연속 그리드 금지
-        // 애매한 1장 연속 금지 — 단 펼침 모드에선 1장씩 이어지는 게 의도된 여백감이라 허용
-        if (!spread && count === 1 && prevSingle && !isStrongCut(i, prevBig)) count = Math.min(2, remaining);
+        // 애매한 1장 연속 금지 — 펼침 모드에서도 유지해야 낱장 나열처럼 안 보인다
+        if (count === 1 && prevSingle && !isStrongCut(i, prevBig)) count = Math.min(2, remaining);
         if (count <= 0) count = 1;
         const group = photos.slice(i, i + count);
 
@@ -204,7 +204,10 @@ export function fitToMaxPages(
 }
 
 // 펼침 후보: 촘촘한 것 → 성긴 것 순. 성길수록 페이지가 늘어난다.
-const SPREAD_POOLS: number[][] = [[3, 3, 4], [2, 3], [2, 2, 3], [1, 2], [1, 1, 2], [1]];
+// ⚠️ 1장짜리 풀([1] 등)은 쓰지 않는다 — 전 페이지가 사진 1장이 되어 콜라주가 아니라
+//    낱장 모음처럼 보이고, 히어로(꽉참)/미니멀(작게)이 번갈아 나와 들쭉날쭉해진다.
+//    페이지당 최소 2장을 유지해 앨범다운 배치를 지키면서 두께만 조금 늘린다.
+const SPREAD_POOLS: number[][] = [[3, 3, 4], [2, 3], [2, 2, 3]];
 
 /** 사진이 적어 최소 과금 구간(48p)을 못 채울 때, 여백을 넉넉히 써서 그 두께에 최대한 가깝게 펼친다.
  *  - 48p를 절대 넘기지 않는다(넘기면 과금 구간이 올라가 고객이 더 낸다).
