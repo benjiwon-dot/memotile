@@ -2,7 +2,7 @@
   "expo": {
     "name": "MemoTile",
     "slug": "memotile-app-anti",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -65,6 +65,24 @@
         "expo-notifications",
         {
           "color": "#FF7E66"
+        }
+      ],
+      [
+        "react-native-fbsdk-next",
+        {
+          "appID": "1363559641799710",
+          "clientToken": "REPLACE_WITH_META_CLIENT_TOKEN",
+          "displayName": "MemoTile",
+          "scheme": "fb1363559641799710",
+          "advertiserIDCollectionEnabled": true,
+          "autoLogAppEventsEnabled": true,
+          "isAutoInitEnabled": true
+        }
+      ],
+      [
+        "expo-tracking-transparency",
+        {
+          "userTrackingPermission": "อนุญาตให้เราวัดผลโฆษณา เพื่อแสดงโฆษณาที่เกี่ยวข้องกับคุณมากขึ้น / Allow tracking so we can measure our ads and show you more relevant ones."
         }
       ]
     ],

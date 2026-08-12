@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { requestTrackingConsent, logFaceScanCompleted } from "../../src/services/metaAds";
 import { Image as ExpoImage } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 
@@ -86,6 +87,7 @@ export default function PhotobookScan() {
     const [counts, setCounts] = useState<{ total: number; narrowed: number; birthDate: string | null; coverUrl: string | null } | null>(null);
     const [scanned, setScanned] = useState(0);
     const [matched, setMatched] = useState<MatchedItem[]>([]);
+    const matchedCountRef = useRef(0); // startScan 클로저에서 state는 stale → 이벤트 로깅용 카운트는 ref로
     const [deselected, setDeselected] = useState<Set<string>>(new Set()); // 실제 제외된(앨범 빠짐)
     const [marked, setMarked] = useState<Set<string>>(new Set()); // 제거 대상으로 찍은 것(핑크 체크, 아직 제외 전)
     const [newIds, setNewIds] = useState<Set<string>>(new Set());
@@ -226,6 +228,9 @@ export default function PhotobookScan() {
         if (scanningRef.current) return; // 이미 스캔 중이면 중복 실행 차단(앵커 중복임베딩·자원경쟁 방지)
         scanningRef.current = true;
         try {
+        // ATT(광고 추적 동의)는 첫 실행이 아니라 여기서 — 사용자가 스캔을 직접 누른 시점이라
+        // 앱 가치를 이미 이해한 상태. 거부해도 스캔·주문 전부 정상(아래 흐름과 무관하게 진행).
+        await requestTrackingConsent();
         const perm = await requestLibraryPermission();
         if (!perm.granted) {
             setPhase("denied");
@@ -259,6 +264,7 @@ export default function PhotobookScan() {
             if (delta === 0) break; // 안전장치(빈 페이지 무한루프 방지)
         }
         await flushScanCache(); // 남은 캐시 저장
+        logFaceScanCompleted(matchedCountRef.current); // Meta 광고 이벤트(찾은 장수) — 실패해도 무해
         setPhase("ready");
         } finally {
             scanningRef.current = false;
@@ -301,7 +307,7 @@ export default function PhotobookScan() {
             const fresh = m.filter((it) => !seenRef.current.has(it.assetId));
             fresh.forEach((it) => seenRef.current.add(it.assetId));
             if (fresh.length) {
-                setMatched((prev) => [...prev, ...fresh]);
+                matchedCountRef.current += fresh.length; setMatched((prev) => [...prev, ...fresh]);
                 if (markNew) setNewIds((prev) => new Set([...prev, ...fresh.map((f) => f.assetId)]));
             }
             // near-miss 누적(이미 matched된/본 것 제외) — (b) 관대 패스에서 꺼내 씀
@@ -327,7 +333,7 @@ export default function PhotobookScan() {
         const fresh = nearMissItems.filter((it) => !seenRef.current.has(it.assetId));
         fresh.forEach((it) => seenRef.current.add(it.assetId));
         if (fresh.length) {
-            setMatched((prev) => [...prev, ...fresh]);
+            matchedCountRef.current += fresh.length; setMatched((prev) => [...prev, ...fresh]);
             setNewIds((prev) => new Set([...prev, ...fresh.map((f) => f.assetId)]));
         }
         setNearMissItems([]); // 버킷 비움(한 번 승격)

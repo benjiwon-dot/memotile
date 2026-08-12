@@ -1,5 +1,6 @@
 import Expo
 import ExpoScreenOrientation
+import FBSDKCoreKit
 import FirebaseCore
 import React
 import ReactAppDependencyProvider
@@ -38,6 +39,9 @@ public class AppDelegate: ExpoAppDelegate {
 // @generated begin @react-native-firebase/app-didFinishLaunchingWithOptions - expo prebuild (DO NOT MODIFY) sync-10e8520570672fd76b2403b7e1e27f5198a6349a
 FirebaseApp.configure()
 // @generated end @react-native-firebase/app-didFinishLaunchingWithOptions
+    // Meta(Facebook) SDK — 광고 성과 측정용 앱 이벤트. ios/가 커밋된 bare 프로젝트라
+    // fbsdk-next config plugin이 반영되지 않아 직접 호출한다(Info.plist 키도 직접 추가됨).
+    ApplicationDelegate.shared.application(application, didFinishLaunchingWithOptions: launchOptions)
     factory.startReactNative(
       withModuleName: "main",
       in: window,

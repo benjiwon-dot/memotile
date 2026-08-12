@@ -11,6 +11,7 @@ import * as ScreenOrientation from "expo-screen-orientation";
 import { LanguageProvider } from "../src/context/LanguageContext";
 import { PhotoProvider } from "../src/context/PhotoContext";
 import { loadPhotobookPricing } from "../src/services/photobookPriceConfig";
+import { initMetaAds } from "../src/services/metaAds";
 
 export default function RootLayout() {
     const isWeb = Platform.OS === 'web';
@@ -24,6 +25,10 @@ export default function RootLayout() {
 
     // 포토북 판매가를 config/prices에서 선반영(실패해도 앱 기본값으로 계속 동작).
     useEffect(() => { loadPhotobookPricing(); }, []);
+
+    // Meta 광고 SDK 초기화 — 설치/실행 자동 이벤트. ATT 동의는 여기서 묻지 않고
+    // 사용자가 앱 가치를 이해한 시점(첫 스캔 시작 직전, scan.tsx)에 요청한다.
+    useEffect(() => { initMetaAds(); }, []);
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>

@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.5</string>
+	<string>1.2.6</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>
@@ -31,6 +31,7 @@
 			<array>
 				<string>memotile</string>
 				<string>com.googleusercontent.apps.459952418126-2sptgnl1nsc5t5chmdll4i0rrovfo4fm</string>
+				<string>fb1363559641799710</string>
 			</array>
 		</dict>
 		<dict>
@@ -48,6 +49,25 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>85</string>
+	<key>FacebookAppID</key>
+	<string>1363559641799710</string>
+	<key>FacebookClientToken</key>
+	<string>REPLACE_WITH_META_CLIENT_TOKEN</string>
+	<key>FacebookDisplayName</key>
+	<string>MemoTile</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>อนุญาตให้เราวัดผลโฆษณา เพื่อแสดงโฆษณาที่เกี่ยวข้องกับคุณมากขึ้น / Allow tracking so we can measure our ads and show you more relevant ones.</string>
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v9wttpbfk9.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>n38lu8286q.skadnetwork</string>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSMinimumSystemVersion</key>
